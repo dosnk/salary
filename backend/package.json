@@ -1,0 +1,73 @@
+{
+  "name": "salary-backend",
+  "version": "5.58.6",
+  "description": "三人行吊顶管理系统 - 支持动态服务器地址配置和灵活日志目录配置，新增工资结算和月度统计功能，支持文档导出功能，新增安全优化（防重复提交、数据脱敏、文件上传限制），新增字典数据接口，修复长度宽度单位转换问题，新增工程附件上传和查看功能，支持工程名称文件夹，修复静态文件服务路径配置，新增子项目转交功能，新增工程管理页面工资分配和预支功能，优化统计页面性能，新增项目施工人员查询接口，新增预支管理功能，支持用户独立预支记录和结算扣除，优化工程管理页面显示，支持点击工程名称展开子项目列表，支持子项目编辑功能，新增站内消息功能，支持预支记录创建、工程内容修改、子项目内容修改、结算完成、子项目转交等消息通知，新增工程状态管理功能，支持工程状态修改和已完成工程自动加入未结算金额统计，新增结算历史表格展示和用户确认结算功能，新增封梁和装饰条施工方案字典，修复施工方案配置从数据库动态获取，新增施工方案和空间类型动态验证规则，支持从数据库动态读取验证规则，修复用户信息修改功能，优化昵称和手机号修改的验证规则，修复预支记录新增后一直显示加载中的问题，修改结算历史功能，移除确认功能，改为显示与结算单相同的表格格式，只显示已结算工程数据，修复确认结算后工程状态不更新的问题，修改confirmSettlement函数中的查询逻辑，直接通过wage_settlements.project_id关联projects表获取工程结算状态，修复结算单确认结算后工程状态不更新的问题，修改salarySheet.js中settle函数的工程状态更新逻辑，从检查settled_users改为检查子项目的完成和结算状态，添加详细日志输出，新增project_user_status表记录每个用户在每个项目中的结算状态，修复用户结算后其他用户工程状态受影响的问题，更新UI主色调为天之蓝色系（#e6f7ff、#0ea5e9、#0284c7、#0c4a6e），统一主页、工程管理、统计、我的页面的视觉风格，修复数据库初始化脚本问题：在DROP TABLE列表中添加project_user_status表，移除DELETE FROM messages语句，确保重新初始化数据库时所有表都被删除并重新创建，所有数据都会被清空，修复工程管理页面结算状态显示问题：修改getProjects函数，通过LEFT JOIN project_user_status表获取当前用户在每个项目中的独立结算状态，确保用户5结算工程A后，用户6在工程管理中看到的工程A显示的是用户6自己的结算状态而非工程A的结算状态，优化数据库设计：从projects表移除settlement_status和settled_users字段，将结算状态完全迁移到project_user_status表管理，实现工程状态全局统一（客观事实）和结算状态用户独立（个人行为）的分离，消除数据冗余和状态不一致风险，修改所有引用projects.settlement_status的代码，改为使用project_user_status.settlement_status，包括projects.js、salarySheet.js、settlements.js、statistics.js、testData.js、diagnose.js等文件，修复工程状态变更为已完成时结算状态不自动更新的问题：修改projects.js的updateProject函数，当工程状态从施工中变更为已完成时，自动将所有参与该工程的施工人员的结算状态设置为统计中（settling），确保工程完成后可以在统计页面的结算单中看到数据，修复结算完成后更新projects.settlement_status字段的错误：删除salarySheet.js中settle函数里尝试更新projects.settlement_status字段的代码，避免column settlement_status does not exist错误，新增后端计算结算金额接口POST /v1/settlements/calculate，前端调用后端计算接口获取结算金额，移除前端计算逻辑，确保数据一致性和安全性",
+  "main": "index.js",
+  "engines": {
+    "node": ">=24.0.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "start:ts": "ts-node index.ts",
+    "dev": "nodemon index.js",
+    "dev:ts": "nodemon --exec ts-node index.ts",
+    "build": "tsc",
+    "init-db": "node scripts/init-db.js",
+    "init-db-dev": "node scripts/init-db-dev.js",
+    "clear-db": "node scripts/clear-db.js",
+    "test": "jest --forceExit --detectOpenHandles",
+    "test:integration": "jest tests/integration/ --forceExit --detectOpenHandles",
+    "test:perf": "node tests/performance/statistics.bench.js && node tests/performance/settlement.bench.js"
+  },
+  "dependencies": {
+    "axios": "^1.13.2",
+    "bcryptjs": "^3.0.3",
+    "bullmq": "^5.0.0",
+    "dotenv": "^16.4.5",
+    "ioredis": "^5.4.1",
+    "joi": "^17.12.2",
+    "js-yaml": "^4.1.1",
+    "jsonwebtoken": "^9.0.2",
+    "knex": "^3.1.0",
+    "koa": "^2.15.3",
+    "koa-body": "^6.0.1",
+    "koa-jwt": "^4.0.4",
+    "koa-router": "^12.0.1",
+    "koa-static": "^5.0.0",
+    "koa2-cors": "^2.0.6",
+    "koa2-swagger-ui": "^5.10.0",
+    "moment": "^2.30.1",
+    "pdf-lib": "^1.17.1",
+    "pg": "^8.11.5",
+    "sqlite3": "^5.1.7",
+    "swagger-jsdoc": "^6.2.8",
+    "uuid": "^9.0.1",
+    "winston": "^3.11.0",
+    "winston-daily-rotate-file": "^4.7.1",
+    "xlsx": "^0.18.5",
+    "xlsx-js-style": "^1.2.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.0",
+    "@types/jsonwebtoken": "^9.0.0",
+    "@types/koa": "^2.15.0",
+    "@types/koa-bodyparser": "^4.3.0",
+    "@types/koa-router": "^7.4.0",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "nodemon": "^3.1.0",
+    "jest": "^29.7.0",
+    "supertest": "^6.3.4",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testTimeout": 30000,
+    "setupFilesAfterSetup": [],
+    "testMatch": [
+      "**/tests/integration/**/*.test.js"
+    ]
+  }
+}

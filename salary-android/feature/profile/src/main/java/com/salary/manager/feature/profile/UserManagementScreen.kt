@@ -1,0 +1,265 @@
+package com.salary.manager.feature.profile
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.LockReset
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.salary.core.design.theme.AppColors
+import com.salary.core.network.api.CreateUserRequest
+import com.salary.core.network.api.UserDto
+
+/**
+ * 用户管理页面（仅admin）
+ *
+ * 用户列表 + 创建/删除/重置密码
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun UserManagementScreen(
+    onBack: () -> Unit = {},
+    users: List<UserDto> = emptyList(),
+    onCreateUser: (CreateUserRequest, (String?) -> Unit) -> Unit = { _, callback -> callback(null) },
+    onResetPassword: (userId: Int, newPassword: String, callback: (String?) -> Unit) -> Unit = { _, _, callback -> callback(null) },
+    onDeleteUser: (userId: Int, callback: (String?) -> Unit) -> Unit = { _, callback -> callback(null) }
+) {
+    var showAddDialog by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("用户管理", fontSize = 20.sp, color = AppColors.TextPrimary) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回", tint = AppColors.TextPrimary)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showAddDialog = true }) {
+                        Icon(Icons.Default.Add, "添加用户", tint = AppColors.Green400)
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
+            )
+        },
+        containerColor = AppColors.Background
+    ) { padding ->
+        // 错误提示
+        if (errorMessage != null) {
+            Text(
+                errorMessage!!,
+                fontSize = 13.sp,
+                color = AppColors.Error,
+                modifier = Modifier.padding(padding).padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        }
+
+        if (users.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("暂无用户数据", fontSize = 16.sp, color = AppColors.TextTertiary)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(vertical = 8.dp)
+            ) {
+                items(users, key = { it.id }) { user ->
+                    UserCard(
+                        user = user,
+                        onResetPassword = {
+                            onResetPassword(user.id, "123456") { error ->
+                                errorMessage = error
+                            }
+                        },
+                        onDelete = {
+                            onDeleteUser(user.id) { error ->
+                                errorMessage = error
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    // 添加用户弹窗
+    if (showAddDialog) {
+        AddUserDialog(
+            onDismiss = { showAddDialog = false; errorMessage = null },
+            onConfirm = { request ->
+                onCreateUser(request) { error ->
+                    if (error != null) {
+                        errorMessage = error
+                    } else {
+                        showAddDialog = false
+                        errorMessage = null
+                    }
+                }
+            }
+        )
+    }
+}
+
+/**
+ * 用户卡片
+ */
+@Composable
+private fun UserCard(
+    user: UserDto,
+    onResetPassword: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(user.nickname, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AppColors.TextPrimary)
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = when (user.role) {
+                            "admin" -> AppColors.Error.copy(alpha = 0.1f)
+                            "constructor" -> AppColors.Green50
+                            else -> AppColors.SurfaceVariant
+                        }
+                    ) {
+                        Text(
+                            when (user.role) {
+                                "admin" -> "管理员"
+                                "constructor" -> "施工员"
+                                else -> "资料员"
+                            },
+                            fontSize = 12.sp,
+                            color = when (user.role) {
+                                "admin" -> AppColors.Error
+                                "constructor" -> AppColors.Green600
+                                else -> AppColors.TextSecondary
+                            },
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    val phone = user.phone
+                    if (!phone.isNullOrBlank()) {
+                        Text(phone, fontSize = 13.sp, color = AppColors.TextTertiary)
+                    }
+                }
+            }
+
+            // 操作按钮
+            IconButton(onClick = onResetPassword) {
+                Icon(Icons.Default.LockReset, "重置密码", tint = AppColors.TextTertiary, modifier = Modifier.size(20.dp))
+            }
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Default.Delete, "删除", tint = AppColors.Error.copy(alpha = 0.6f), modifier = Modifier.size(20.dp))
+            }
+        }
+    }
+}
+
+/**
+ * 添加用户弹窗
+ */
+@Composable
+private fun AddUserDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (CreateUserRequest) -> Unit
+) {
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var nickname by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
+    var selectedRole by remember { mutableStateOf("constructor") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(24.dp),
+        containerColor = Color.White,
+        title = { Text("添加用户", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = username, onValueChange = { username = it },
+                    label = { Text("用户名", fontSize = 13.sp) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = password, onValueChange = { password = it },
+                    label = { Text("密码", fontSize = 13.sp) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = nickname, onValueChange = { nickname = it },
+                    label = { Text("昵称", fontSize = 13.sp) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = phone, onValueChange = { phone = it },
+                    label = { Text("手机号（可选）", fontSize = 13.sp) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    singleLine = true
+                )
+                // 角色选择
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("施工员" to "constructor", "资料员" to "documenter").forEach { (label, value) ->
+                        FilterChip(
+                            selected = selectedRole == value,
+                            onClick = { selectedRole = value },
+                            label = { Text(label, fontSize = 13.sp) }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                if (username.isBlank() || password.isBlank() || nickname.isBlank()) return@TextButton
+                onConfirm(
+                    CreateUserRequest(
+                        username = username.trim(),
+                        password = password,
+                        nickname = nickname.trim(),
+                        phone = phone.ifBlank { null },
+                        role = selectedRole
+                    )
+                )
+            }) {
+                Text("确定", color = AppColors.Green400, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}

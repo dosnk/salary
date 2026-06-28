@@ -1,0 +1,112 @@
+# 三人行吊顶管理系统 - Docker Compose 部署配置
+#
+# 使用方法:
+#   docker compose up -d        # 启动所有服务
+#   docker compose logs -f      # 查看日志
+#   docker compose down         # 停止所有服务
+#   docker compose restart app  # 重启后端
+#
+# 热重载说明:
+#   后端源码目录已挂载到容器中，修改NAS上的代码文件后，
+#   nodemon会自动检测变化并重启应用，无需手动重建镜像。
+#   仅在package.json变化时需要重新构建: docker compose build app
+#
+# 首次部署:
+#   1. 修改 .env.docker 中的密码和密钥
+#   2. docker compose up -d
+#   3. docker compose exec app node scripts/init-db.js
+#   4. docker compose exec app node scripts/init-ai-tables.js
+#   5. docker compose exec app node scripts/seed-materials.js
+#   6.version: "3.8"
+
+services:
+  # PostgreSQL 数据库
+  db:
+    image: postgres:16-alpine
+    container_name: salary-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-salary}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-sj27fsAy7rSDDss6}
+      POSTGRES_DB: ${DB_NAME:-salary}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-salary}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis 缓存
+  redis:
+    image: redis:7-alpine
+    container_name: salary-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Node.js 后端应用（支持热重载）
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # 使用宿主机网络构建，绕过Docker DNS隔离问题
+      network: host
+    container_name: salary-app
+    restart: unless-stopped
+    # DNS配置（解决NAS环境DNS解析不稳定）
+    dns:
+      - 223.5.5.5
+      - 8.8.8.8
+      - 114.114.114.114
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DB_USER=${DB_USER:-salary}
+      - DB_HOST=db
+      - DB_NAME=${DB_NAME:-salary}
+      - DB_PASSWORD=${DB_PASSWORD:-sj27fsAy7rSDDss6}
+      - DB_PORT=5432
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JWT_SECRET=${JWT_SECRET}
+      - PORT=3000
+      - NODE_ENV=development
+      - LOG_DIR=./logs
+      - SERVER_URL=${SERVER_URL:-http://localhost:9393}
+    env_file:
+      - .env.docker
+    volumes:
+      # 挂载源码目录，实现热重载
+      # 修改NAS上的代码文件后，nodemon自动检测并重启
+      - ./:/app
+      # node_modules使用匿名卷，保留容器内安装的依赖
+      # 避免被宿主机（可能不存在的）node_modules覆盖
+      - /app/node_modules
+      - app-logs:/app/logs
+      - app-uploads:/app/temp
+    ports:
+      - "${APP_PORT:-9393}:3000"
+
+volumes:
+  pgdata:
+    driver: local
+  redisdata:
+    driver: local
+  app-logs:
+    driver: local
+  app-uploads:
+    driver: local

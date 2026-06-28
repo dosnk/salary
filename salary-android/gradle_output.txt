@@ -1,0 +1,310 @@
+﻿To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.9/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+> Task :core:design:preBuild UP-TO-DATE
+> Task :app:preBuild UP-TO-DATE
+> Task :core:data:preBuild UP-TO-DATE
+> Task :core:common:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :core:common:preDebugBuild UP-TO-DATE
+> Task :core:data:preDebugBuild UP-TO-DATE
+> Task :core:design:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:design:writeDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :core:data:writeDebugAarMetadata UP-TO-DATE
+> Task :core:common:writeDebugAarMetadata UP-TO-DATE
+> Task :feature:ai:preBuild UP-TO-DATE
+> Task :core:ui:preBuild UP-TO-DATE
+> Task :core:network:preBuild UP-TO-DATE
+> Task :core:network:preDebugBuild UP-TO-DATE
+> Task :feature:ai:preDebugBuild UP-TO-DATE
+> Task :core:ui:preDebugBuild UP-TO-DATE
+> Task :feature:auth:preBuild UP-TO-DATE
+> Task :feature:auth:preDebugBuild UP-TO-DATE
+> Task :feature:ai:writeDebugAarMetadata UP-TO-DATE
+> Task :core:ui:writeDebugAarMetadata UP-TO-DATE
+> Task :feature:home:preBuild UP-TO-DATE
+> Task :feature:home:preDebugBuild UP-TO-DATE
+> Task :feature:messages:preBuild UP-TO-DATE
+> Task :feature:messages:preDebugBuild UP-TO-DATE
+> Task :feature:auth:writeDebugAarMetadata UP-TO-DATE
+> Task :feature:profile:preBuild UP-TO-DATE
+> Task :feature:profile:preDebugBuild UP-TO-DATE
+> Task :feature:home:writeDebugAarMetadata UP-TO-DATE
+> Task :feature:statistics:preBuild UP-TO-DATE
+> Task :feature:statistics:preDebugBuild UP-TO-DATE
+> Task :feature:statistics:writeDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :core:common:generateDebugResValues UP-TO-DATE
+> Task :core:common:generateDebugResources UP-TO-DATE
+> Task :core:common:packageDebugResources UP-TO-DATE
+> Task :core:data:generateDebugResValues UP-TO-DATE
+> Task :core:network:writeDebugAarMetadata
+> Task :feature:profile:writeDebugAarMetadata
+> Task :core:data:generateDebugResources UP-TO-DATE
+> Task :core:network:generateDebugResValues UP-TO-DATE
+> Task :core:design:generateDebugResValues UP-TO-DATE
+> Task :core:design:generateDebugResources UP-TO-DATE
+> Task :core:data:packageDebugResources UP-TO-DATE
+> Task :core:ui:generateDebugResValues UP-TO-DATE
+> Task :core:design:packageDebugResources UP-TO-DATE
+> Task :feature:ai:generateDebugResValues UP-TO-DATE
+> Task :core:ui:generateDebugResources UP-TO-DATE
+> Task :feature:ai:generateDebugResources UP-TO-DATE
+> Task :core:ui:packageDebugResources UP-TO-DATE
+> Task :feature:auth:generateDebugResValues UP-TO-DATE
+> Task :feature:auth:generateDebugResources UP-TO-DATE
+> Task :feature:ai:packageDebugResources UP-TO-DATE
+> Task :feature:home:generateDebugResValues UP-TO-DATE
+> Task :feature:home:generateDebugResources UP-TO-DATE
+> Task :feature:messages:writeDebugAarMetadata
+> Task :feature:auth:packageDebugResources UP-TO-DATE
+> Task :core:network:generateDebugResources FROM-CACHE
+> Task :feature:messages:generateDebugResValues FROM-CACHE
+> Task :feature:messages:generateDebugResources FROM-CACHE
+> Task :core:network:packageDebugResources FROM-CACHE
+> Task :feature:profile:generateDebugResValues FROM-CACHE
+> Task :feature:profile:generateDebugResources FROM-CACHE
+> Task :feature:messages:packageDebugResources FROM-CACHE
+> Task :feature:profile:packageDebugResources FROM-CACHE
+> Task :core:common:extractDeepLinksDebug UP-TO-DATE
+> Task :feature:statistics:generateDebugResValues UP-TO-DATE
+> Task :feature:statistics:generateDebugResources UP-TO-DATE
+> Task :core:common:processDebugManifest UP-TO-DATE
+> Task :feature:home:packageDebugResources FROM-CACHE
+> Task :core:data:extractDeepLinksDebug UP-TO-DATE
+> Task :core:design:extractDeepLinksDebug UP-TO-DATE
+> Task :feature:statistics:packageDebugResources UP-TO-DATE
+> Task :core:data:processDebugManifest UP-TO-DATE
+> Task :core:network:extractDeepLinksDebug FROM-CACHE
+> Task :core:design:processDebugManifest UP-TO-DATE
+> Task :core:ui:extractDeepLinksDebug UP-TO-DATE
+> Task :feature:ai:extractDeepLinksDebug UP-TO-DATE
+> Task :core:ui:processDebugManifest UP-TO-DATE
+> Task :feature:auth:extractDeepLinksDebug UP-TO-DATE
+> Task :feature:ai:processDebugManifest UP-TO-DATE
+> Task :feature:home:extractDeepLinksDebug UP-TO-DATE
+> Task :feature:auth:processDebugManifest UP-TO-DATE
+> Task :core:network:processDebugManifest FROM-CACHE
+> Task :feature:profile:extractDeepLinksDebug FROM-CACHE
+> Task :feature:profile:processDebugManifest FROM-CACHE
+> Task :feature:statistics:extractDeepLinksDebug UP-TO-DATE
+> Task :feature:statistics:processDebugManifest UP-TO-DATE
+> Task :core:common:compileDebugLibraryResources UP-TO-DATE
+> Task :core:common:parseDebugLocalResources UP-TO-DATE
+> Task :core:common:generateDebugRFile UP-TO-DATE
+> Task :core:data:compileDebugLibraryResources UP-TO-DATE
+> Task :feature:messages:extractDeepLinksDebug FROM-CACHE
+> Task :core:data:parseDebugLocalResources UP-TO-DATE
+> Task :core:data:generateDebugRFile UP-TO-DATE
+> Task :core:design:compileDebugLibraryResources UP-TO-DATE
+> Task :core:design:parseDebugLocalResources UP-TO-DATE
+> Task :core:design:generateDebugRFile UP-TO-DATE
+> Task :feature:messages:processDebugManifest FROM-CACHE
+> Task :core:ui:compileDebugLibraryResources UP-TO-DATE
+> Task :core:network:compileDebugLibraryResources FROM-CACHE
+> Task :core:ui:parseDebugLocalResources UP-TO-DATE
+> Task :core:ui:generateDebugRFile UP-TO-DATE
+> Task :feature:ai:compileDebugLibraryResources UP-TO-DATE
+> Task :core:network:parseDebugLocalResources FROM-CACHE
+> Task :feature:ai:parseDebugLocalResources UP-TO-DATE
+> Task :feature:ai:generateDebugRFile UP-TO-DATE
+> Task :feature:auth:compileDebugLibraryResources UP-TO-DATE
+> Task :feature:auth:parseDebugLocalResources UP-TO-DATE
+> Task :feature:auth:generateDebugRFile UP-TO-DATE
+> Task :core:network:generateDebugRFile FROM-CACHE
+> Task :feature:messages:compileDebugLibraryResources FROM-CACHE
+> Task :feature:profile:compileDebugLibraryResources FROM-CACHE
+> Task :feature:profile:parseDebugLocalResources FROM-CACHE
+> Task :feature:messages:parseDebugLocalResources FROM-CACHE
+> Task :feature:messages:generateDebugRFile FROM-CACHE
+> Task :feature:statistics:compileDebugLibraryResources UP-TO-DATE
+> Task :feature:profile:generateDebugRFile FROM-CACHE
+> Task :core:common:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :feature:statistics:parseDebugLocalResources UP-TO-DATE
+> Task :feature:statistics:generateDebugRFile UP-TO-DATE
+> Task :core:data:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:data:javaPreCompileDebug UP-TO-DATE
+> Task :core:design:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:common:compileDebugKotlin UP-TO-DATE
+> Task :core:common:javaPreCompileDebug UP-TO-DATE
+> Task :core:common:compileDebugJavaWithJavac NO-SOURCE
+> Task :core:common:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :core:common:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :core:design:compileDebugKotlin UP-TO-DATE
+> Task :core:design:javaPreCompileDebug UP-TO-DATE
+> Task :core:design:compileDebugJavaWithJavac NO-SOURCE
+> Task :core:design:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :core:network:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:network:javaPreCompileDebug FROM-CACHE
+> Task :core:ui:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :feature:home:processDebugManifest FROM-CACHE
+> Task :feature:home:compileDebugLibraryResources FROM-CACHE
+> Task :feature:home:parseDebugLocalResources FROM-CACHE
+> Task :feature:home:generateDebugRFile FROM-CACHE
+> Task :core:ui:compileDebugKotlin UP-TO-DATE
+> Task :core:design:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :core:ui:javaPreCompileDebug UP-TO-DATE
+> Task :feature:ai:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:ui:compileDebugJavaWithJavac NO-SOURCE
+> Task :core:ui:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :feature:ai:javaPreCompileDebug UP-TO-DATE
+> Task :core:ui:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :feature:auth:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :feature:home:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :feature:auth:javaPreCompileDebug UP-TO-DATE
+> Task :feature:messages:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :feature:messages:javaPreCompileDebug FROM-CACHE
+> Task :feature:profile:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :feature:home:javaPreCompileDebug UP-TO-DATE
+> Task :feature:statistics:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :feature:statistics:javaPreCompileDebug UP-TO-DATE
+> Task :core:common:mergeDebugShaders UP-TO-DATE
+> Task :core:common:compileDebugShaders NO-SOURCE
+> Task :core:common:generateDebugAssets UP-TO-DATE
+> Task :core:common:packageDebugAssets UP-TO-DATE
+> Task :core:design:mergeDebugShaders UP-TO-DATE
+> Task :core:design:compileDebugShaders NO-SOURCE
+> Task :core:design:generateDebugAssets UP-TO-DATE
+> Task :core:design:packageDebugAssets UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :feature:profile:javaPreCompileDebug FROM-CACHE
+> Task :core:ui:mergeDebugShaders UP-TO-DATE
+> Task :core:ui:compileDebugShaders NO-SOURCE
+> Task :core:ui:generateDebugAssets UP-TO-DATE
+> Task :core:ui:packageDebugAssets UP-TO-DATE
+> Task :feature:ai:mergeDebugShaders UP-TO-DATE
+> Task :feature:ai:compileDebugShaders NO-SOURCE
+> Task :feature:ai:generateDebugAssets UP-TO-DATE
+> Task :feature:ai:packageDebugAssets UP-TO-DATE
+> Task :feature:auth:mergeDebugShaders UP-TO-DATE
+> Task :feature:auth:compileDebugShaders NO-SOURCE
+> Task :feature:auth:generateDebugAssets UP-TO-DATE
+> Task :feature:auth:packageDebugAssets UP-TO-DATE
+> Task :core:network:mergeDebugShaders
+> Task :core:network:compileDebugShaders NO-SOURCE
+> Task :core:network:generateDebugAssets UP-TO-DATE
+> Task :core:network:packageDebugAssets
+> Task :feature:messages:mergeDebugShaders
+> Task :feature:messages:compileDebugShaders NO-SOURCE
+> Task :feature:messages:generateDebugAssets UP-TO-DATE
+> Task :feature:messages:packageDebugAssets
+> Task :feature:profile:mergeDebugShaders
+> Task :feature:profile:compileDebugShaders NO-SOURCE
+> Task :feature:profile:generateDebugAssets UP-TO-DATE
+> Task :feature:home:mergeDebugShaders
+> Task :feature:home:compileDebugShaders NO-SOURCE
+> Task :feature:home:generateDebugAssets UP-TO-DATE
+> Task :feature:home:packageDebugAssets
+> Task :feature:statistics:mergeDebugShaders UP-TO-DATE
+> Task :feature:statistics:compileDebugShaders NO-SOURCE
+> Task :feature:statistics:generateDebugAssets UP-TO-DATE
+> Task :feature:statistics:packageDebugAssets UP-TO-DATE
+> Task :feature:profile:packageDebugAssets
+> Task :core:common:processDebugJavaRes UP-TO-DATE
+> Task :core:design:processDebugJavaRes UP-TO-DATE
+> Task :core:common:bundleLibRuntimeToDirDebug UP-TO-DATE
+> Task :core:design:bundleLibRuntimeToDirDebug UP-TO-DATE
+> Task :core:ui:processDebugJavaRes UP-TO-DATE
+> Task :core:ui:bundleLibRuntimeToDirDebug UP-TO-DATE
+> Task :core:data:kspDebugKotlin UP-TO-DATE
+> Task :core:common:mergeDebugJniLibFolders UP-TO-DATE
+> Task :core:common:mergeDebugNativeLibs NO-SOURCE
+> Task :core:common:copyDebugJniLibsProjectOnly UP-TO-DATE
+> Task :core:design:mergeDebugJniLibFolders UP-TO-DATE
+> Task :core:design:mergeDebugNativeLibs NO-SOURCE
+> Task :core:network:mergeDebugJniLibFolders
+> Task :core:network:mergeDebugNativeLibs NO-SOURCE
+> Task :core:design:copyDebugJniLibsProjectOnly UP-TO-DATE
+> Task :core:network:copyDebugJniLibsProjectOnly
+> Task :feature:ai:mergeDebugJniLibFolders UP-TO-DATE
+> Task :feature:ai:mergeDebugNativeLibs NO-SOURCE
+> Task :feature:ai:copyDebugJniLibsProjectOnly UP-TO-DATE
+> Task :feature:auth:mergeDebugJniLibFolders UP-TO-DATE
+> Task :feature:auth:mergeDebugNativeLibs NO-SOURCE
+> Task :feature:auth:copyDebugJniLibsProjectOnly UP-TO-DATE
+> Task :core:ui:mergeDebugJniLibFolders UP-TO-DATE
+> Task :core:ui:mergeDebugNativeLibs NO-SOURCE
+> Task :core:ui:copyDebugJniLibsProjectOnly UP-TO-DATE
+> Task :feature:home:mergeDebugJniLibFolders
+> Task :feature:home:mergeDebugNativeLibs NO-SOURCE
+> Task :feature:messages:mergeDebugJniLibFolders
+> Task :feature:messages:mergeDebugNativeLibs NO-SOURCE
+> Task :feature:messages:copyDebugJniLibsProjectOnly
+> Task :feature:profile:mergeDebugJniLibFolders
+> Task :feature:profile:mergeDebugNativeLibs NO-SOURCE
+> Task :feature:profile:copyDebugJniLibsProjectOnly
+> Task :feature:statistics:mergeDebugJniLibFolders UP-TO-DATE
+> Task :feature:statistics:mergeDebugNativeLibs NO-SOURCE
+> Task :feature:statistics:copyDebugJniLibsProjectOnly UP-TO-DATE
+> Task :core:common:stripDebugDebugSymbols NO-SOURCE
+> Task :core:common:copyDebugJniLibsProjectAndLocalJars UP-TO-DATE
+> Task :feature:home:copyDebugJniLibsProjectOnly
+> Task :core:design:stripDebugDebugSymbols NO-SOURCE
+> Task :core:design:copyDebugJniLibsProjectAndLocalJars
+> Task :core:common:extractDebugAnnotations UP-TO-DATE
+> Task :core:common:extractDeepLinksForAarDebug UP-TO-DATE
+> Task :core:common:mergeDebugGeneratedProguardFiles UP-TO-DATE
+> Task :core:common:mergeDebugConsumerProguardFiles UP-TO-DATE
+> Task :core:common:prepareDebugArtProfile UP-TO-DATE
+> Task :core:common:prepareLintJarForPublish UP-TO-DATE
+> Task :core:common:mergeDebugJavaResource UP-TO-DATE
+> Task :core:design:extractDebugAnnotations FROM-CACHE
+> Task :core:design:extractDeepLinksForAarDebug UP-TO-DATE
+> Task :core:design:mergeDebugGeneratedProguardFiles UP-TO-DATE
+> Task :core:design:mergeDebugConsumerProguardFiles UP-TO-DATE
+> Task :core:design:prepareDebugArtProfile UP-TO-DATE
+> Task :core:design:prepareLintJarForPublish UP-TO-DATE
+> Task :core:common:syncDebugLibJars FROM-CACHE
+> Task :core:common:bundleDebugAar
+> Task :core:common:assembleDebug
+> Task :core:network:stripDebugDebugSymbols NO-SOURCE
+> Task :core:network:copyDebugJniLibsProjectAndLocalJars
+> Task :core:network:extractDeepLinksForAarDebug UP-TO-DATE
+> Task :core:network:prepareDebugArtProfile UP-TO-DATE
+> Task :core:network:prepareLintJarForPublish UP-TO-DATE
+> Task :core:ui:stripDebugDebugSymbols NO-SOURCE
+> Task :core:ui:copyDebugJniLibsProjectAndLocalJars
+> Task :core:data:compileDebugKotlin FROM-CACHE
+> Task :core:ui:extractDebugAnnotations FROM-CACHE
+> Task :core:ui:extractDeepLinksForAarDebug UP-TO-DATE
+> Task :core:ui:mergeDebugGeneratedProguardFiles UP-TO-DATE
+> Task :core:ui:mergeDebugConsumerProguardFiles UP-TO-DATE
+> Task :core:ui:prepareDebugArtProfile UP-TO-DATE
+> Task :core:ui:prepareLintJarForPublish UP-TO-DATE
+> Task :core:data:compileDebugJavaWithJavac FROM-CACHE
+> Task :app:processDebugMainManifest FAILED
+> Task :core:data:transformDebugClassesWithAsm FROM-CACHE
+> Task :core:design:mergeDebugJavaResource
+> Task :core:ui:mergeDebugJavaResource
+.\gradlew.bat : 
+所在位置 行:1 字符: 43
++ ... \salary-android; .\gradlew.bat assembleDebug --no-daemon 2>&1 | Out-F ...
++                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:processDebugMainManifest'.
+> com.android.manifmerger.ManifestMerger2$MergeFailureException: java.nio.file.
+NoSuchFileException: F:\AIPoject\salary\salary-android\feature\home\build\inter
+mediates\navigation_json\debug\extractDeepLinksDebug\navigation.json
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 2m 2s
+210 actionable tasks: 26 executed, 37 from cache, 147 up-to-date

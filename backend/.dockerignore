@@ -1,0 +1,10 @@
+node_modules
+logs
+temp
+.env
+.env.test
+.env.docker
+.git
+testfile
+tests
+*.md

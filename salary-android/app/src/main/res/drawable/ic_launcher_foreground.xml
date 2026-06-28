@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 白色圆形背景 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,30 A24,24 0 1,1 54,78 A24,24 0 1,1 54,30 Z"/>
+    <!-- 薪资符号 ¥ -->
+    <path
+        android:fillColor="#4CAF50"
+        android:strokeColor="#4CAF50"
+        android:strokeWidth="3"
+        android:pathData="M44,42 L54,54 M62,42 L52,54 M46,54 L62,54 M48,58 L60,58 M48,62 L60,62"/>
+</vector>
