@@ -4,6 +4,8 @@ const auth = require('../middleware/auth');
 const validation = require('../middleware/validation');
 const { deduplicate } = require('../middleware/deduplicate');
 const { requireSettlementAccess } = require('../middleware/rbac');
+// 敏感操作限流：结算类接口10次/分钟/用户，防止误操作和恶意刷接口
+const { sensitiveLimiter } = require('../middleware/rateLimiter');
 
 const router = new Router({
   prefix: '/v1/settlements'
@@ -409,7 +411,7 @@ router.post('/wage-distributions/batch', auth.authenticate, requireSettlementAcc
  *                   data: null
  *                   msg: '数据库异常'
  */
-router.post('/', auth.authenticate, requireSettlementAccess(), deduplicate({ duration: 10 }), validation(settlementController.createSettlementSchema), settlementController.createSettlement);
+router.post('/', auth.authenticate, requireSettlementAccess(), sensitiveLimiter, deduplicate({ duration: 10 }), validation(settlementController.createSettlementSchema), settlementController.createSettlement);
 
 /**
  * @swagger

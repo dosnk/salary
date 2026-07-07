@@ -19,7 +19,7 @@ const generateEmbedding = async (text) => {
   const config = getProviderConfig();
 
   try {
-    const fetch = (await import('node-fetch')).default;
+    // 使用Node.js 18+内置的全局fetch
 
     // 大多数提供商兼容OpenAI的嵌入接口
     const response = await fetch(`${config.baseUrl}/embeddings`, {

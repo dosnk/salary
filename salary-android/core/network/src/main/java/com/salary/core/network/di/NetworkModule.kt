@@ -11,6 +11,7 @@ import com.salary.core.network.api.SettlementApi
 import com.salary.core.network.api.AdvanceApi
 import com.salary.core.network.api.SalarySheetApi
 import com.salary.core.network.api.StatisticsApi
+import com.salary.core.network.api.UploadApi
 import com.salary.core.network.api.UserApi
 import com.salary.core.network.interceptor.AuthInterceptor
 import com.salary.core.network.interceptor.LatencyInterceptor
@@ -18,7 +19,6 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -46,12 +46,39 @@ object NetworkModule {
         isLenient = true
     }
 
+    /**
+     * 日志拦截器
+     * - DEBUG构建：HEADERS级别，记录请求/响应头用于调试，但不记录请求/响应体（避免泄露Token和敏感数据）
+     * - RELEASE构建：NONE级别，完全禁用日志
+     *
+     * 安全说明：
+     * - 禁止使用BASIC或BODY级别，BASIC会暴露URL参数，BODY会完整打印Token和用户数据
+     * - HEADERS级别仍会记录Authorization头，通过logger自定义过滤掉敏感头
+     */
     @Provides
     @Singleton
-    fun provideLoggingInterceptor(): HttpLoggingInterceptor =
-        HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
+    fun provideLoggingInterceptor(): HttpLoggingInterceptor {
+        val logger = HttpLoggingInterceptor.Logger { message ->
+            // 过滤掉Authorization头，避免Token泄露到logcat
+            if (message.startsWith("Authorization:", ignoreCase = true)) {
+                return@Logger
+            }
+            // 过滤Cookie等敏感头
+            if (message.startsWith("Cookie:", ignoreCase = true) ||
+                message.startsWith("Set-Cookie:", ignoreCase = true)) {
+                return@Logger
+            }
+            // 使用系统println输出到logcat，便于调试时查看
+            println("[Network] $message")
         }
+        return HttpLoggingInterceptor(logger).apply {
+            level = if (com.salary.core.network.BuildConfig.DEBUG) {
+                HttpLoggingInterceptor.Level.HEADERS
+            } else {
+                HttpLoggingInterceptor.Level.NONE
+            }
+        }
+    }
 
     @Provides
     @Singleton
@@ -71,10 +98,9 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideRetrofit(okHttpClient: OkHttpClient, json: Json, serverConfig: ServerConfig): Retrofit {
-        // 从ServerConfig读取用户配置的服务器地址
-        val baseUrl = runBlocking {
-            serverConfig.getServerUrl().ifEmpty { ServerConfig.DEFAULT_URL + "/" }
-        }
+        // 同步读取服务器地址缓存，避免runBlocking阻塞线程池
+        // 注意：App启动时需先调用serverConfig.initConfig()初始化缓存
+        val baseUrl = serverConfig.getServerUrlSync().ifEmpty { ServerConfig.DEFAULT_URL + "/" }
         return Retrofit.Builder()
             .baseUrl(baseUrl)
             .client(okHttpClient)
@@ -121,4 +147,8 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideSalarySheetApi(retrofit: Retrofit): SalarySheetApi = retrofit.create(SalarySheetApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideUploadApi(retrofit: Retrofit): UploadApi = retrofit.create(UploadApi::class.java)
 }

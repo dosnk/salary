@@ -15,7 +15,7 @@ const { calculatePanelLayout } = require('./panelLayout');
 const { calculateKeel } = require('./keelCalculator');
 const { calculateTrim } = require('./trimCalculator');
 const { calculateAccessories } = require('./accessoriesCalc');
-const logger = require('../../../config/logger');
+const logger = require('../../config/logger');
 
 /**
  * 执行完整排料计算

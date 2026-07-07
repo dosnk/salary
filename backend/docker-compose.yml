@@ -31,8 +31,11 @@ services:
       POSTGRES_DB: ${DB_NAME:-salary}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # 端口仅绑定到127.0.0.1，禁止局域网/公网直接访问数据库
+    # 容器间通过Docker内部网络通信，app服务通过db:5432连接
+    # 如需外部工具调试，可临时改为 "5433:5432" 或使用SSH端口转发
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-salary}"]
       interval: 10s
@@ -44,13 +47,16 @@ services:
     image: redis:7-alpine
     container_name: salary-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    # 启用Redis密码认证，防止未授权访问
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:-sj27fsRedis2026}
     volumes:
       - redisdata:/data
+    # 端口仅绑定到127.0.0.1，禁止局域网/公网直接访问Redis
     ports:
-      - "6380:6379"
+      - "127.0.0.1:6380:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # 健康检查需带密码，否则AUTH失败
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-sj27fsRedis2026}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -82,6 +88,7 @@ services:
       - DB_PORT=5432
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-sj27fsRedis2026}
       - JWT_SECRET=${JWT_SECRET}
       - PORT=3000
       - NODE_ENV=development
@@ -95,11 +102,30 @@ services:
       - ./:/app
       # node_modules使用匿名卷，保留容器内安装的依赖
       # 避免被宿主机（可能不存在的）node_modules覆盖
+      # 注意：匿名卷为空时，容器启动会从 /opt/node_modules_seed 自动恢复
       - /app/node_modules
       - app-logs:/app/logs
-      - app-uploads:/app/temp
+      # 临时上传文件目录（koaBody中转使用，无需持久化）
+      - app-temp:/app/temp
+      # 附件最终存储目录，明确映射到宿主机 ./upload
+      # 后端按 /app/upload/YYYYMM/工程名/uuid.ext 结构存储
+      # 宿主机可直接在 ./upload 目录查看和备份附件
+      - ./upload:/app/upload
     ports:
       - "${APP_PORT:-9393}:3000"
+    # 启动命令：root启动→修复权限→降权到node运行应用
+    # 1. 修复挂载卷目录权限（绑定挂载和命名卷默认root归属，node用户无法写入）
+    # 2. 检查node_modules完整性，残缺则从种子副本恢复
+    # 3. 通过su-exec降权到node用户运行nodemon，应用以非root身份运行
+    command: >-
+      sh -c "chown -R node:node /app/logs /app/temp /app/upload /app/node_modules 2>/dev/null || true;
+      if [ ! -d /app/node_modules/dotenv ]; then
+        echo 'node_modules不完整，从种子副本恢复...';
+        rm -rf /app/node_modules;
+        cp -r /opt/node_modules_seed /app/node_modules;
+        chown -R node:node /app/node_modules;
+      fi;
+      exec su-exec node npx nodemon index.js"
 
 volumes:
   pgdata:
@@ -108,5 +134,5 @@ volumes:
     driver: local
   app-logs:
     driver: local
-  app-uploads:
+  app-temp:
     driver: local

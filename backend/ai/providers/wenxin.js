@@ -24,7 +24,7 @@ class WenxinProvider extends BaseProvider {
       return this.accessToken;
     }
 
-    const fetch = (await import('node-fetch')).default;
+    // 使用Node.js 18+内置的全局fetch
     const url = `https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=${this.apiKey}&client_secret=${this.config.secretKey}`;
 
     const response = await fetch(url, { method: 'POST' });
@@ -49,7 +49,7 @@ class WenxinProvider extends BaseProvider {
   }
 
   async chat(messages, options = {}) {
-    const fetch = (await import('node-fetch')).default;
+    // 使用Node.js 18+内置的全局fetch
     const token = await this.getAccessToken();
     const endpoint = this.getModelEndpoint();
     const url = `${this.baseUrl}${endpoint}?access_token=${token}`;
@@ -103,11 +103,11 @@ class WenxinProvider extends BaseProvider {
   }
 
   /**
-   * 流式对话 - 文心一言SSE格式
-   * 请求体添加 stream: true，返回SSE事件流
+   * 真流式对话 - 使用 response.body.getReader() 逐块读取
+   * 文心一言SSE格式与OpenAI不同：delta字段为 result，结束标记为 is_end
+   * 注意：文心流式接口不支持function_call，需走非流式chat方法
    */
   async chatStream(messages, onChunk, options = {}) {
-    const fetch = (await import('node-fetch')).default;
     const token = await this.getAccessToken();
     const endpoint = this.getModelEndpoint();
     const url = `${this.baseUrl}${endpoint}?access_token=${token}`;
@@ -134,31 +134,13 @@ class WenxinProvider extends BaseProvider {
       throw new Error(`文心一言流式API错误: ${response.status}`);
     }
 
-    let fullContent = '';
-
-    // 文心一言SSE格式: data: {json}\n\n
-    const text = await response.text();
-    const lines = text.split('\n').filter(l => l.startsWith('data: '));
-
-    for (const line of lines) {
-      const data = line.slice(6).trim();
-      if (data === '[DONE]') break;
-      try {
-        const parsed = JSON.parse(data);
-        // 文心流式返回字段为 result
-        const delta = parsed.result || '';
-        if (delta) {
-          fullContent += delta;
-          if (onChunk) onChunk(delta);
-        }
-        // 流式结束标记
-        if (parsed.is_end) break;
-      } catch (e) {
-        // 忽略解析错误
-      }
-    }
-
-    return { content: fullContent };
+    // 调用基类真流式读取，提供文心专属解析钩子
+    return await this.readStream(response, onChunk, {
+      // 文心流式返回字段为 result（非 choices[0].delta.content）
+      extractDelta: (parsed) => parsed.result || '',
+      // 文心流式结束标记为 is_end
+      isEnd: (parsed, rawData) => rawData === '[DONE]' || parsed.is_end === true,
+    });
   }
 }
 

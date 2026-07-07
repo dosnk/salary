@@ -71,7 +71,12 @@ const calculateQuantity = (unit, length, width) => {
 const calculateSubprojectAmount = (unit, length, width, price) => {
   const quantity = calculateQuantity(unit, length, width);
   const amount = quantity * price;
-  return { quantity, amount };
+
+  // 消除 JS 浮点运算误差（如 924.0000000000001）
+  // quantity 对应 NUMERIC(10,2)，保留2位小数；amount 对应 NUMERIC(14,4)，保留4位小数
+  const roundedQuantity = Math.round(quantity * 100) / 100;
+  const roundedAmount = Math.round(amount * 10000) / 10000;
+  return { quantity: roundedQuantity, amount: roundedAmount };
 };
 
 /**
@@ -281,7 +286,9 @@ const calculateSettlementPreview = async (projectIds, currentUserId) => {
     const userWorkday = userWorkdays[sp.project_id] || 0;
     const totalWorkday = totalWorkdays[sp.project_id] || 1;
 
-    const { userQuantity } = calculateUserWage(
+    // 同时获取 userQuantity 和 userAmount，金额直接使用 userAmount 避免浮点误差
+    // 修复：原使用 userQuantity * sp.price 计算金额，与 getProjects 不一致且存在精度问题
+    const { userQuantity, userAmount } = calculateUserWage(
       sp.amount,
       sp.quantity,
       project?.salary_distribution,
@@ -291,7 +298,7 @@ const calculateSettlementPreview = async (projectIds, currentUserId) => {
     );
 
     planTotals[planId].total_quantity += userQuantity;
-    planTotals[planId].total_amount += userQuantity * sp.price;
+    planTotals[planId].total_amount += userAmount;
   }
 
   const grandTotal = Object.values(planTotals).reduce((sum, pt) => sum + pt.total_amount, 0);

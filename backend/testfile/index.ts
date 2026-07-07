@@ -32,7 +32,6 @@ const dictionaryRouter = require('./routes/dictionary');
 const advancesRouter = require('./routes/advances');
 const messagesRouter = require('./routes/messages');
 const salarySheetRouter = require('./routes/salarySheet');
-const migrationRouter = require('./routes/migration');
 const aiRouter = require('./routes/ai');
 
 const app = new Koa();
@@ -131,7 +130,6 @@ app.use(dictionaryRouter.routes()).use(dictionaryRouter.allowedMethods());
 app.use(advancesRouter.routes()).use(advancesRouter.allowedMethods());
 app.use(messagesRouter.routes()).use(messagesRouter.allowedMethods());
 app.use(salarySheetRouter.routes()).use(salarySheetRouter.allowedMethods());
-app.use(migrationRouter.routes()).use(migrationRouter.allowedMethods());
 app.use(aiRouter.routes()).use(aiRouter.allowedMethods());
 
 // ========== 静态文件服务 ==========

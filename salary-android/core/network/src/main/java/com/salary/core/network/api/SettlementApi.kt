@@ -25,7 +25,7 @@ interface SettlementApi {
     @GET("v1/settlements")
     suspend fun getSettlements(
         @Query("page") page: Int = 1,
-        @Query("pageSize") pageSize: Int = 20
+        @Query("size") size: Int = 20
     ): ApiResponse<SettlementListResponse>
 
     /** 获取结算详情 */
@@ -40,7 +40,7 @@ interface SettlementApi {
     @GET("v1/settlements/history")
     suspend fun getSettlementHistory(
         @Query("page") page: Int = 1,
-        @Query("pageSize") pageSize: Int = 20
+        @Query("size") size: Int = 20
     ): ApiResponse<SettlementListResponse>
 }
 
@@ -89,5 +89,5 @@ data class SettlementListResponse(
     val list: List<SettlementDto>,
     val total: Int,
     val page: Int,
-    val pageSize: Int
+    val size: Int
 )

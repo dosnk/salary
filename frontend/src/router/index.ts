@@ -84,6 +84,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '用户管理', requiresAuth: true, roles: ['admin'] }
   },
   {
+    path: '/admin/ai-config',
+    name: 'AiConfig',
+    component: () => import('@/views/admin/AiConfig.vue'),
+    meta: { title: 'AI大模型配置', requiresAuth: true, roles: ['admin'] }
+  },
+  {
     path: '/403',
     name: 'Forbidden',
     component: () => import('@/views/Forbidden.vue'),

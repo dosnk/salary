@@ -1,6 +1,8 @@
 const Router = require('koa-router');
 const authController = require('../controllers/auth');
 const auth = require('../middleware/auth');
+// 登录接口限流：10次/分钟/IP，防止暴力破解密码
+const { loginLimiter } = require('../middleware/rateLimiter');
 
 const router = new Router({
   prefix: '/v1/auth'
@@ -109,7 +111,7 @@ const router = new Router({
  *                   data: null
  *                   msg: '服务器内部错误'
  */
-router.post('/login', authController.login);
+router.post('/login', loginLimiter, authController.login);
 
 // 刷新Token接口
 router.post('/refresh', authController.refreshToken);

@@ -42,7 +42,10 @@ const LOGIN_LOCK_DURATION = 30 * 60;     // 锁定时长30分钟（秒）
 const LOGIN_ATTEMPT_TTL = 30 * 60;       // 失败计数过期时间30分钟（秒）
 
 /** 密码加密轮次 */
-const SALT_ROUNDS = 10;
+// bcrypt盐值轮数：12轮（约250ms/次），符合2026年安全标准
+// 10轮已偏低，12轮提供约16倍更强的安全保护，且对登录性能影响可接受
+// 旧密码仍可正常验证（bcrypt自包含salt rounds），仅新密码使用12轮
+const SALT_ROUNDS = 12;
 
 /** 密码格式正则：至少6位，必须包含字母和数字 */
 const PASSWORD_REGEX = /^(?=.*[A-Za-z])(?=.*\d).{6,}$/;
@@ -239,9 +242,17 @@ module.exports = {
     const lockValue = await cache.get(lockKey);
     if (lockValue) {
       // 获取剩余锁定时间
-      const redis = require('../config/redis').getRedisClient();
-      const ttl = await redis.ttl(lockKey);
-      const remainMinutes = Math.ceil(ttl / 60);
+      const { getRedisClient, isRedisAvailable } = require('../config/redis');
+      let remainMinutes = 30; // 兜底值，防止Redis异常时无法获取TTL
+      if (isRedisAvailable()) {
+        try {
+          const redis = getRedisClient();
+          const ttl = await redis.ttl(lockKey);
+          remainMinutes = Math.ceil(ttl / 60);
+        } catch (error) {
+          logger.warn('获取登录锁定剩余时间失败', { username, error: error.message });
+        }
+      }
       throw new BusinessError(2002, `登录失败次数过多，请${remainMinutes}分钟后重试`);
     }
 
@@ -259,15 +270,23 @@ module.exports = {
     // 3. 验证密码
     const isMatch = await comparePassword(password, user.password);
     if (!isMatch) {
-      // 记录失败次数
-      const redis = require('../config/redis').getRedisClient();
-      const attempts = await redis.incr(attemptKey);
-      await redis.expire(attemptKey, LOGIN_ATTEMPT_TTL);
+      // 记录失败次数（Redis不可用时跳过，仅返回密码错误提示）
+      const { getRedisClient, isRedisAvailable } = require('../config/redis');
+      if (isRedisAvailable()) {
+        try {
+          const redis = getRedisClient();
+          const attempts = await redis.incr(attemptKey);
+          await redis.expire(attemptKey, LOGIN_ATTEMPT_TTL);
 
-      // 达到最大失败次数，锁定账户
-      if (attempts >= MAX_LOGIN_ATTEMPTS) {
-        await cache.set(lockKey, '1', LOGIN_LOCK_DURATION);
-        logger.warn(`用户 ${username} 登录失败${attempts}次，已锁定30分钟`);
+          // 达到最大失败次数，锁定账户
+          if (attempts >= MAX_LOGIN_ATTEMPTS) {
+            await cache.set(lockKey, '1', LOGIN_LOCK_DURATION);
+            logger.warn(`用户 ${username} 登录失败${attempts}次，已锁定30分钟`);
+          }
+        } catch (error) {
+          // Redis异常不阻塞登录失败流程，仅记录日志
+          logger.warn('记录登录失败次数失败', { username, error: error.message });
+        }
       }
 
       throw new BusinessError(2002, '用户名或密码错误');

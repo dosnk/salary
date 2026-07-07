@@ -1,13 +1,124 @@
+# ====================================
+# 三人行吊顶管理系统 - 根目录 .gitignore
+# ====================================
+
+# ---- 项目副本/调试目录 ----
+1/
+
+# ---- 工具记忆文件（Trae IDE 本地缓存） ----
+.memory/
+.trae/
+
+# ---- 构建日志/输出 ----
+build-log.txt
+build_output.txt
+*_log.txt
+*_output.txt
+*_error.txt
+gradle_*.log
+gradle_*.txt
+tasks_output.txt
+
+# ---- 依赖目录 ----
 node_modules/
-.DS_Store
+
+# ---- 构建产物 ----
 dist/
 build/
+.next/
+.nuxt/
+out/
+
+# ---- 环境变量（含敏感信息） ----
 .env
 .env.local
+.env.*.local
+.env.docker
+.env.docker.local
+
+# ---- 日志 ----
+logs/
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- 测试覆盖率 ----
+coverage/
+.nyc_output/
+
+# ---- 临时文件 ----
+temp/
+tmp/
+*.tmp
+*.bak
+*.swp
+
+# ---- 操作系统文件 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- IDE 配置 ----
 .vscode/
 .idea/
-__pycache__/
-*.pyc
-.next/
-coverage/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ---- Android 特定 ----
+# Gradle 缓存
+.gradle/
+.gradle-home/
+.gradle-home-new/
+gradle-home/
+# 本地配置（含 SDK 路径）
+local.properties
+# APK 构建输出
+*.apk
+*.aab
+*.ap_
+*.dex
+# 编译产物
+bin/
+gen/
+out/
+# Kotlin 编译缓存
+.kotlin/
+# KSP 缓存
+app/build/kspCaches/
+# 旧构建目录
+build_old_*/
+
+# ---- 前端特定 ----
+# Vite 自动生成的类型文件
+frontend/src/auto-imports.d.ts
+frontend/src/components.d.ts
+# 锁文件保留（package-lock.json 应该提交以保证依赖一致性）
+
+# ---- 后端特定 ----
+# 上传文件目录
+backend/upload/
+backend/temp/
+# 数据库备份
+*.sql.backup
+*.db.backup
+# 调试脚本
+backend/check-*.js
+backend/debug-*.js
+backend/diagnose-*.js
+# 测试文件备份
+backend/testfile/备份.zip
+
+# ---- Docker 数据卷 ----
+pgdata/
+redisdata/
+
+# ---- 备份目录 ----
+backend/备份/
+
+# ---- Legacy/废弃代码 ----
+backend/legacy/

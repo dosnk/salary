@@ -20,6 +20,9 @@ data class ProjectDto(
     @SerialName("salary_distribution")
     val salaryDistribution: String? = null,
     val workers: List<WorkerDto> = emptyList(),
+    /** 子项目列表（列表接口已聚合返回，避免N+1详情请求；字段名与详情接口一致） */
+    @SerialName("sub_projects")
+    val subprojects: List<SubprojectDto> = emptyList(),
     val description: String? = null,
     @SerialName("created_by")
     val createdBy: Int? = null,
@@ -84,13 +87,14 @@ data class SubprojectDto(
 /**
  * 施工人员DTO
  * 后端返回 id, username, nickname, workdays
+ * 注意：workdays后端为NUMERIC(6,2)，pg默认按字符串返回(如"1.00")，用Double?接收
  */
 @Serializable
 data class WorkerDto(
     val id: Int,
     val username: String? = null,
     val nickname: String,
-    val workdays: Int? = null
+    val workdays: Double? = null
 )
 
 /**
@@ -102,17 +106,53 @@ data class FileDto(
     val id: Int,
     @SerialName("filename")
     val fileName: String,
+    /** 原始文件名（后端返回 camelCase 别名 originalName，无需 @SerialName） */
+    val originalName: String? = null,
     @SerialName("path")
     val fileUrl: String,
     @SerialName("size")
     val fileSize: Long,
+    /** 文件 MIME 类型，如 image/jpeg、application/pdf */
+    val type: String? = null,
     @SerialName("created_at")
     val uploadedAt: String
 )
 
 /**
+ * 上传文件记录请求（第二步：关联工程）
+ * 后端 POST /v1/projects/:id/files 期望JSON请求体
+ * 字段：filename, originalName, path, size, type
+ */
+@Serializable
+data class ProjectFileRequest(
+    /** 文件名（建议用原始名） */
+    val filename: String,
+    /** 原始文件名 */
+    val originalName: String,
+    /** 文件访问路径（第一步上传返回的 url） */
+    val path: String,
+    /** 文件大小（字节） */
+    val size: Long,
+    /** 文件MIME类型 */
+    val type: String
+)
+
+/**
+ * 上传文件记录响应项
+ * 后端返回数组，每项含 filename 和 url
+ */
+@Serializable
+data class FileRecordDto(
+    val filename: String? = null,
+    val url: String? = null,
+    val size: Long = 0,
+    val type: String? = null
+)
+
+/**
  * 创建工程请求
  * 后端constructors期望对象数组: [{userId: 1}, {userId: 2}]
+ * 按工日分配模式下workerWorkDays传递每人工日数: [{userId: 1, workdays: 2.0}]
  */
 @Serializable
 data class CreateProjectRequest(
@@ -126,7 +166,10 @@ data class CreateProjectRequest(
     @SerialName("salaryDistribution")
     val salaryDistribution: String? = null,
     val constructors: List<ConstructorItem> = emptyList(),
-    val remark: String? = null
+    val remark: String? = null,
+    /** 按工日分配模式下的工日列表（可选） */
+    @SerialName("workerWorkDays")
+    val workerWorkDays: List<WorkerWorkdayItem>? = null
 )
 
 /**
@@ -138,15 +181,33 @@ data class ConstructorItem(
 )
 
 /**
+ * 施工人员工日项（按工日分配模式使用）
+ * 后端期望 {userId: number, workdays: number} 格式
+ */
+@Serializable
+data class WorkerWorkdayItem(
+    val userId: Int,
+    val workdays: Double
+)
+
+/**
  * 更新工程请求
  * 后端constructors期望对象数组: [{userId: 1}, {userId: 2}]
+ * 后端workerWorkDays期望对象数组: [{userId: 1, workdays: 2.0}]
+ * 所有字段可选，按需更新（Joi校验至少1个字段）
  */
 @Serializable
 data class UpdateProjectRequest(
     val name: String? = null,
     val status: String? = null,
     val remark: String? = null,
-    val constructors: List<ConstructorItem>? = null
+    val description: String? = null,
+    @SerialName("salaryDistribution")
+    val salaryDistribution: String? = null,
+    val constructors: List<ConstructorItem>? = null,
+    /** 按工日分配模式下的工日列表（可选） */
+    @SerialName("workerWorkDays")
+    val workerWorkDays: List<WorkerWorkdayItem>? = null
 )
 
 /**

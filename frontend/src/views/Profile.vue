@@ -81,6 +81,11 @@
             <span class="editable-text">用户管理</span>
           </template>
         </van-cell>
+        <van-cell v-if="isAdmin" title="AI大模型配置" is-link @click="router.push('/admin/ai-config')">
+          <template #title>
+            <span class="editable-text">AI大模型配置</span>
+          </template>
+        </van-cell>
         <van-cell v-if="isAdmin" title="数据迁移" is-link @click="router.push('/migrate')">
           <template #title>
             <span class="editable-text">数据迁移</span>

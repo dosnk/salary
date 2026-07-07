@@ -84,7 +84,8 @@ fun UserManagementScreen(
                     UserCard(
                         user = user,
                         onResetPassword = {
-                            onResetPassword(user.id, "123456") { error ->
+                            // 重置密码默认为sal123，符合后端"6-20位含字母和数字"的校验规则
+                            onResetPassword(user.id, "sal123") { error ->
                                 errorMessage = error
                             }
                         },
@@ -194,6 +195,8 @@ private fun AddUserDialog(
     var nickname by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
     var selectedRole by remember { mutableStateOf("constructor") }
+    // 本地校验错误提示
+    var localError by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -203,28 +206,28 @@ private fun AddUserDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
-                    value = username, onValueChange = { username = it },
+                    value = username, onValueChange = { username = it; localError = null },
                     label = { Text("用户名", fontSize = 13.sp) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp),
                     singleLine = true
                 )
                 OutlinedTextField(
-                    value = password, onValueChange = { password = it },
-                    label = { Text("密码", fontSize = 13.sp) },
+                    value = password, onValueChange = { password = it; localError = null },
+                    label = { Text("密码(6-20位，含字母和数字)", fontSize = 13.sp) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp),
                     singleLine = true
                 )
                 OutlinedTextField(
-                    value = nickname, onValueChange = { nickname = it },
+                    value = nickname, onValueChange = { nickname = it; localError = null },
                     label = { Text("昵称", fontSize = 13.sp) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp),
                     singleLine = true
                 )
                 OutlinedTextField(
-                    value = phone, onValueChange = { phone = it },
+                    value = phone, onValueChange = { phone = it; localError = null },
                     label = { Text("手机号（可选）", fontSize = 13.sp) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp),
@@ -240,20 +243,36 @@ private fun AddUserDialog(
                         )
                     }
                 }
+                // 本地校验错误提示
+                if (localError != null) {
+                    Text(localError!!, fontSize = 12.sp, color = AppColors.Error)
+                }
             }
         },
         confirmButton = {
             TextButton(onClick = {
-                if (username.isBlank() || password.isBlank() || nickname.isBlank()) return@TextButton
-                onConfirm(
-                    CreateUserRequest(
-                        username = username.trim(),
-                        password = password,
-                        nickname = nickname.trim(),
-                        phone = phone.ifBlank { null },
-                        role = selectedRole
-                    )
-                )
+                // 客户端校验：与后端Joi规则一致
+                when {
+                    username.isBlank() -> localError = "用户名不能为空"
+                    username.length < 2 -> localError = "用户名长度至少2位"
+                    password.isBlank() -> localError = "密码不能为空"
+                    password.length < 6 -> localError = "密码长度至少6位"
+                    password.length > 20 -> localError = "密码长度最多20位"
+                    !password.any { it.isLetter() } || !password.any { it.isDigit() } ->
+                        localError = "密码必须包含字母和数字"
+                    nickname.isBlank() -> localError = "昵称不能为空"
+                    else -> {
+                        onConfirm(
+                            CreateUserRequest(
+                                username = username.trim(),
+                                password = password,
+                                nickname = nickname.trim(),
+                                phone = phone.ifBlank { null },
+                                role = selectedRole
+                            )
+                        )
+                    }
+                }
             }) {
                 Text("确定", color = AppColors.Green400, fontWeight = FontWeight.Bold)
             }

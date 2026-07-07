@@ -55,24 +55,26 @@ const buildConstructorFilter = (userId, paramIndex) => {
 };
 
 /**
- * 解析月份列表为日期范围参数
- * 将 ['2025-01', '2025-02'] 转换为 ['2025-01-01', '2025-01-31', '2025-02-01', '2025-02-31']
+ * 解析月份列表为日期参数
+ * 将 ['2025-01', '2025-02'] 转换为 ['2025-01-01', '2025-02-01']
+ *
+ * Bug13修复：原实现使用 `${m}-31` 构造月末日期，2月会产生 '2025-02-31' 非法日期
+ * PostgreSQL 会自动转换为 '2025-03-03'，导致月份越界统计错误
+ * 改为：每个月份只传一个 'YYYY-MM-01' 参数，配合 date_trunc 按月比较
  *
  * @param {string[]} monthList - 月份列表，格式 'YYYY-MM'
- * @returns {string[]} 日期参数数组，每个月份产生 [月初, 月末] 两个参数
+ * @returns {string[]} 日期参数数组，每个月份产生一个 'YYYY-MM-01' 参数
  */
 const parseMonthDateParams = (monthList) => {
-  const params = [];
-  for (const m of monthList) {
-    params.push(`${m}-01`);
-    params.push(`${m}-31`);
-  }
-  return params;
+  return monthList.map(m => `${m}-01`);
 };
 
 /**
  * 构建多月份日期条件（参数化）
- * 生成类似 (sp.created_at >= $1 AND sp.created_at <= $2) OR (sp.created_at >= $3 AND sp.created_at <= $4)
+ * 生成类似 date_trunc('month', sp.created_at::date) = $1::date
+ * OR date_trunc('month', sp.created_at::date) = $2::date
+ *
+ * Bug13修复：改用 date_trunc 按月比较，避免月末日期计算问题
  *
  * @param {string[]} monthList - 月份列表
  * @param {number} startIndex - 参数起始索引
@@ -81,7 +83,7 @@ const parseMonthDateParams = (monthList) => {
  */
 const buildMonthDateConditions = (monthList, startIndex, dateColumn) => {
   return monthList
-    .map((_, i) => `(${dateColumn} >= $${startIndex + i * 2} AND ${dateColumn} <= $${startIndex + i * 2 + 1})`)
+    .map((_, i) => `date_trunc('month', ${dateColumn}::date) = $${startIndex + i}::date`)
     .join(' OR ');
 };
 
@@ -119,6 +121,7 @@ module.exports = {
       const dateConditions = buildMonthDateConditions(months, 1, 'sp.created_at');
 
       // ===== 1. 统计工资分配金额 =====
+      // Bug2修复：补充 p.status = 'completed' 过滤，与 getConstructionPlanStatistics 保持一致
       let distributionQuery = `
         SELECT
           SUM(sp.amount) AS total_amount,
@@ -126,6 +129,7 @@ module.exports = {
         FROM subprojects sp
         JOIN projects p ON sp.project_id = p.id
         WHERE sp.status = 'completed'
+          AND p.status = 'completed'
           AND (${dateConditions})
       `;
       let distributionParams = [...dateParams];
@@ -145,6 +149,50 @@ module.exports = {
       }
 
       const distributionResult = await pool.query(distributionQuery, distributionParams);
+
+      // ===== 1b. 统计已结算的工资分配金额（P6：通过 v_project_user_settlement_status 过滤已结算子项目金额） =====
+      // Bug2修复：补充 p.status = 'completed' 过滤，与主统计查询保持一致
+      let settledDistributionQuery = `
+        SELECT
+          SUM(sp.amount) AS settled_amount
+        FROM subprojects sp
+        JOIN projects p ON sp.project_id = p.id
+        WHERE sp.status = 'completed'
+          AND p.status = 'completed'
+          AND (${dateConditions})
+      `;
+      let settledDistributionParams = [...dateParams];
+      let settledParamIndex = settledDistributionParams.length + 1;
+
+      if (isConstructorUser) {
+        // 施工员：只统计自己参与且自己已结算的工程
+        settledDistributionQuery += `
+          AND EXISTS (
+            SELECT 1 FROM project_workers pw
+            WHERE pw.project_id = p.id
+              AND pw.user_id = $${settledParamIndex}
+          )
+          AND EXISTS (
+            SELECT 1 FROM v_project_user_settlement_status pus
+            WHERE pus.project_id = p.id
+              AND pus.user_id = $${settledParamIndex}
+              AND pus.settlement_status = 'settled'
+          )
+        `;
+        settledDistributionParams.push(userId);
+        settledParamIndex++;
+      } else {
+        // 管理员：统计存在已结算记录的工程（看全部）
+        settledDistributionQuery += `
+          AND EXISTS (
+            SELECT 1 FROM v_project_user_settlement_status pus
+            WHERE pus.project_id = p.id
+              AND pus.settlement_status = 'settled'
+          )
+        `;
+      }
+
+      const settledDistributionResult = await pool.query(settledDistributionQuery, settledDistributionParams);
 
       // ===== 2. 统计预支金额 =====
       const advanceDateConditions = buildMonthDateConditions(months, 1, 'wa.advance_date');
@@ -169,14 +217,15 @@ module.exports = {
 
       // ===== 3. 组装结果 =====
       const totalAmount = parseFloat(distributionResult.rows[0].total_amount) || 0;
+      const settledAmount = parseFloat(settledDistributionResult.rows[0].settled_amount) || 0;
       const totalAdvances = parseInt(advanceResult.rows[0].total_advances) || 0;
       const advanceAmount = parseFloat(advanceResult.rows[0].advance_amount) || 0;
 
       return {
         total_distributions: parseInt(distributionResult.rows[0].total_distributions) || 0,
         total_amount: totalAmount,
-        settled_amount: 0,
-        unsettled_amount: totalAmount,
+        settled_amount: settledAmount,
+        unsettled_amount: totalAmount - settledAmount,
         total_advances: totalAdvances,
         advance_amount: advanceAmount
       };
@@ -198,25 +247,38 @@ module.exports = {
   async getProjectStatistics({ userId, role }) {
     const isConstructorUser = isConstructor({ role });
 
-    // 统计各工程状态和结算状态的工程数量和金额
+    // Bug4/5修复：原SQL的视图与subprojects做LEFT JOIN产生笛卡尔积导致金额重复N×M倍
+    // 改为：先在子查询中聚合每个工程的子项目总额，再与视图关联，避免笛卡尔积
+    // Bug5修复：施工员分支的 JOIN project_workers 写在 LEFT JOIN 之后导致SQL结构错误，改为WHERE EXISTS
     let query = `
       SELECT
         p.status,
         pus.settlement_status,
         COUNT(DISTINCT p.id) AS project_count,
         COALESCE(SUM(p.total_amount), 0) AS total_amount,
-        COUNT(DISTINCT sp.id) AS subproject_count,
-        COALESCE(SUM(sp.amount), 0) AS subproject_amount
+        COALESCE(SUM(sp_agg.subproject_count), 0) AS subproject_count,
+        COALESCE(SUM(sp_agg.subproject_amount), 0) AS subproject_amount
       FROM projects p
+      LEFT JOIN LATERAL (
+        SELECT
+          sp.project_id,
+          COUNT(sp.id) AS subproject_count,
+          COALESCE(SUM(sp.amount), 0) AS subproject_amount
+        FROM subprojects sp
+        WHERE sp.project_id = p.id AND sp.status = 'completed'
+        GROUP BY sp.project_id
+      ) sp_agg ON true
       LEFT JOIN v_project_user_settlement_status pus ON p.id = pus.project_id
-      LEFT JOIN subprojects sp ON p.id = sp.project_id AND sp.status = 'completed'
     `;
 
-    // 施工员只能查看自己参与的工程
+    // 施工员只能查看自己参与的工程（用WHERE EXISTS替代JOIN，避免改变LEFT JOIN语义）
     if (isConstructorUser) {
       query += `
-        JOIN project_workers pw ON p.id = pw.project_id
-        WHERE pw.user_id = $1
+        WHERE EXISTS (
+          SELECT 1 FROM project_workers pw
+          WHERE pw.project_id = p.id
+            AND pw.user_id = $1
+        )
       `;
     }
 
@@ -313,28 +375,34 @@ module.exports = {
   async getIncomeStatistics({ userId, role, startDate, endDate }) {
     const isConstructorUser = isConstructor({ role });
 
-    // ===== 1. 统计"统计中"(settling)的工程总金额 =====
+    // P7：判断是否使用自定义日期范围（startDate/endDate 同时存在时按区间过滤，否则保持原有本年/本月逻辑）
+    const useDateRange = !!(startDate && endDate);
+
+    // ===== 1. 统计"统计中"(settling)的工程金额（P3：金额源改为 subprojects.amount，与月度统计口径一致） =====
+    // Bug1修复：管理员不应过滤 pus.user_id（视图对管理员默认unsettled，导致看不到数据）
+    // 改为：施工员按 pus.user_id 过滤自己的结算状态；管理员聚合所有用户的settling工程
     let settlingQuery = `
       SELECT
-        COALESCE(SUM(p.total_amount), 0) AS settling_amount,
+        COALESCE(SUM(sp.amount), 0) AS settling_amount,
         COUNT(DISTINCT p.id) AS settling_count,
         COUNT(DISTINCT CASE WHEN EXTRACT(YEAR FROM p.created_at) = EXTRACT(YEAR FROM CURRENT_DATE)
           AND EXTRACT(MONTH FROM p.created_at) = EXTRACT(MONTH FROM CURRENT_DATE)
           THEN p.id END) AS this_month_count
       FROM projects p
       INNER JOIN v_project_user_settlement_status pus ON p.id = pus.project_id
+      LEFT JOIN subprojects sp ON p.id = sp.project_id AND sp.status = 'completed'
       WHERE pus.settlement_status = 'settling'
-        AND pus.user_id = $1
     `;
-    let settlingParams = [userId];
+    let settlingParams = [];
 
-    // 施工员只能查看自己参与工程的统计
+    // 施工员只能查看自己参与工程的统计（按自己的结算状态过滤）
     if (isConstructorUser) {
       settlingQuery += `
+        AND pus.user_id = $1
         AND EXISTS (
           SELECT 1 FROM project_workers pw
           WHERE pw.project_id = p.id
-            AND pw.user_id = $2
+            AND pw.user_id = $1
         )
       `;
       settlingParams.push(userId);
@@ -342,92 +410,135 @@ module.exports = {
 
     const settlingResult = await pool.query(settlingQuery, settlingParams);
 
-    // ===== 2. 统计"未结算"(unsettled)的工程总金额（只统计施工中的工程） =====
+    // ===== 2. 统计"未结算"(unsettled)的工程金额（P3：金额源改 subprojects；P8：状态含已完工工程） =====
+    // Bug1修复：管理员不过滤 pus.user_id（LEFT JOIN 条件不限制user_id，聚合所有用户状态）
     let unsettledQuery = `
       SELECT
-        COALESCE(SUM(p.total_amount), 0) AS unsettled_amount,
+        COALESCE(SUM(sp.amount), 0) AS unsettled_amount,
         COUNT(DISTINCT p.id) AS unsettled_count,
         COUNT(DISTINCT CASE WHEN EXTRACT(YEAR FROM p.created_at) = EXTRACT(YEAR FROM CURRENT_DATE)
           AND EXTRACT(MONTH FROM p.created_at) = EXTRACT(MONTH FROM CURRENT_DATE)
           THEN p.id END) AS this_month_count
       FROM projects p
-      LEFT JOIN v_project_user_settlement_status pus ON p.id = pus.project_id AND pus.user_id = $1
-      WHERE p.status = 'constructing'
+      LEFT JOIN v_project_user_settlement_status pus ON p.id = pus.project_id
+      LEFT JOIN subprojects sp ON p.id = sp.project_id AND sp.status = 'completed'
+      WHERE p.status IN ('constructing', 'completed')
         AND (pus.settlement_status IS NULL OR pus.settlement_status = 'unsettled')
     `;
-    let unsettledParams = [userId];
+    let unsettledParams = [];
 
-    // 施工员只能查看自己参与工程的统计
+    // 施工员只能查看自己参与工程的统计（按自己结算状态过滤）
     if (isConstructorUser) {
-      unsettledQuery += `
-        AND EXISTS (
-          SELECT 1 FROM project_workers pw
-          WHERE pw.project_id = p.id
-            AND pw.user_id = $2
-        )
+      unsettledQuery = `
+        SELECT
+          COALESCE(SUM(sp.amount), 0) AS unsettled_amount,
+          COUNT(DISTINCT p.id) AS unsettled_count,
+          COUNT(DISTINCT CASE WHEN EXTRACT(YEAR FROM p.created_at) = EXTRACT(YEAR FROM CURRENT_DATE)
+            AND EXTRACT(MONTH FROM p.created_at) = EXTRACT(MONTH FROM CURRENT_DATE)
+            THEN p.id END) AS this_month_count
+        FROM projects p
+        LEFT JOIN v_project_user_settlement_status pus ON p.id = pus.project_id AND pus.user_id = $1
+        LEFT JOIN subprojects sp ON p.id = sp.project_id AND sp.status = 'completed'
+        WHERE p.status IN ('constructing', 'completed')
+          AND (pus.settlement_status IS NULL OR pus.settlement_status = 'unsettled')
+          AND EXISTS (
+            SELECT 1 FROM project_workers pw
+            WHERE pw.project_id = p.id
+              AND pw.user_id = $1
+          )
       `;
       unsettledParams.push(userId);
     }
 
     const unsettledResult = await pool.query(unsettledQuery, unsettledParams);
 
-    // ===== 3. 统计"已结算"(settled)的工程总金额（只统计本年度） =====
+    // ===== 3. 统计"已结算"(settled)的工程金额（P3：金额源改 subprojects；P7：支持自定义日期范围） =====
+    // Bug1修复：管理员不应过滤 pus.user_id；施工员按自己结算状态过滤
     let settledQuery = `
       SELECT
-        COALESCE(SUM(p.total_amount), 0) AS settled_amount,
+        COALESCE(SUM(sp.amount), 0) AS settled_amount,
         COUNT(DISTINCT p.id) AS settled_count,
         COUNT(DISTINCT CASE WHEN EXTRACT(YEAR FROM p.created_at) = EXTRACT(YEAR FROM CURRENT_DATE)
           AND EXTRACT(MONTH FROM p.created_at) = EXTRACT(MONTH FROM CURRENT_DATE)
           THEN p.id END) AS this_month_count
       FROM projects p
       INNER JOIN v_project_user_settlement_status pus ON p.id = pus.project_id
+      LEFT JOIN subprojects sp ON p.id = sp.project_id AND sp.status = 'completed'
       WHERE pus.settlement_status = 'settled'
-        AND pus.user_id = $1
-        AND EXTRACT(YEAR FROM p.created_at) = EXTRACT(YEAR FROM CURRENT_DATE)
     `;
-    let settledParams = [userId];
+    let settledParams = [];
+    let settledParamIndex = 1;
 
-    // 施工员只能查看自己参与工程的统计
+    // P7：时间过滤，传入日期范围时按区间过滤，否则保持本年过滤
+    if (useDateRange) {
+      settledQuery += ` AND p.created_at >= $${settledParamIndex} AND p.created_at <= $${settledParamIndex + 1} `;
+      settledParams.push(startDate, endDate);
+      settledParamIndex += 2;
+    } else {
+      settledQuery += ` AND EXTRACT(YEAR FROM p.created_at) = EXTRACT(YEAR FROM CURRENT_DATE) `;
+    }
+
+    // 施工员只能查看自己参与工程的统计（按自己结算状态过滤）
     if (isConstructorUser) {
       settledQuery += `
+        AND pus.user_id = $${settledParamIndex}
         AND EXISTS (
           SELECT 1 FROM project_workers pw
           WHERE pw.project_id = p.id
-            AND pw.user_id = $2
+            AND pw.user_id = $${settledParamIndex}
         )
       `;
       settledParams.push(userId);
+      settledParamIndex++;
     }
 
     const settledResult = await pool.query(settledQuery, settledParams);
 
-    // ===== 4. 统计已结算工程的预支金额（本年度未结算的预支记录） =====
+    // ===== 4. 统计未结算的预支金额（P5：去除 project_workers/projects 笛卡尔积，直接查 wage_advances） =====
     let settledAdvanceQuery = `
       SELECT
         COALESCE(SUM(wa.advance_amount), 0) AS settled_advance_amount
       FROM wage_advances wa
-      JOIN project_workers pw ON wa.user_id = pw.user_id
-      JOIN projects p ON pw.project_id = p.id
-      INNER JOIN v_project_user_settlement_status pus ON p.id = pus.project_id
-      WHERE pus.settlement_status = 'settled'
-        AND pus.user_id = $1
+      WHERE wa.user_id = $1
         AND wa.settled = false
-        AND EXTRACT(YEAR FROM p.created_at) = EXTRACT(YEAR FROM CURRENT_DATE)
     `;
     let settledAdvanceParams = [userId];
 
-    // 施工员只能查看自己参与工程的预支金额
-    if (isConstructorUser) {
-      settledAdvanceQuery += ` AND pw.user_id = $2 `;
-      settledAdvanceParams.push(userId);
-    }
-
     const settledAdvanceResult = await pool.query(settledAdvanceQuery, settledAdvanceParams);
 
-    // 计算已结算实际金额（工程总金额 - 未结算的预支金额）
+    // Bug6修复：已结算实际金额应使用 wage_settlements.actual_amount 聚合
+    // 原公式"已结算工程总额 - 未结算预支"逻辑混乱（两个概念不相关）
+    // 改为：从已确认的结算单中聚合 actual_amount
+    let settledActualQuery = `
+      SELECT
+        COALESCE(SUM(ws.actual_amount), 0) AS settled_actual_amount
+      FROM wage_settlements ws
+      WHERE ws.confirmed = true
+    `;
+    let settledActualParams = [];
+
+    // 施工员只能查看自己已确认结算单的实际金额
+    if (isConstructorUser) {
+      settledActualQuery += `
+        AND EXISTS (
+          SELECT 1 FROM wage_distributions wd
+          JOIN subprojects sp ON wd.subproject_id = sp.id
+          JOIN project_workers pw ON sp.project_id = pw.project_id
+          WHERE wd.settlement_id = ws.id
+            AND pw.user_id = $1
+        )
+      `;
+      settledActualParams.push(userId);
+    }
+
+    const settledActualResult = await pool.query(settledActualQuery, settledActualParams);
+
+    // 已结算工程总额（来自subprojects.amount聚合）
     const settledAmount = parseFloat(settledResult.rows[0].settled_amount) || 0;
+    // 未结算预支总额
     const settledAdvanceAmount = parseFloat(settledAdvanceResult.rows[0].settled_advance_amount) || 0;
-    const settledActualAmount = settledAmount - settledAdvanceAmount;
+    // Bug6修复：已结算实际金额取自己确认结算单的actual_amount聚合
+    const settledActualAmount = parseFloat(settledActualResult.rows[0].settled_actual_amount) || 0;
 
     // ===== 5. 统计用户未确认的结算记录 =====
     let userUnconfirmedQuery = `
@@ -483,16 +594,26 @@ module.exports = {
 
     const userConfirmedResult = await pool.query(userConfirmedQuery, userConfirmedParams);
 
-    // ===== 7. 统计本月工程 =====
+    // ===== 7. 统计本月/区间内工程（P3：金额源改 subprojects；P7：支持自定义日期范围） =====
     let thisMonthQuery = `
       SELECT
-        COALESCE(SUM(p.total_amount), 0) AS this_month_amount,
+        COALESCE(SUM(sp.amount), 0) AS this_month_amount,
         COUNT(DISTINCT p.id) AS this_month_count
       FROM projects p
-      WHERE EXTRACT(YEAR FROM p.created_at) = EXTRACT(YEAR FROM CURRENT_DATE)
-        AND EXTRACT(MONTH FROM p.created_at) = EXTRACT(MONTH FROM CURRENT_DATE)
+      LEFT JOIN subprojects sp ON p.id = sp.project_id AND sp.status = 'completed'
+      WHERE 
     `;
     let thisMonthParams = [];
+    let thisMonthParamIndex = 1;
+
+    // P7：时间过滤，传入日期范围时按区间过滤，否则保持本月过滤
+    if (useDateRange) {
+      thisMonthQuery += ` p.created_at >= $${thisMonthParamIndex} AND p.created_at <= $${thisMonthParamIndex + 1} `;
+      thisMonthParams.push(startDate, endDate);
+      thisMonthParamIndex += 2;
+    } else {
+      thisMonthQuery += ` EXTRACT(YEAR FROM p.created_at) = EXTRACT(YEAR FROM CURRENT_DATE) AND EXTRACT(MONTH FROM p.created_at) = EXTRACT(MONTH FROM CURRENT_DATE) `;
+    }
 
     // 施工员只能查看自己参与的工程
     if (isConstructorUser) {
@@ -500,10 +621,11 @@ module.exports = {
         AND EXISTS (
           SELECT 1 FROM project_workers pw
           WHERE pw.project_id = p.id
-            AND pw.user_id = $1
+            AND pw.user_id = $${thisMonthParamIndex}
         )
       `;
       thisMonthParams.push(userId);
+      thisMonthParamIndex++;
     }
 
     const thisMonthResult = await pool.query(thisMonthQuery, thisMonthParams);
@@ -620,6 +742,8 @@ module.exports = {
   async getWorkerStatistics({ userId, role }) {
     const isConstructorUser = isConstructor({ role });
 
+    // Bug14修复：原SQL使用 CROSS JOIN subprojects sp + EXISTS 过滤，产生 users × subprojects 笛卡尔积，性能差
+    // 改为：直接 JOIN project_workers 关联用户与工程，再 JOIN subprojects 获取子项目数据
     let query = `
       SELECT
         u.id AS user_id,
@@ -628,10 +752,10 @@ module.exports = {
         COUNT(DISTINCT sp.id) AS completed_count,
         SUM(sp.amount) AS completed_amount,
         COUNT(DISTINCT p.id) AS project_count
-      FROM subprojects sp
-      JOIN projects p ON sp.project_id = p.id
-      JOIN project_workers pw ON p.id = pw.project_id
-      JOIN users u ON pw.user_id = u.id
+      FROM users u
+      JOIN project_workers pw ON u.id = pw.user_id
+      JOIN projects p ON pw.project_id = p.id
+      JOIN subprojects sp ON sp.project_id = p.id
       WHERE sp.status = 'completed'
         AND p.status = 'completed'
     `;

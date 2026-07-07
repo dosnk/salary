@@ -17,7 +17,11 @@ const logger = require('../config/logger');
  */
 const findById = async (id) => {
   const result = await pool.query(
-    'SELECT * FROM projects WHERE id = $1',
+    `SELECT id, name, description, status, COALESCE(total_amount, 0) AS total_amount,
+            salary_distribution, total_work_days, settled_by, created_by,
+            TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+            TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
+     FROM projects WHERE id = $1`,
     [id]
   );
   return result.rows[0] || null;
@@ -73,12 +77,14 @@ const update = async (id, updates, client) => {
   let paramIndex = 1;
 
   // 字段名到数据库列名的映射
+  // 注意：键必须使用 camelCase，与 projectService.updateProject 传入的键名保持一致
   const fieldToColumn = {
     name: 'name',
     description: 'description',
     status: 'status',
     salaryDistribution: 'salary_distribution',
-    totalWorkDays: 'total_work_days'
+    totalWorkDays: 'total_work_days',
+    remark: 'remark'
   };
 
   for (const [field, value] of Object.entries(updates)) {
@@ -181,19 +187,34 @@ const listWithFilters = async (filters) => {
       pus.settlement_id AS settlement_id,
       (SELECT COUNT(*) FROM files WHERE project_id = p.id) AS files_count,
       COALESCE(
-        (SELECT JSON_AGG(JSON_BUILD_OBJECT('id', u.id, 'username', u.username, 'nickname', u.nickname))
+        (SELECT JSON_AGG(JSON_BUILD_OBJECT('id', u.id, 'username', u.username, 'nickname', u.nickname, 'workdays', pw2.workdays))
          FROM project_workers pw2
          JOIN users u ON pw2.user_id = u.id
          WHERE pw2.project_id = p.id),
         '[]'
-      ) AS workers,
+      ) AS workers
+      -- constructors 与 workers 子查询完全相同，此处移除以避免重复执行
+      -- 在 service 层将 workers 同时作为 constructors 返回
+      ,
+      -- 子项目列表（聚合返回，避免前端发起N+1详情请求）
+      -- 字段与详情接口 getDetailById 保持一致：space_type_name、construction_plan_name 等
       COALESCE(
-        (SELECT JSON_AGG(JSON_BUILD_OBJECT('id', u.id, 'username', u.username, 'nickname', u.nickname))
-         FROM project_workers pw2
-         JOIN users u ON pw2.user_id = u.id
-         WHERE pw2.project_id = p.id),
+        (SELECT JSON_AGG(JSON_BUILD_OBJECT(
+            'id', sp.id,
+            'space_type_name', st.name,
+            'construction_plan_name', cp.name,
+            'length', sp.length,
+            'width', sp.width,
+            'quantity', sp.quantity,
+            'amount', sp.amount,
+            'status', sp.status
+          ) ORDER BY sp.created_at DESC)
+         FROM subprojects sp
+         LEFT JOIN space_types st ON sp.space_type_id = st.id
+         LEFT JOIN construction_plans cp ON sp.construction_plan_id = cp.id
+         WHERE sp.project_id = p.id),
         '[]'
-      ) AS constructors
+      ) AS sub_projects
     FROM projects p
     LEFT JOIN v_project_user_settlement_status pus ON p.id = pus.project_id AND pus.user_id = $1`;
 
@@ -495,54 +516,87 @@ const getWorkers = async (projectId) => {
 
 /**
  * 批量添加施工人员（参数化查询，避免 SQL 注入）
+ * 支持同时写入工日数（按工日分配模式下使用）
  * @param {number} projectId - 工程ID
- * @param {number[]} userIds - 用户ID数组
+ * @param {Array<number|{userId: number, workdays?: number}>} workers - 施工人员数组
+ *        支持两种格式：纯ID数组 [1, 2, 3] 或对象数组 [{userId: 1, workdays: 2.0}, ...]
  * @param {object} [client] - pg 事务客户端，不传则使用连接池
  * @returns {Promise<void>}
  */
-const addWorkers = async (projectId, userIds, client) => {
-  if (!userIds || userIds.length === 0) {
+const addWorkers = async (projectId, workers, client) => {
+  if (!workers || workers.length === 0) {
     return;
   }
 
   const executor = client || pool;
 
-  // 构建参数化批量插入：每个 (project_id, user_id) 对使用独立占位符
+  // 统一转换为对象格式，提取 userId 和 workdays
+  const normalizedWorkers = workers.map(w => {
+    if (typeof w === 'number') {
+      return { userId: w, workdays: null };
+    }
+    return { userId: w.userId, workdays: w.workdays ?? null };
+  });
+
+  // 构建参数化批量插入：每个 (project_id, user_id, workdays) 使用独立占位符
+  // workdays 为 null 时使用数据库默认值，不为 null 时写入指定工日数
   const valuePlaceholders = [];
   const params = [];
   let paramIndex = 1;
 
-  for (const uid of userIds) {
-    valuePlaceholders.push(`($${paramIndex}, $${paramIndex + 1})`);
-    params.push(projectId, uid);
-    paramIndex += 2;
+  for (const worker of normalizedWorkers) {
+    if (worker.workdays !== null) {
+      // 按工日分配模式：写入工日数
+      valuePlaceholders.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2})`);
+      params.push(projectId, worker.userId, worker.workdays);
+      paramIndex += 3;
+    } else {
+      // 平均分配模式：不写入工日数，使用数据库默认值
+      valuePlaceholders.push(`($${paramIndex}, $${paramIndex + 1})`);
+      params.push(projectId, worker.userId);
+      paramIndex += 2;
+    }
+  }
+
+  // 根据是否有 workdays 动态构建 INSERT 语句
+  // 由于不同行的占位符数量可能不同（有/无 workdays），需要分别处理
+  // 简化方案：统一使用三列插入，workdays 为 null 时显式传入 NULL
+  const unifiedPlaceholders = [];
+  const unifiedParams = [];
+  let unifiedIndex = 1;
+
+  for (const worker of normalizedWorkers) {
+    unifiedPlaceholders.push(`($${unifiedIndex}, $${unifiedIndex + 1}, $${unifiedIndex + 2})`);
+    unifiedParams.push(projectId, worker.userId, worker.workdays);
+    unifiedIndex += 3;
   }
 
   await executor.query(
-    `INSERT INTO project_workers (project_id, user_id) VALUES ${valuePlaceholders.join(', ')} ON CONFLICT DO NOTHING`,
-    params
+    `INSERT INTO project_workers (project_id, user_id, workdays) VALUES ${unifiedPlaceholders.join(', ')} ON CONFLICT DO NOTHING`,
+    unifiedParams
   );
 };
 
 /**
  * 替换施工人员（先删除旧的，再批量添加新的）
+ * 支持同时写入工日数（按工日分配模式下使用）
  * @param {number} projectId - 工程ID
- * @param {number[]} userIds - 新的用户ID数组
+ * @param {Array<number|{userId: number, workdays?: number}>} workers - 施工人员数组
  * @param {object} [client] - pg 事务客户端，不传则使用连接池
  * @returns {Promise<void>}
  */
-const replaceWorkers = async (projectId, userIds, client) => {
+const replaceWorkers = async (projectId, workers, client) => {
   const executor = client || pool;
 
-  // 先删除旧的施工人员
+  // 先删除旧的施工人员（包括其工日数据）
   await executor.query(
     'DELETE FROM project_workers WHERE project_id = $1',
     [projectId]
   );
 
-  // 再批量添加新的施工人员
-  if (userIds && userIds.length > 0) {
-    await addWorkers(projectId, userIds, executor);
+  // 再批量添加新的施工人员（含工日数据）
+  if (workers && workers.length > 0) {
+    await addWorkers(projectId, workers, executor);
   }
 };
 
@@ -936,6 +990,18 @@ const createProjectWithSubproject = async (data) => {
 
     // 创建新工程
     if (isNewProject) {
+      // 事务内并发防护：INSERT 前再次检查工程名是否已存在
+      // service 层事务外的 findProjectByName 检查仅用于分支判断，
+      // 此处防止两个并发请求同时通过 service 层检查后各自 INSERT 导致同名工程
+      const nameCheck = await client.query(
+        'SELECT id FROM projects WHERE name = $1 LIMIT 1',
+        [data.name]
+      );
+      if (nameCheck.rows.length > 0) {
+        // 抛出错误后事务会自动 ROLLBACK
+        throw new Error('工程名已存在');
+      }
+
       const projectResult = await client.query(
         `INSERT INTO projects (name, description, created_by, status, salary_distribution)
          VALUES ($1, $2, $3, $4, $5)
@@ -944,14 +1010,30 @@ const createProjectWithSubproject = async (data) => {
       );
       projectId = projectResult.rows[0].id;
 
-      // 添加施工人员
+      // 添加施工人员（新工程时支持按工日分配模式写入工日数）
       if (data.constructors && data.constructors.length > 0) {
         const constructorIds = data.constructors.map(c => c.userId || c);
+        // 构建工日映射（按工日分配模式）
+        const workdaysMap = {};
+        if (data.workerWorkDays && data.workerWorkDays.length > 0) {
+          for (const item of data.workerWorkDays) {
+            workdaysMap[item.userId] = item.workdays;
+          }
+        }
         for (const uid of constructorIds) {
-          await client.query(
-            'INSERT INTO project_workers (project_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-            [projectId, uid]
-          );
+          // 按工日分配模式下写入对应工日数，否则使用数据库默认值1.0
+          const workdays = workdaysMap[uid];
+          if (workdays !== undefined) {
+            await client.query(
+              'INSERT INTO project_workers (project_id, user_id, workdays) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+              [projectId, uid, workdays]
+            );
+          } else {
+            await client.query(
+              'INSERT INTO project_workers (project_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+              [projectId, uid]
+            );
+          }
         }
       }
     }
@@ -964,6 +1046,22 @@ const createProjectWithSubproject = async (data) => {
       [projectId, data.spaceTypeId, data.constructionPlanId, data.length, data.width, data.quantity, data.amount, data.userId]
     );
     const subprojectId = subprojectResult.rows[0].id;
+
+    // 重新计算工程总额并更新（事务内执行，确保与子项目明细一致）
+    // 参考 recalcProjectTotal 方法的 SQL 逻辑
+    await client.query(
+      'UPDATE projects SET total_amount = (SELECT COALESCE(SUM(amount), 0) FROM subprojects WHERE project_id = $1) WHERE id = $2',
+      [projectId, projectId]
+    );
+
+    // 写入工程历史记录（事务内执行，确保与工程/子项目数据一致）
+    // 参考 addHistory 方法的 SQL 逻辑，action/description 由调用方传入
+    if (data.historyAction && data.historyDesc) {
+      await client.query(
+        'INSERT INTO project_history (project_id, action, description, performed_by) VALUES ($1, $2, $3, $4)',
+        [projectId, data.historyAction, data.historyDesc, data.userId]
+      );
+    }
 
     await client.query('COMMIT');
     return { projectId, subprojectId };
@@ -1054,14 +1152,17 @@ const updateSubprojectsStatus = async (projectId, status) => {
 };
 
 /**
- * 更新工程施工人员（替换模式）
+ * 更新工程施工人员（替换模式，支持工日数据）
  * @param {number} projectId - 工程ID
- * @param {Array} constructors - 施工人员列表
+ * @param {Array<number|{userId: number, workdays?: number}>} constructors - 施工人员列表
+ *        支持两种格式：纯ID数组 [1, 2, 3] 或对象数组 [{userId: 1, workdays: 2.0}, ...]
+ * @param {object} [client] - pg 事务客户端，不传则使用连接池
  * @returns {Promise<void>}
  */
-const updateProjectWorkers = async (projectId, constructors) => {
-  const userIds = constructors.map(c => c.userId || c);
-  await replaceWorkers(projectId, userIds);
+const updateProjectWorkers = async (projectId, constructors, client) => {
+  // 直接传递 constructors 对象数组（含 workdays）给 replaceWorkers
+  // replaceWorkers 内部会统一处理纯ID和对象两种格式
+  await replaceWorkers(projectId, constructors, client);
 };
 
 /**
@@ -1074,6 +1175,137 @@ const updateWorkerWorkDays = async (projectId, workerWorkDays) => {
   for (const item of workerWorkDays) {
     await updateWorkerWorkdays(projectId, item.userId, item.workdays);
   }
+};
+
+// ========== 子项目状态变更（事务） ==========
+
+/**
+ * 更新子项目状态（含权限校验，事务执行）
+ * 业务规则：
+ * 1. 检查子项目是否存在
+ * 2. 校验操作者是否为创建者
+ * 3. 更新状态
+ * 4. 添加历史记录
+ * 全部在事务内执行，确保数据一致性
+ *
+ * @param {number} subprojectId - 子项目ID
+ * @param {string} status - 新状态
+ * @param {number} userId - 操作者用户ID
+ * @param {number} projectId - 工程ID（用于写入历史记录）
+ * @returns {Promise<object>} 执行结果：
+ *   - { notFound: true } 子项目不存在
+ *   - { forbidden: true } 权限不足
+ *   - { id: subprojectId } 成功
+ */
+const updateSubprojectStatus = async (subprojectId, status, userId, projectId) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // 检查子项目是否存在
+    // 注意：原 controller 查询 SELECT sp.*, p.created_by，结果中 p.created_by 覆盖 sp.created_by
+    // 这里保持原有 SQL 行为不变（事务外无法直接复用 findById，需在事务 client 上执行）
+    const subprojectResult = await client.query(
+      'SELECT sp.*, p.created_by FROM subprojects sp JOIN projects p ON sp.project_id = p.id WHERE sp.id = $1',
+      [subprojectId]
+    );
+    if (subprojectResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return { notFound: true };
+    }
+
+    const subproject = subprojectResult.rows[0];
+
+    // 权限校验：只有子项目创建者可以操作（沿用原有逻辑）
+    if (userId !== subproject.created_by) {
+      await client.query('ROLLBACK');
+      return { forbidden: true };
+    }
+
+    // 更新子项目状态
+    await client.query(
+      'UPDATE subprojects SET status = $1 WHERE id = $2',
+      [status, subprojectId]
+    );
+
+    // 添加历史记录
+    await client.query(
+      'INSERT INTO project_history (project_id, action, description, performed_by) VALUES ($1, $2, $3, $4)',
+      [projectId, 'UPDATE_SUBPROJECT_STATUS', `更新子项目状态为${status}`, userId]
+    );
+
+    await client.query('COMMIT');
+    return { id: subprojectId };
+  } catch (error) {
+    // 异常时回滚事务
+    try {
+      await client.query('ROLLBACK');
+      logger.info('[更新子项目状态] 事务已回滚');
+    } catch (rollbackErr) {
+      logger.error('[更新子项目状态] 事务回滚失败:', rollbackErr);
+    }
+    throw error;
+  } finally {
+    // 释放连接
+    try {
+      client.release();
+      logger.info('[更新子项目状态] 数据库连接已释放');
+    } catch (releaseErr) {
+      logger.error('[更新子项目状态] 释放数据库连接失败:', releaseErr);
+    }
+  }
+};
+
+// ========== 文件记录操作（V2.0 分层） ==========
+
+/**
+ * 新增附件记录
+ * @param {number} projectId - 工程ID
+ * @param {object} fileData - 文件数据
+ * @param {string} fileData.filename - 存储文件名
+ * @param {string} fileData.originalName - 原始文件名
+ * @param {string} fileData.path - 文件访问路径
+ * @param {number} [fileData.size=0] - 文件大小
+ * @param {string} [fileData.type=''] - 文件类型
+ * @param {number} userId - 上传人ID
+ * @returns {Promise<void>}
+ */
+const addFileRecord = async (projectId, fileData, userId) => {
+  await pool.query(
+    'INSERT INTO files (project_id, filename, original_name, path, size, type, uploaded_by) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+    [
+      projectId,
+      fileData.filename,
+      fileData.originalName || fileData.filename,
+      fileData.path,
+      fileData.size || 0,
+      fileData.type || '',
+      userId
+    ]
+  );
+};
+
+/**
+ * 根据文件ID和工程ID查询附件记录（用于权限/归属校验）
+ * @param {number} fileId - 文件ID
+ * @param {number} projectId - 工程ID
+ * @returns {Promise<object|null>} 附件记录，不存在则返回 null
+ */
+const getFileRecordById = async (fileId, projectId) => {
+  const result = await pool.query(
+    'SELECT * FROM files WHERE id = $1 AND project_id = $2',
+    [fileId, projectId]
+  );
+  return result.rows[0] || null;
+};
+
+/**
+ * 删除附件记录
+ * @param {number} fileId - 文件ID
+ * @returns {Promise<void>}
+ */
+const deleteFileRecord = async (fileId) => {
+  await pool.query('DELETE FROM files WHERE id = $1', [fileId]);
 };
 
 module.exports = {
@@ -1138,4 +1370,12 @@ module.exports = {
   updateSubprojectAmount,
   updateSubprojectInTransaction,
   deleteSubprojectInTransaction,
+
+  // ========== V2.0 子项目状态变更（事务） ==========
+  updateSubprojectStatus,
+
+  // ========== V2.0 文件记录操作 ==========
+  addFileRecord,
+  getFileRecordById,
+  deleteFileRecord,
 };

@@ -38,4 +38,12 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
     implementation(libs.coroutines.core)
+
+    // 图片加载（Coil3 + 网络支持，用于附件媒体查看器）
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
+
+    // 视频播放（Media3 ExoPlayer，用于附件媒体查看器）
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.ui)
 }

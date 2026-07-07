@@ -280,8 +280,11 @@ const createSettlementSnapshot = async (settlementId, currentUserId, client = nu
     const userAdvancesSnapshot = advancesSnapshot.filter(a => a.user_id === currentUserId);
     const totalAdvance = userAdvancesSnapshot.reduce((sum, a) => sum + parseFloat(a.advance_amount), 0);
 
-    // 当前用户的实际金额
+    // 当前用户的实际金额：允许为负数（预支可超出工程总额，反映真实欠款情况）
     const userActualAmount = grandTotal - totalAdvance;
+    if (totalAdvance > grandTotal) {
+      logger.warn(`[结算快照] 预支总额(${totalAdvance})超过工程总额(${grandTotal})，实付金额为负数`, { settlementId, currentUserId });
+    }
 
     const calculationSnapshot = {
       planTotals,
@@ -626,6 +629,13 @@ module.exports = {
       const settlementNo = `${year}${month}${day}${projectIdsStr}`;
 
       // 8. 创建结算记录
+      // Bug8修复：计算实际的预支总额和实付金额（原写死 advanceAmount=0, actualAmount=totalAmount）
+      const advanceAmountTotal = allAdvances.reduce((sum, a) => sum + parseFloat(a.advance_amount), 0);
+      // 实付金额 = 工程总额 - 预支总额；允许为负数（预支可超出工程总额，反映真实欠款情况）
+      const actualAmount = totalAmount - advanceAmountTotal;
+      if (advanceAmountTotal > totalAmount) {
+        logger.warn(`[结算] 预支总额(${advanceAmountTotal})超过工程总额(${totalAmount})，实付金额为负数`, { currentUserId, projectIds });
+      }
       const settlement = await settlementRepo.createSettlement({
         settlementNo,
         projectId: projectIds[0],
@@ -634,8 +644,8 @@ module.exports = {
         startMonth,
         endMonth,
         totalAmount,
-        advanceAmount: 0,
-        actualAmount: totalAmount,
+        advanceAmount: advanceAmountTotal,
+        actualAmount,
         confirmed: false,
         settledBy: currentUserId,
         remark
@@ -697,8 +707,8 @@ module.exports = {
         settlement,
         workers: allWorkers,
         total_amount: totalAmount,
-        advance_amount: 0,
-        actual_amount: totalAmount,
+        advance_amount: advanceAmountTotal,
+        actual_amount: actualAmount,
         subprojects
       };
     } catch (error) {
@@ -748,6 +758,7 @@ module.exports = {
       projectId,
       startDate,
       endDate,
+      confirmed,
       page = 1,
       size = 10,
       userRole,
@@ -763,6 +774,12 @@ module.exports = {
       endDate
     };
 
+    // Bug11修复：补充 confirmed 参数传递（原解构时丢失，导致前端传入的确认状态筛选无效）
+    if (confirmed !== undefined && confirmed !== null && confirmed !== '') {
+      // 兼容字符串 'true'/'false' 和布尔值
+      queryParams.confirmed = confirmed === 'true' || confirmed === true;
+    }
+
     if (userRole === 'constructor') {
       queryParams.userId = currentUserId;
     }
@@ -777,7 +794,8 @@ module.exports = {
       queryParams.userId || '',
       queryParams.projectId || '',
       queryParams.startDate || '',
-      queryParams.endDate || ''
+      queryParams.endDate || '',
+      queryParams.confirmed !== undefined ? String(queryParams.confirmed) : ''
     );
 
     const cachedData = await cache.get(cacheKeyStr);
@@ -916,85 +934,121 @@ module.exports = {
    * @returns {Promise<object>} 确认结果
    */
   async confirmSettlement(settlementId, currentUserId) {
-    // 1. 获取结算记录
-    const settlement = await settlementRepo.findSettlementById(settlementId);
-    if (!settlement) {
-      throw new BusinessError(3010, '结算记录不存在');
-    }
-
-    // 2. 检查是否已经确认过
-    if (settlement.confirmed) {
-      throw new BusinessError(3014, '该结算已确认');
-    }
-
-    // 3. 检查用户是否参与了该结算相关的工程
-    const participationResult = await pool.query(
-      `SELECT pw.id
-       FROM project_workers pw
-       JOIN subprojects sp ON pw.project_id = sp.project_id
-       JOIN wage_distributions wd ON sp.id = wd.subproject_id
-       WHERE pw.user_id = $1
-         AND wd.created_at >= $2::date
-         AND wd.created_at <= $3::date
-       LIMIT 1`,
-      [currentUserId, settlement.start_month, settlement.end_month]
-    );
-
-    if (participationResult.rows.length === 0) {
-      throw new BusinessError(4002, '您无权确认此结算');
-    }
-
-    // 4. 更新结算记录的确认状态
-    await settlementRepo.updateSettlement(settlementId, {
-      confirmed: true,
-      confirmedAt: new Date(),
-      settledBy: currentUserId
-    });
-
-    // 5. 更新预支记录的结算状态（确认结算时间之前的预支金额）
-    await pool.query(
-      `UPDATE wage_advances
-       SET settled = true, settlement_id = $1
-       WHERE user_id = (
-         SELECT user_id FROM wage_settlements WHERE id = $1
-       )
-       AND advance_date <= $2
-       AND settled = false`,
-      [settlementId, settlement.end_month]
-    );
-
-    // 6. 添加历史记录
-    await pool.query(
-      `INSERT INTO project_history (project_id, action, description, performed_by)
-       VALUES ($1, 'CONFIRM_SETTLEMENT', $2, $3)`,
-      [settlement.project_id || 0, `用户确认结算：${settlement.settlement_no}`, currentUserId]
-    );
-
-    // 7. 创建结算历史快照
+    // Bug9修复：整个确认流程必须在事务中完成，避免任一步失败导致数据不一致
+    const client = await pool.connect();
     try {
-      await createSettlementSnapshot(settlementId, currentUserId);
-    } catch (snapshotError) {
-      // 快照创建失败不影响主流程，继续执行
-      logger.warn('创建结算快照失败，不影响主流程', { settlementId, error: snapshotError.message });
+      await client.query('BEGIN');
+
+      // 1. 获取结算记录
+      const settlement = await settlementRepo.findSettlementById(settlementId);
+      if (!settlement) {
+        throw new BusinessError(3010, '结算记录不存在');
+      }
+
+      // 2. 检查是否已经确认过
+      if (settlement.confirmed) {
+        throw new BusinessError(3014, '该结算已确认');
+      }
+
+      // 3. 检查用户是否参与了该结算相关的工程
+      // Bug10修复：日期比较 off-by-one，改为 < (end_month + 1 day) 而非 <= end_month::date
+      const participationResult = await client.query(
+        `SELECT pw.id
+         FROM project_workers pw
+         JOIN subprojects sp ON pw.project_id = sp.project_id
+         JOIN wage_distributions wd ON sp.id = wd.subproject_id
+         WHERE pw.user_id = $1
+           AND wd.created_at >= $2::timestamp
+           AND wd.created_at < ($3::date + INTERVAL '1 day')::timestamp
+         LIMIT 1`,
+        [currentUserId, settlement.start_month, settlement.end_month]
+      );
+
+      if (participationResult.rows.length === 0) {
+        throw new BusinessError(4002, '您无权确认此结算');
+      }
+
+      // 4. 更新结算记录的确认状态
+      await settlementRepo.updateSettlement(settlementId, {
+        confirmed: true,
+        confirmedAt: new Date(),
+        settledBy: currentUserId
+      }, client);
+
+      // 5. 更新预支记录的结算状态
+      // Bug7修复：原SQL用 settlement.user_id 过滤预支（管理员创建时user_id是管理员，会错误更新管理员预支）
+      // 改为：基于 wage_distributions 关联的实际施工员来更新预支
+      await client.query(
+        `UPDATE wage_advances
+         SET settled = true, settlement_id = $1
+         WHERE user_id IN (
+           SELECT DISTINCT wd.user_id
+           FROM wage_distributions wd
+           JOIN subprojects sp ON wd.subproject_id = sp.id
+           WHERE wd.settlement_id = $1
+         )
+         AND advance_date <= $2
+         AND settled = false`,
+        [settlementId, settlement.end_month]
+      );
+
+      // 6. 添加历史记录
+      await client.query(
+        `INSERT INTO project_history (project_id, action, description, performed_by)
+         VALUES ($1, 'CONFIRM_SETTLEMENT', $2, $3)`,
+        [settlement.project_id || 0, `用户确认结算：${settlement.settlement_no}`, currentUserId]
+      );
+
+      await client.query('COMMIT');
+
+      // 7. 创建结算历史快照（事务外执行，失败不影响主流程）
+      try {
+        await createSettlementSnapshot(settlementId, currentUserId);
+      } catch (snapshotError) {
+        // 快照创建失败不影响主流程，继续执行
+        logger.warn('创建结算快照失败，不影响主流程', { settlementId, error: snapshotError.message });
+      }
+
+      // 8. 清除缓存
+      await invalidateCache(currentUserId);
+
+      logger.info('确认结算成功', { settlementId, currentUserId });
+
+      return {
+        message: '结算确认成功！',
+        settlement_no: settlement.settlement_no,
+        total_amount: settlement.total_amount,
+        advance_amount: settlement.advance_amount,
+        actual_amount: settlement.actual_amount,
+        start_month: settlement.start_month,
+        end_month: settlement.end_month,
+        snapshot_info: '结算历史快照已保存',
+        settlement_id: settlementId,
+        confirmed_at: new Date()
+      };
+    } catch (error) {
+      // 事务回滚
+      try {
+        await client.query('ROLLBACK');
+        logger.info('[确认结算] 事务已回滚');
+      } catch (rollbackErr) {
+        logger.error('[确认结算] 事务回滚失败:', rollbackErr);
+      }
+
+      // 如果是 BusinessError，直接抛出
+      if (error.name === 'BusinessError') {
+        throw error;
+      }
+
+      logger.error('确认结算失败:', error);
+      throw new BusinessError(5001, '确认结算失败');
+    } finally {
+      try {
+        client.release();
+      } catch (releaseErr) {
+        logger.error('[确认结算] 释放数据库连接失败:', releaseErr);
+      }
     }
-
-    // 8. 清除缓存
-    await invalidateCache(currentUserId);
-
-    logger.info('确认结算成功', { settlementId, currentUserId });
-
-    return {
-      message: '结算确认成功！',
-      settlement_no: settlement.settlement_no,
-      total_amount: settlement.total_amount,
-      advance_amount: settlement.advance_amount,
-      actual_amount: settlement.actual_amount,
-      start_month: settlement.start_month,
-      end_month: settlement.end_month,
-      snapshot_info: '结算历史快照已保存',
-      settlement_id: settlementId,
-      confirmed_at: new Date()
-    };
   },
 
   /**

@@ -22,14 +22,42 @@ const dictionaryRouter = require('./routes/dictionary');
 const advancesRouter = require('./routes/advances');
 const messagesRouter = require('./routes/messages');
 const salarySheetRouter = require('./routes/salarySheet');
-const migrationRouter = require('./routes/migration');
+const aiRouter = require('./routes/ai');
+// 限流中间件：基于Redis的滑动窗口限流，按用户/IP控制请求频率
+const { globalLimiter, loginLimiter, sensitiveLimiter } = require('./middleware/rateLimiter');
 
 const app = new Koa();
 
-// CORS中间件 - 生产环境限制允许的域名
+// 安全响应头中间件（等价于helmet，手动实现以避免引入额外依赖）
+// 添加安全相关的HTTP响应头，防止常见Web攻击
+app.use(async (ctx, next) => {
+  await next();
+  // 防止MIME类型嗅探
+  ctx.set('X-Content-Type-Options', 'nosniff');
+  // 防止点击劫持（禁止被嵌入iframe）
+  ctx.set('X-Frame-Options', 'DENY');
+  // 启用浏览器XSS过滤器
+  ctx.set('X-XSS-Protection', '1; mode=block');
+  // HSTS：强制HTTPS（仅生产环境启用，且需HTTPS才生效）
+  if (process.env.NODE_ENV === 'production') {
+    ctx.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  // 内容安全策略：仅允许同源资源加载
+  ctx.set('Content-Security-Policy', "default-src 'self'");
+  // 禁用referrer泄露完整URL
+  ctx.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // 禁用缓存（API响应不应被缓存）
+  ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  // 隐藏X-Powered-By
+  ctx.remove('X-Powered-By');
+});
+
+// CORS中间件 - 严格限制允许的域名
 app.use(cors({
   origin: function(ctx) {
-    // 生产环境：只允许指定域名访问
+    // 白名单：仅允许配置的域名访问
+    // Android客户端无Origin头，不经过CORS检查
+    // Web端必须在白名单内
     const allowedOrigins = [
       'http://1.12.234.248:9080',
       'http://1.12.234.248/api-docs',  // API文档
@@ -40,12 +68,14 @@ app.use(cors({
     if (requestOrigin && allowedOrigins.includes(requestOrigin)) {
       return requestOrigin;
     }
-    // 如果没有origin头或不在允许列表，返回服务器地址
-    return process.env.SERVER_URL || 'http://1.12.234.248';
+    // 无Origin头（移动端/服务端请求）放行，不设置CORS头
+    // 不在白名单的Origin不返回Access-Control-Allow-Origin，浏览器会拦截
+    return false;
   },
   credentials: true,
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'Accept']
+  allowHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset']
 }));
 
 // 中间件
@@ -54,7 +84,8 @@ app.use(loggerMiddleware());
 app.use(koaBody({
   multipart: true,
   formidable: {
-    maxFileSize: 50 * 1024 * 1024, // 50MB
+    maxFileSize: 500 * 1024 * 1024, // 500MB（业务层各类型有独立限制，见 controllers/upload.js）
+    maxFieldsSize: 20 * 1024 * 1024, // 20MB（text field 总大小）
     uploadDir: path.join(__dirname, 'temp'),
     keepExtensions: true,
     multiples: true, // 支持多文件上传
@@ -129,6 +160,30 @@ app.use(async (ctx, next) => {
 // 错误处理中间件
 app.use(errorHandlerMiddleware());
 
+// 主动初始化Redis连接（触发连接建立）
+// 不阻塞启动，连接失败不影响业务可用性（限流等功能自动降级）
+const { getRedisClient, isRedisAvailable } = require('./config/redis');
+getRedisClient(); // 触发ioredis自动连接（非lazyConnect模式会立即连接）
+logger.info('Redis初始化', { available: isRedisAvailable() });
+
+// 全局API限流：100次/分钟/IP，防止恶意请求刷接口
+// Redis不可用时自动放行，不影响业务可用性
+app.use(globalLimiter);
+
+// 健康检查接口 - 无需鉴权，供前端探测后端在线状态
+// 返回服务器时间和状态，前端通过测量请求耗时计算延迟
+app.use(async (ctx, next) => {
+  if (ctx.path === '/v1/health' && ctx.method === 'GET') {
+    ctx.success({
+      status: 'ok',
+      timestamp: Date.now(),
+      uptime: process.uptime()
+    });
+    return;
+  }
+  await next();
+});
+
 // 注册路由
 app.use(authRouter.routes()).use(authRouter.allowedMethods());
 app.use(userRouter.routes()).use(userRouter.allowedMethods());
@@ -140,7 +195,7 @@ app.use(dictionaryRouter.routes()).use(dictionaryRouter.allowedMethods());
 app.use(advancesRouter.routes()).use(advancesRouter.allowedMethods());
 app.use(messagesRouter.routes()).use(messagesRouter.allowedMethods());
 app.use(salarySheetRouter.routes()).use(salarySheetRouter.allowedMethods());
-app.use(migrationRouter.routes()).use(migrationRouter.allowedMethods());
+app.use(aiRouter.routes()).use(aiRouter.allowedMethods());
 
 // 静态文件服务 - 用于访问上传的文件（放在路由之后，404处理之前）
 app.use(async (ctx, next) => {

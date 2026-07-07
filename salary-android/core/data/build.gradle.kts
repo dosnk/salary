@@ -24,6 +24,7 @@ dependencies {
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.security.crypto)
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)

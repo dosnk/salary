@@ -70,6 +70,9 @@ goto fail
 
 set CLASSPATH=%APP_HOME%\gradle\wrapper\gradle-wrapper.jar
 
+@rem 使用项目级独立的GRADLE_USER_HOME，避免多Android项目共用缓存导致冲突
+@rem 每个Android项目都有自己独立的.gradle-home目录，互不干扰
+set GRADLE_USER_HOME=%APP_HOME%\.gradle-home
 
 @rem Execute Gradle
 "%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %GRADLE_OPTS% "-Dorg.gradle.appname=%APP_BASE_NAME%" -classpath "%CLASSPATH%" org.gradle.wrapper.GradleWrapperMain %*

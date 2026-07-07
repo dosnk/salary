@@ -250,10 +250,9 @@ const calculateSettlement = async (ctx) => {
   const currentUserId = ctx.state.user.id;
 
   try {
-    const result = await settlementService.calculateSettlement({
-      projectIds,
-      currentUserId
-    });
+    // 注意：service方法签名为 calculateSettlement(projectIds, currentUserId)
+    // 必须传递两个独立参数，不能传对象，否则 Array.isArray 判断失败
+    const result = await settlementService.calculateSettlement(projectIds, currentUserId);
     ctx.success(result);
   } catch (error) {
     if (error.name === 'BusinessError') {

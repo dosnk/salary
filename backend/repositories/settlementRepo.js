@@ -173,17 +173,22 @@ module.exports = {
       paramIndex++;
     }
 
-    // 按开始日期筛选
+    // 按开始月份筛选
+    // Bug12修复：原TO_CHAR与传入的日期格式不匹配（前端传 'YYYY-MM-DD' 时比较失败）
+    // 改为：统一取前7位 'YYYY-MM' 格式比较，兼容月份和日期两种入参
     if (startDate) {
+      const startMonthStr = String(startDate).substring(0, 7); // 'YYYY-MM'
       whereClauses.push(`TO_CHAR(ws.start_month, 'YYYY-MM') = $${paramIndex}`);
-      params.push(startDate);
+      params.push(startMonthStr);
       paramIndex++;
     }
 
-    // 按结束日期筛选
+    // 按结束月份筛选
+    // Bug12修复：同 startDate，统一取 'YYYY-MM' 格式比较
     if (endDate) {
+      const endMonthStr = String(endDate).substring(0, 7); // 'YYYY-MM'
       whereClauses.push(`TO_CHAR(ws.end_month, 'YYYY-MM') = $${paramIndex}`);
-      params.push(endDate);
+      params.push(endMonthStr);
       paramIndex++;
     }
 

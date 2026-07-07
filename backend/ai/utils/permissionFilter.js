@@ -51,7 +51,7 @@ const buildPermissionFilter = (user, tableAlias, filterType) => {
  * @returns {Promise<boolean>}
  */
 const checkProjectAccess = async (user, projectId) => {
-  const pool = require('../../../config/database');
+  const pool = require('../../config/database');
 
   if (user.role === 'admin' || user.role === 'documenter') {
     return true;

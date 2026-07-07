@@ -55,8 +55,8 @@ android {
             buildConfigField("String", "BASE_URL", "\"http://10.0.2.2:3000\"")
         }
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             buildConfigField("String", "BASE_URL", "\"https://api.salary.com\"")
         }
@@ -77,14 +77,14 @@ android {
     }
 
     // ========== 自定义APK输出文件名 ==========
-    // 格式：salary-{版本名}-{构建类型}.apk
-    // 例：salary-1.0.0-1-debug.apk, salary-1.0.0-1-release.apk
+    // 格式：salary-V{版本名}-b{构建号}-{构建类型}.apk
+    // 例：salary-V1.0.0-b100-debug.apk, salary-V1.0.0-b100-release.apk
     applicationVariants.all {
         val variant = this
         variant.outputs.all {
             val outputImpl = this as com.android.build.gradle.internal.api.ApkVariantOutputImpl
             val buildTypeLabel = variant.buildType.name
-            outputImpl.outputFileName = "salary-${appVersionName}-${buildNumber}-${buildTypeLabel}.apk"
+            outputImpl.outputFileName = "salary-V${appVersionName}-b${buildNumber}-${buildTypeLabel}.apk"
         }
     }
 }
@@ -103,7 +103,7 @@ tasks.whenTaskAdded {
                     versionProps.store(versionPropsFile.outputStream(), null)
                     println("========================================")
                     println("构建号已递增: $buildNumber -> $newBuildNumber")
-                    println("下次构建版本: salary-${appVersionName}-${newBuildNumber}")
+                    println("下次构建版本: salary-V${appVersionName}-b${newBuildNumber}")
                     println("========================================")
                 }
             }

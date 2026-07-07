@@ -13,6 +13,8 @@ import javax.inject.Inject
 
 /**
  * 个人中心ViewModel
+ *
+ * 昵称和角色通过UserStorage的StateFlow响应式获取，确保登录后立即更新
  */
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
@@ -20,32 +22,26 @@ class ProfileViewModel @Inject constructor(
     private val tokenStorage: TokenStorage
 ) : ViewModel() {
 
-    private val _nickname = MutableStateFlow("")
-    val nickname: StateFlow<String> = _nickname.asStateFlow()
+    /** 用户昵称（从UserStorage响应式获取） */
+    val nickname: StateFlow<String> = userStorage.nicknameFlow
 
-    private val _role = MutableStateFlow("")
-    val role: StateFlow<String> = _role.asStateFlow()
+    /** 用户角色（从UserStorage响应式获取） */
+    val role: StateFlow<String> = userStorage.roleFlow
 
+    /** 角色显示名称 */
     private val _roleDisplay = MutableStateFlow("")
     val roleDisplay: StateFlow<String> = _roleDisplay.asStateFlow()
 
-    private val _phone = MutableStateFlow("")
-    val phone: StateFlow<String> = _phone.asStateFlow()
-
     init {
-        loadUserInfo()
-    }
-
-    private fun loadUserInfo() {
+        // 监听角色变化，更新显示名称
         viewModelScope.launch {
-            _nickname.value = userStorage.getNickname() ?: ""
-            val roleValue = userStorage.getRole() ?: ""
-            _role.value = roleValue
-            _roleDisplay.value = when (roleValue) {
-                "admin" -> "管理员"
-                "constructor" -> "施工员"
-                "documenter" -> "资料员"
-                else -> "未知"
+            userStorage.roleFlow.collect { roleValue ->
+                _roleDisplay.value = when (roleValue) {
+                    "admin" -> "管理员"
+                    "constructor" -> "施工员"
+                    "documenter" -> "资料员"
+                    else -> "未知"
+                }
             }
         }
     }

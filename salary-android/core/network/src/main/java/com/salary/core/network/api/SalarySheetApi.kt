@@ -87,9 +87,12 @@ data class SalarySheetProjectsDto(
 @Serializable
 data class SalaryProjectDto(
     val id: Int,
-    val project_name: String = "",
-    val created_at: String = "",
-    val salary_distribution: String = "",
+    @SerialName("project_name")
+    val projectName: String = "",
+    @SerialName("created_at")
+    val createdAt: String = "",
+    @SerialName("salary_distribution")
+    val salaryDistribution: String = "",
     val subprojects: List<SubprojectDto> = emptyList(),
     @SerialName("plan_quantities")
     val planQuantities: Map<String, PlanQuantityDto> = emptyMap()
@@ -98,15 +101,22 @@ data class SalaryProjectDto(
 /** 子项目明细 */
 @Serializable
 data class SubprojectDto(
-    val subproject_id: Int,
-    val space_type_name: String = "",
-    val plan_id: Int = 0,
-    val plan_name: String = "",
+    @SerialName("subproject_id")
+    val subprojectId: Int,
+    @SerialName("space_type_name")
+    val spaceTypeName: String = "",
+    @SerialName("plan_id")
+    val planId: Int = 0,
+    @SerialName("plan_name")
+    val planName: String = "",
     val unit: String = "",
-    val price: String = "0",
+    /** 单价（后端NUMERIC类型，P11后返回数字） */
+    val price: Double = 0.0,
     val quantity: Double = 0.0,
-    val user_quantity: Double = 0.0,
-    val user_amount: Double = 0.0
+    @SerialName("user_quantity")
+    val userQuantity: Double = 0.0,
+    @SerialName("user_amount")
+    val userAmount: Double = 0.0
 )
 
 /** 方案数量汇总 */
@@ -117,8 +127,10 @@ data class PlanQuantityDto(
     @SerialName("total_amount")
     val totalAmount: Double = 0.0,
     val unit: String? = null,
-    val price: String? = null,
-    val plan_name: String? = null
+    /** 单价（后端NUMERIC类型，P11后返回数字） */
+    val price: Double? = null,
+    @SerialName("plan_name")
+    val planName: String? = null
 )
 
 /** 方案总计 */
@@ -136,11 +148,14 @@ data class PlanTotalDto(
 @Serializable
 data class AdvanceDataDto(
     val id: Int,
-    val user_id: Int = 0,
+    @SerialName("user_id")
+    val userId: Int = 0,
     val username: String = "",
     val nickname: String = "",
-    val advance_amount: Double = 0.0,
-    val advance_date: String = "",
+    @SerialName("advance_amount")
+    val advanceAmount: Double = 0.0,
+    @SerialName("advance_date")
+    val advanceDate: String = "",
     val remark: String = ""
 )
 
@@ -192,19 +207,33 @@ data class CalculateResultDto(
 /** 结算历史数据 */
 @Serializable
 data class SettlementHistoryDto(
-    val settlement_id: Int,
-    val settlement_no: String = "",
-    val start_month: String = "",
-    val end_month: String = "",
-    val total_amount: Double = 0.0,
-    val advance_amount: Double = 0.0,
-    val actual_amount: Double = 0.0,
+    @SerialName("settlement_id")
+    val settlementId: Int,
+    @SerialName("settlement_no")
+    val settlementNo: String = "",
+    @SerialName("start_month")
+    val startMonth: String = "",
+    @SerialName("end_month")
+    val endMonth: String = "",
+    @SerialName("total_amount")
+    val totalAmount: Double = 0.0,
+    @SerialName("advance_amount")
+    val advanceAmount: Double = 0.0,
+    @SerialName("actual_amount")
+    val actualAmount: Double = 0.0,
     val confirmed: Boolean = false,
-    val confirmed_at: String? = null,
-    val settled_by: Int = 0,
-    val settled_by_username: String = "",
-    val settled_by_nickname: String = "",
-    val created_at: String = "",
+    @SerialName("confirmed_at")
+    val confirmedAt: String? = null,
+    @SerialName("settled_by")
+    val settledBy: Int = 0,
+    @SerialName("settled_by_username")
+    val settledByUsername: String = "",
+    @SerialName("settled_by_nickname")
+    val settledByNickname: String = "",
+    @SerialName("settled_at")
+    val settledAt: String = "",
+    @SerialName("created_at")
+    val createdAt: String = "",
     val projects: List<SalaryProjectDto> = emptyList(),
     val advances: List<AdvanceDataDto> = emptyList(),
     @SerialName("plan_totals")

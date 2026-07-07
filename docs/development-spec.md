@@ -526,6 +526,59 @@ CREATE TABLE ai_knowledge_chunks (
 - 前端从 Vue 3 + Vant 改为 Android原生APK (后续实施)
 - 排料可视化使用SVG渲染 (后续实施)
 
+### 11.5 附件存储规范
+
+#### 11.5.1 目录结构
+后端所有上传附件必须按以下结构存储：
+
+```
+backend/upload/
+    └── YYYYMM/                    # 按年月分目录（如 202607）
+        └── 工程名称/              # 按工程名称分目录（已做安全过滤）
+            └── uuid.ext           # 文件名使用UUID + 原扩展名
+```
+
+- 路径由 `controllers/upload.js` 中 `path.join(__dirname, '../upload', datePath, projectName)` 生成
+- 数据库 `files.path` 字段存储 URL 形式：`/upload/YYYYMM/工程名/uuid.ext`
+- 静态访问由 `index.js` 中间件处理：移除 `/upload` 前缀后映射到 `__dirname/upload/` 目录
+
+#### 11.5.2 上传链路
+1. 前端通过 `UploadManager.uploadAttachment()` 调用 `POST /v1/upload`（multipart/form-data，字段名 `file`）
+2. 后端校验：文件签名、扩展名白名单、MIME 类型、文件大小、频率限制
+3. 后端按结构存储到 `upload/YYYYMM/工程名/uuid.ext`，返回 URL
+4. 前端调用 `POST /v1/projects/:id/files` 写入 `files` 表关联工程
+
+##### ⚠ 关键约束：multipart 文本字段不可设置 Content-Type
+- 前端构造 `projectName` 表单字段时，`RequestBody` 的 `contentType` **必须传 `null`**，不可使用 `"text/plain"`
+- 原因：后端 `koa-body@6` + `formidable@2` 通过 part 是否有 `mimetype` 判断字段类型
+  - 无 mimetype → 作为 text field 解析到 `ctx.request.body.projectName`
+  - 有 mimetype → 作为"文件"解析到 `ctx.request.files.projectName`，导致 `ctx.request.body.projectName` 为 undefined，最终回退为 "salary" 目录
+- 后端 `controllers/upload.js` 已增加兜底逻辑：当 `ctx.request.body.projectName` 为空时，尝试从 `ctx.request.files.projectName` 读取临时文件内容，兼容旧版前端
+
+#### 11.5.3 删除链路
+1. 前端调用 `DELETE /v1/projects/:id/files/:fileId`
+2. 后端校验工程存在 + 权限（创建者/施工员/管理员）
+3. 删除 `files` 表数据库记录
+4. 解析 `file.path` 移除 `/upload` 前缀，拼接 `path.join(__dirname, '..', 'upload', relativePath)`
+5. `fs.unlinkSync` 删除物理文件（失败仅记录日志，不影响接口结果）
+
+#### 11.5.4 Docker 部署卷映射
+容器内 `/app/upload` 必须映射到宿主机目录，避免容器重建导致附件丢失：
+
+```yaml
+# docker-compose.yml
+volumes:
+  - ./:/app                          # 源码挂载（热重载）
+  - /app/node_modules                # 匿名卷保留容器内依赖
+  - app-logs:/app/logs               # 日志命名卷
+  - app-temp:/app/temp               # 临时上传目录（koaBody 中转，无需持久化）
+  - ./upload:/app/upload             # 附件最终存储目录，映射到宿主机 ./upload
+```
+
+- 宿主机查看附件：`backend/upload/YYYYMM/工程名/`
+- 备份附件：直接备份 `backend/upload/` 目录
+- `.dockerignore` 已排除 `upload` 目录，避免构建镜像时打包历史附件
+
 ---
 
-> **文档版本**: V4.0 | **更新日期**: 2026-06-09 | **作者**: 系统优化
+> **文档版本**: V4.1 | **更新日期**: 2026-07-05 | **作者**: 系统优化

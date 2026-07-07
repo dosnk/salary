@@ -3,6 +3,8 @@ const { createSettlementSnapshot } = require('./settlements');
 const { isAdmin, isDocumenter, isConstructor } = require('../middleware/rbac');
 const errorCodes = require('../config/error-codes');
 const logger = require('../config/logger');
+// 引入计算服务，统一使用 calculateUserWage 计算个人分摊金额
+const calculation = require('../services/calculation');
 
 const getConstructionPlans = async (ctx) => {
   try {
@@ -25,7 +27,7 @@ const getProjects = async (ctx) => {
 
     // 查询子项目明细数据（包含空间类型）
     const subprojectsResult = await pool.query(`
-      SELECT 
+      SELECT
         p.id as project_id,
         p.name as project_name,
         p.created_at,
@@ -51,24 +53,58 @@ const getProjects = async (ctx) => {
       ORDER BY p.id, cp.id, sp.id
     `, [userId]);
 
+    // 查询当前用户在各工程的工日数（用于 work_days 分配方式计算个人分摊金额）
+    const projectIdSet = new Set(subprojectsResult.rows.map(r => r.project_id));
+    const projectIds = Array.from(projectIdSet);
+    const userWorkdays = {};
+    const totalWorkdays = {};
+    if (projectIds.length > 0) {
+      const userWorkdaysResult = await pool.query(`
+        SELECT pw.project_id, COALESCE(pw.workdays, 1) as user_workdays
+        FROM project_workers pw
+        WHERE pw.project_id = ANY($1) AND pw.user_id = $2
+      `, [projectIds, userId]);
+      userWorkdaysResult.rows.forEach(row => {
+        userWorkdays[row.project_id] = row.user_workdays;
+      });
+
+      const totalWorkdaysResult = await pool.query(`
+        SELECT pw.project_id, SUM(COALESCE(pw.workdays, 1)) as total_workdays
+        FROM project_workers pw
+        WHERE pw.project_id = ANY($1)
+        GROUP BY pw.project_id
+      `, [projectIds]);
+      totalWorkdaysResult.rows.forEach(row => {
+        totalWorkdays[row.project_id] = row.total_workdays;
+      });
+    }
+
     // 按工程分组，构建工程列表和子项目明细
     const projectMap = new Map();
     const planTotals = {};
-    
+
     subprojectsResult.rows.forEach(row => {
       const projectId = row.project_id;
       const planId = row.plan_id;
       const workerCount = row.worker_count || 1;
-      
+
       // 计算子项目数量（根据单位类型）
       let subprojectQuantity = parseFloat(row.quantity) || 0;
-      
-      // 计算用户分配数量
-      let userQuantity = subprojectQuantity;
-      if (row.salary_distribution === 'average') {
-        userQuantity = subprojectQuantity / workerCount;
-      }
-      userQuantity = Math.round(userQuantity * 100) / 100; // 保留两位小数
+      const subprojectAmount = parseFloat(row.amount) || 0;
+
+      // 统一使用 calculateUserWage 计算个人分摊数量和金额（与 calculateSettlementPreview 保持一致）
+      // 修复：原逻辑仅处理 average 分配方式，work_days 方式直接使用工程总量导致与选择后计算结果不一致
+      const userWorkday = userWorkdays[projectId] || 0;
+      const totalWorkday = totalWorkdays[projectId] || 1;
+      const { userQuantity: rawUserQuantity, userAmount } = calculation.calculateUserWage(
+        subprojectAmount,
+        subprojectQuantity,
+        row.salary_distribution,
+        workerCount,
+        userWorkday,
+        totalWorkday
+      );
+      let userQuantity = Math.round(rawUserQuantity * 100) / 100; // 保留两位小数
       
       // 初始化工程
       if (!projectMap.has(projectId)) {
@@ -86,6 +122,8 @@ const getProjects = async (ctx) => {
       
       // 添加子项目明细
       if (planId) {
+        // 金额直接使用 calculateUserWage 返回的 userAmount，避免 userQuantity*price 的浮点误差
+        const roundedUserAmount = Math.round(userAmount * 10000) / 10000; // 保留4位小数，与 NUMERIC(14,4) 对齐
         project.subprojects.push({
           subproject_id: row.subproject_id,
           space_type_name: row.space_type_name,
@@ -95,9 +133,9 @@ const getProjects = async (ctx) => {
           price: row.price,
           quantity: subprojectQuantity,
           user_quantity: userQuantity,
-          user_amount: userQuantity * parseFloat(row.price || 0)
+          user_amount: roundedUserAmount
         });
-        
+
         // 累加施工方案汇总
         if (!project.planQuantities[planId]) {
           project.planQuantities[planId] = {
@@ -109,8 +147,8 @@ const getProjects = async (ctx) => {
           };
         }
         project.planQuantities[planId].total_quantity += userQuantity;
-        project.planQuantities[planId].total_amount += userQuantity * parseFloat(row.price || 0);
-        
+        project.planQuantities[planId].total_amount += roundedUserAmount;
+
         // 累加施工方案总计
         const planIdStr = String(planId);
         if (!planTotals[planIdStr]) {
@@ -120,7 +158,7 @@ const getProjects = async (ctx) => {
           };
         }
         planTotals[planIdStr].total_quantity += userQuantity;
-        planTotals[planIdStr].total_amount += userQuantity * parseFloat(row.price || 0);
+        planTotals[planIdStr].total_amount += roundedUserAmount;
       }
     });
 

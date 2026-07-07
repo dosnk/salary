@@ -1,7 +1,12 @@
 package com.salary.manager.feature.statistics.dashboard
 
+import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.net.Uri
+import android.os.Build
 import android.os.Environment
+import android.provider.MediaStore
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.salary.core.common.util.NetworkErrorHandler
@@ -83,9 +88,8 @@ class StatisticsDashboardViewModel @Inject constructor(
     private val _expandedHistoryProjects = MutableStateFlow<Set<String>>(emptySet())
     val expandedHistoryProjects: StateFlow<Set<String>> = _expandedHistoryProjects.asStateFlow()
 
-    /** 用户昵称 */
-    private val _userNickname = MutableStateFlow("")
-    val userNickname: StateFlow<String> = _userNickname.asStateFlow()
+    /** 用户昵称（从UserStorage响应式获取） */
+    val userNickname: StateFlow<String> = userStorage.nicknameFlow
 
     /** 错误消息 */
     private val _errorMessage = MutableStateFlow<String?>(null)
@@ -120,14 +124,35 @@ class StatisticsDashboardViewModel @Inject constructor(
                 kotlinx.coroutines.coroutineScope {
                     val sheetJob = launch { loadSalarySheetData() }
                     val historyJob = launch { loadSettlementHistory() }
-                    val userJob = launch { loadUserNickname() }
                     sheetJob.join()
                     historyJob.join()
-                    userJob.join()
                 }
                 _state.value = UiState.Success(Unit)
             } catch (e: Exception) {
                 _state.value = UiState.Error(NetworkErrorHandler.translate(e, "加载统计数据失败"))
+            }
+        }
+    }
+
+    /**
+     * 静默刷新（不显示Loading、不覆盖已有状态），用于Tab切换时后台刷新数据
+     * 仅在数据已加载成功后刷新，避免页面闪烁
+     */
+    fun silentRefresh() {
+        viewModelScope.launch {
+            try {
+                kotlinx.coroutines.coroutineScope {
+                    val sheetJob = launch { loadSalarySheetData() }
+                    val historyJob = launch { loadSettlementHistory() }
+                    sheetJob.join()
+                    historyJob.join()
+                }
+                // 静默刷新成功后，仅当之前是Error状态时才更新为Success
+                if (_state.value is UiState.Error) {
+                    _state.value = UiState.Success(Unit)
+                }
+            } catch (_: Exception) {
+                // 静默模式忽略错误，不覆盖已有状态
             }
         }
     }
@@ -146,7 +171,10 @@ class StatisticsDashboardViewModel @Inject constructor(
                         if (plansResponse.code == 200 && plansResponse.data != null) {
                             _constructionPlans.value = plansResponse.data!!
                         }
-                    } catch (_: Exception) { }
+                    } catch (e: Exception) {
+                        // 记录错误但不中断其他数据加载
+                        _errorMessage.value = NetworkErrorHandler.translate(e, "加载施工方案失败")
+                    }
                 }
                 val projectsJob = launch {
                     try {
@@ -162,12 +190,16 @@ class StatisticsDashboardViewModel @Inject constructor(
                                 finalTotal = data.finalTotal
                             )
                         }
-                    } catch (_: Exception) { }
+                    } catch (e: Exception) {
+                        _errorMessage.value = NetworkErrorHandler.translate(e, "加载工程数据失败")
+                    }
                 }
                 plansJob.join()
                 projectsJob.join()
             }
-        } catch (_: Exception) { }
+        } catch (e: Exception) {
+            _errorMessage.value = NetworkErrorHandler.translate(e, "加载数据失败")
+        }
     }
 
     /** 加载结算历史 */
@@ -177,15 +209,9 @@ class StatisticsDashboardViewModel @Inject constructor(
             if (response.code == 200 && response.data != null) {
                 _settlementHistory.value = response.data!!
             }
-        } catch (_: Exception) { }
-    }
-
-    /** 加载用户昵称 */
-    private suspend fun loadUserNickname() {
-        try {
-            val nickname = userStorage.getNickname()
-            _userNickname.value = nickname ?: ""
-        } catch (_: Exception) { }
+        } catch (e: Exception) {
+            _errorMessage.value = NetworkErrorHandler.translate(e, "加载结算历史失败")
+        }
     }
 
     /** 切换工程选择状态 */
@@ -227,7 +253,7 @@ class StatisticsDashboardViewModel @Inject constructor(
                     _calculationResult.value = response.data!!
                 }
             } catch (e: Exception) {
-                _errorMessage.value = "计算失败：${e.message}"
+                _errorMessage.value = NetworkErrorHandler.translate(e, "计算结算失败")
             }
         }
     }
@@ -252,10 +278,10 @@ class StatisticsDashboardViewModel @Inject constructor(
                     loadSalarySheetData()
                     loadSettlementHistory()
                 } else {
-                    _errorMessage.value = response.msg.ifEmpty { "结算失败" }
+                    _errorMessage.value = NetworkErrorHandler.translateServerError(response.msg, "结算失败")
                 }
             } catch (e: Exception) {
-                _errorMessage.value = "结算失败：${e.message}"
+                _errorMessage.value = NetworkErrorHandler.translate(e, "结算失败")
             } finally {
                 _settling.value = false
             }
@@ -395,6 +421,166 @@ class StatisticsDashboardViewModel @Inject constructor(
                 _exportingId.value = null
             }
         }
+    }
+
+    /**
+     * 导出结算单图片（PNG格式）
+     * 使用SettlementImageGenerator在本地绘制，样式与程序内显示一致
+     * 通过MediaStore保存到图库，相册可见
+     *
+     * @param settlement 结算历史数据
+     */
+    fun exportSettlementImage(settlement: SettlementHistoryDto) {
+        viewModelScope.launch {
+            _exportingId.value = settlement.settlementId
+            try {
+                // 获取用户名（优先使用昵称）
+                val userName = userStorage.nicknameFlow.value.ifBlank {
+                    userStorage.getNickname() ?: "未知用户"
+                }
+
+                // 获取施工方案列表（从已加载的数据中）
+                val plans = _constructionPlans.value
+
+                // 在IO线程生成图片
+                val bitmap = withContext(Dispatchers.IO) {
+                    SettlementImageGenerator.generate(
+                        settlement = settlement,
+                        constructionPlans = plans,
+                        userName = userName,
+                        getUnitName = { unit -> getUnitName(unit) },
+                        formatNumber = { num -> formatNumber(num) }
+                    )
+                }
+
+                // 通过MediaStore保存到图库（相册可见）
+                val fileName = "${settlement.settlementNo}.png"
+                val savedUri = withContext(Dispatchers.IO) {
+                    saveBitmapToGallery(bitmap, fileName)
+                }
+                bitmap.recycle()
+
+                _successMessage.value = "图片已保存到图库：$fileName"
+            } catch (e: Exception) {
+                _errorMessage.value = "导出失败：${e.message}"
+            } finally {
+                _exportingId.value = null
+            }
+        }
+    }
+
+    /**
+     * 导出当前选中工程的结算单图片（未结算状态）
+     * 将当前选中的工程数据、计算结果、预支数据组装为SettlementHistoryDto，复用SettlementImageGenerator生成图片
+     */
+    fun exportCurrentSettlementImage() {
+        viewModelScope.launch {
+            val selectedIds = _selectedProjectIds.value
+            if (selectedIds.isEmpty()) {
+                _errorMessage.value = "请先选择要导出的工程"
+                return@launch
+            }
+
+            // 使用一个特殊的ID标记当前结算单导出中（避免与历史结算单ID冲突）
+            val currentExportId = -1
+            _exportingId.value = currentExportId
+            try {
+                val userName = userStorage.nicknameFlow.value.ifBlank {
+                    userStorage.getNickname() ?: "未知用户"
+                }
+                val plans = _constructionPlans.value
+                val calcResult = _calculationResult.value
+                val allProjects = _projectData.value
+                // 仅导出选中的工程
+                val selectedProjects = allProjects.filter { it.id in selectedIds }
+
+                // 组装为SettlementHistoryDto，复用SettlementImageGenerator
+                val now = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.CHINA).format(java.util.Date())
+                val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.CHINA).format(java.util.Date())
+                val currentSettlement = SettlementHistoryDto(
+                    settlementId = currentExportId,
+                    settlementNo = "当前结算单_${today.replace("-", "")}",
+                    startMonth = today,
+                    endMonth = today,
+                    totalAmount = calcResult.grandTotal,
+                    advanceAmount = calcResult.totalAdvance,
+                    actualAmount = calcResult.finalTotal,
+                    confirmed = false,
+                    confirmedAt = null,
+                    settledBy = 0,
+                    settledByUsername = "",
+                    settledByNickname = userName,
+                    createdAt = now,
+                    projects = selectedProjects,
+                    advances = calcResult.advances,
+                    planTotals = calcResult.planTotals,
+                    grandTotal = calcResult.grandTotal,
+                    totalAdvance = calcResult.totalAdvance,
+                    finalTotal = calcResult.finalTotal
+                )
+
+                // 在IO线程生成图片
+                val bitmap = withContext(Dispatchers.IO) {
+                    SettlementImageGenerator.generate(
+                        settlement = currentSettlement,
+                        constructionPlans = plans,
+                        userName = userName,
+                        getUnitName = { unit -> getUnitName(unit) },
+                        formatNumber = { num -> formatNumber(num) }
+                    )
+                }
+
+                // 通过MediaStore保存到图库
+                val fileName = "${currentSettlement.settlementNo}.png"
+                val savedUri = withContext(Dispatchers.IO) {
+                    saveBitmapToGallery(bitmap, fileName)
+                }
+                bitmap.recycle()
+
+                _successMessage.value = "图片已保存到图库：$fileName"
+            } catch (e: Exception) {
+                _errorMessage.value = "导出失败：${e.message}"
+            } finally {
+                _exportingId.value = null
+            }
+        }
+    }
+
+    /**
+     * 通过MediaStore将Bitmap保存到图库（Pictures目录）
+     * 兼容Android 10+（API 29+）的分区存储和旧版本
+     *
+     * @param bitmap 要保存的图片
+     * @param fileName 文件名（含扩展名）
+     * @return 保存后的Uri
+     */
+    private fun saveBitmapToGallery(bitmap: Bitmap, fileName: String): Uri {
+        val contentValues = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            // 指定存储路径：Pictures/三人行结算单/
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/三人行结算单")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+        }
+
+        val resolver = context.contentResolver
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+            ?: throw RuntimeException("无法创建图库文件")
+
+        resolver.openOutputStream(uri)?.use { outputStream ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+        } ?: throw RuntimeException("无法打开输出流")
+
+        // Android 10+需要更新IS_PENDING为0，表示文件已就绪
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            contentValues.clear()
+            contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+            resolver.update(uri, contentValues, null, null)
+        }
+
+        return uri
     }
 }
 

@@ -8,13 +8,13 @@
  * - 流式响应SSE
  */
 
-const pool = require('../../config/database');
+const pool = require('../config/database');
 const { createProvider } = require('./providers');
 const { detectIntent, getToolsForIntent } = require('./intentRouter');
 const { aiConfig } = require('./config');
 const { isAvailable } = require('./index');
 const { retrieve } = require('./knowledge/retriever');
-const logger = require('../../config/logger');
+const logger = require('../config/logger');
 
 // FunctionCall工具执行器映射
 const toolExecutors = {};
@@ -113,22 +113,54 @@ const sendMessage = async ({ userId, sessionId, message, user }) => {
   // 8. 处理FunctionCall
   let finalContent = result.content;
   if (result.toolCalls && result.toolCalls.length > 0) {
+    // 注意: assistant消息的tool_calls必须使用API规范格式 {id, type, function:{name, arguments}}
+    //       且后续tool消息必须包含 tool_call_id 关联对应tool_call，否则API返回400
+    const toolCallIdMap = {};
+    messages.push({
+      role: 'assistant',
+      content: result.content || null,
+      tool_calls: result.toolCalls.map(tc => {
+        const id = tc.id || `call_${tc.name}`;
+        toolCallIdMap[tc.name] = id;
+        return {
+          id,
+          type: 'function',
+          function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+        };
+      }),
+    });
+
     for (const toolCall of result.toolCalls) {
       const executor = toolExecutors[toolCall.name];
       if (executor) {
         try {
           const toolResult = await executor(toolCall.arguments, user);
-          // 将工具结果追加到消息中，再次调用大模型
-          messages.push({ role: 'assistant', content: null, tool_calls: result.toolCalls });
-          messages.push({ role: 'tool', name: toolCall.name, content: JSON.stringify(toolResult) });
-
-          const followUp = await provider.chat(messages);
-          finalContent = followUp.content;
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCallIdMap[toolCall.name] || toolCall.id,
+            name: toolCall.name,
+            content: JSON.stringify(toolResult),
+          });
         } catch (error) {
           logger.error(`工具执行失败: ${toolCall.name}`, error);
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCallIdMap[toolCall.name] || toolCall.id,
+            name: toolCall.name,
+            content: JSON.stringify({ error: error.message }),
+          });
           finalContent += `\n\n[工具调用失败: ${error.message}]`;
         }
       }
+    }
+
+    // 工具结果追加完成后，再次调用大模型生成最终回复
+    try {
+      const followUp = await provider.chat(messages);
+      finalContent = followUp.content;
+    } catch (error) {
+      logger.error('工具调用后大模型请求失败:', error);
+      finalContent += `\n\n[生成回复失败: ${error.message}]`;
     }
   }
 
@@ -141,6 +173,8 @@ const sendMessage = async ({ userId, sessionId, message, user }) => {
 
 /**
  * 流式发送消息（SSE）
+ * 支持FunctionCall工具调用循环（最多3轮防死循环）
+ *
  * @param {object} params - 同sendMessage参数
  * @param {function} onChunk - 流式回调 (text: string) => void
  * @returns {Promise<{content: string, intent: string}>}
@@ -171,6 +205,12 @@ const sendMessageStream = async ({ userId, sessionId, message, user }, onChunk) 
     }
   }
 
+  // 构建FunctionCall工具定义
+  const toolNames = getToolsForIntent(intent);
+  const tools = toolNames
+    .map(name => toolDefinitions[name])
+    .filter(Boolean);
+
   const messages = [
     { role: 'system', content: systemPrompt },
     ...history.slice(-aiConfig.chat.maxHistoryMessages),
@@ -178,12 +218,76 @@ const sendMessageStream = async ({ userId, sessionId, message, user }, onChunk) 
   ];
 
   const provider = createProvider();
-  const result = await provider.chatStream(messages, onChunk);
+  const streamOptions = tools.length > 0 ? { tools } : {};
+
+  // 工具调用循环（最多3轮，防止死循环）
+  // 每轮：调用流式接口 → 若返回tool_calls → 执行工具 → 将结果追加到messages → 继续下一轮流式
+  let round = 0;
+  let result = await provider.chatStream(messages, onChunk, streamOptions);
+  let finalContent = result.content;
+
+  while (result.toolCalls && result.toolCalls.length > 0 && round < 3) {
+    // 将assistant的工具调用消息追加到上下文
+    messages.push({
+      role: 'assistant',
+      content: result.content || null,
+      tool_calls: result.toolCalls.map(tc => ({
+        id: tc.id || `call_${round}_${tc.name}`,
+        type: 'function',
+        function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+      })),
+    });
+
+    // 逐个执行工具，将结果以tool角色追加到上下文
+    // 注意: OpenAI/DeepSeek API规范要求tool消息必须包含 tool_call_id 字段，
+    //       用于关联assistant消息中对应的tool_call，否则API返回400错误
+    for (const toolCall of result.toolCalls) {
+      const executor = toolExecutors[toolCall.name];
+      // 为每个工具调用生成稳定的id（流式模式下可能为空，需兜底）
+      const toolCallId = toolCall.id || `call_${round}_${toolCall.name}`;
+      // 回填到assistant消息的tool_calls中，确保id一致
+      const assistantMsg = messages[messages.length - 1];
+      if (assistantMsg && assistantMsg.role === 'assistant' && assistantMsg.tool_calls) {
+        const tcEntry = assistantMsg.tool_calls.find(
+          tc => tc.function && tc.function.name === toolCall.name
+        );
+        if (tcEntry && !tcEntry.id) tcEntry.id = toolCallId;
+      }
+
+      if (executor) {
+        try {
+          onChunk(`\n\n[正在查询：${toolCall.name}...]\n`);
+          const toolResult = await executor(toolCall.arguments, user);
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCallId,
+            name: toolCall.name,
+            content: JSON.stringify(toolResult),
+          });
+        } catch (error) {
+          logger.error(`工具执行失败: ${toolCall.name}`, error);
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCallId,
+            name: toolCall.name,
+            content: JSON.stringify({ error: error.message }),
+          });
+        }
+      } else {
+        logger.warn(`未找到工具执行器: ${toolCall.name}`);
+      }
+    }
+
+    round++;
+    // 继续流式调用（仍带tools，让模型可以继续调用或基于工具结果生成最终回复）
+    result = await provider.chatStream(messages, onChunk, streamOptions);
+    finalContent = result.content;
+  }
 
   await saveChatHistory(userId, sessionId, 'user', message, intent);
-  await saveChatHistory(userId, sessionId, 'assistant', result.content, intent);
+  await saveChatHistory(userId, sessionId, 'assistant', finalContent, intent);
 
-  return { content: result.content, intent };
+  return { content: finalContent, intent };
 };
 
 /**
@@ -260,17 +364,18 @@ const toolDefinitions = {
   },
   query_settlements: {
     name: 'query_settlements',
-    description: '查询用户的结算记录',
+    description: '查询用户的工资结算记录，包含结算金额、预支金额、实付金额、结算月份、关联工程等信息。用户询问工资、结算、收入时使用此工具。',
     parameters: {
       type: 'object',
       properties: {
-        status: { type: 'string', description: '结算状态' },
+        status: { type: 'string', description: '结算状态筛选，可选值：已支付、已确认、待确认。不传则查询所有状态。' },
+        month: { type: 'string', description: '月份筛选，格式YYYY-MM（如2026-07）。用户问"这个月工资"时传入当前月份。' },
       },
     },
   },
   query_advances: {
     name: 'query_advances',
-    description: '查询用户的预支记录',
+    description: '查询用户的预支记录，包含预支金额、预支日期、是否已结算等信息。用户询问预支、借款时使用此工具。',
     parameters: {
       type: 'object',
       properties: {},

@@ -3,10 +3,6 @@ const validation = require('../middleware/validation');
 const projectService = require('../services/projectService');
 const logger = require('../config/logger');
 
-// 以下两个方法暂未迁移到 projectService，保留原有数据库操作
-const pool = require('../config/database');
-const { isAdmin, isConstructor } = require('../middleware/rbac');
-
 // ========== Controller 方法 ==========
 
 /**
@@ -14,7 +10,7 @@ const { isAdmin, isConstructor } = require('../middleware/rbac');
  * 从请求体提取参数，调用 projectService.createProject 处理业务逻辑
  */
 const createProject = async (ctx) => {
-  const { name, spaceType, constructionScheme, length, width, salaryDistribution, constructors, remark } = ctx.request.body;
+  const { name, spaceType, constructionScheme, length, width, salaryDistribution, constructors, remark, workerWorkDays } = ctx.request.body;
   const userId = ctx.state.user.id;
   const userRole = ctx.state.user.role;
 
@@ -28,6 +24,7 @@ const createProject = async (ctx) => {
       salaryDistribution,
       constructors,
       remark,
+      workerWorkDays,
       userId,
       userRole,
     });
@@ -257,80 +254,29 @@ const transferSubproject = async (ctx) => {
 
 /**
  * 更新子项目状态
- * TODO: projectService 中暂无对应方法，保留原有逻辑，后续补充
+ * 从路径参数、请求体和用户信息提取参数，调用 projectService.updateSubprojectStatus
  */
 const updateSubprojectStatus = async (ctx) => {
   const { id, subprojectId } = ctx.params;
   const { status } = ctx.request.body;
   const userId = ctx.state.user.id;
-  const user = ctx.state.user;
 
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-
-    // 检查子项目是否存在
-    const subprojectResult = await client.query(
-      'SELECT sp.*, p.created_by FROM subprojects sp JOIN projects p ON sp.project_id = p.id WHERE sp.id = $1',
-      [subprojectId]
-    );
-    if (subprojectResult.rows.length === 0) {
-      await client.query('ROLLBACK');
-      ctx.fail(3003, '子项目不存在');
-      return;
-    }
-
-    const subproject = subprojectResult.rows[0];
-
-    // V2.0: 权限由路由层requireSubprojectManage中间件控制
-    // controller层检查：只有子项目创建者可以操作
-    if (userId !== subproject.created_by) {
-      await client.query('ROLLBACK');
-      ctx.fail(4002, '只有子项目创建者可以修改子项目状态');
-      return;
-    }
-
-    // 更新子项目状态
-    await client.query(
-      'UPDATE subprojects SET status = $1 WHERE id = $2',
-      [status, subprojectId]
-    );
-
-    // 添加历史记录
-    await client.query(
-      'INSERT INTO project_history (project_id, action, description, performed_by) VALUES ($1, $2, $3, $4)',
-      [id, 'UPDATE_SUBPROJECT_STATUS', `更新子项目状态为${status}`, userId]
-    );
-
-    await client.query('COMMIT');
-    ctx.success({ id: subprojectId });
+    const result = await projectService.updateSubprojectStatus(id, subprojectId, status, userId);
+    ctx.success(result);
   } catch (error) {
-    if (client) {
-      try {
-        await client.query('ROLLBACK');
-        logger.info('[更新子项目状态] 事务已回滚');
-      } catch (rollbackErr) {
-        logger.error('[更新子项目状态] 事务回滚失败:', rollbackErr);
-      }
+    if (error.name === 'BusinessError') {
+      ctx.fail(error.code, error.message);
+      return;
     }
-
     logger.error('更新子项目状态失败:', error);
     ctx.fail(5001, '更新子项目状态失败');
-  } finally {
-    if (client) {
-      try {
-        client.release();
-        logger.info('[更新子项目状态] 数据库连接已释放');
-      } catch (releaseErr) {
-        logger.error('[更新子项目状态] 释放数据库连接失败:', releaseErr);
-      }
-    }
   }
 };
 
 /**
  * 上传文件（支持两种方式：multipart/form-data 或 JSON）
- * TODO: 涉及文件上传逻辑，暂不重构，保留原有实现
+ * 从路径参数、请求体和用户信息提取参数，调用 projectService.uploadFile
  */
 const uploadFile = async (ctx) => {
   const { id } = ctx.params;
@@ -338,68 +284,45 @@ const uploadFile = async (ctx) => {
   const user = ctx.state.user;
 
   try {
-    // 检查工程是否存在
-    const projectResult = await pool.query('SELECT * FROM projects WHERE id = $1', [id]);
-    if (projectResult.rows.length === 0) {
-      ctx.fail(3001, '工程不存在');
-      return;
-    }
+    // 整合文件数据：
+    //   - JSON 方式：ctx.request.body 自带 path 字段，直接透传
+    //   - multipart 方式：从 ctx.request.files.files 取出文件对象封装为 { files }
+    const fileData = ctx.request.body && ctx.request.body.path
+      ? ctx.request.body
+      : { files: ctx.request.files?.files };
 
-    const project = projectResult.rows[0];
-
-    // V2.0: 工程创建者、施工员或管理员可以上传文件
-    if (userId !== project.created_by && !isAdmin(user) && !isConstructor(user)) {
-      ctx.fail(4002, '无操作权限');
-      return;
-    }
-
-    const uploadedFiles = [];
-
-    // 方式1：接收 JSON 数据（前端已上传文件，只需保存记录）
-    if (ctx.request.body && ctx.request.body.path) {
-      const { filename, originalName, path: filePath, size, type } = ctx.request.body;
-
-      await pool.query(
-        'INSERT INTO files (project_id, filename, original_name, path, size, type, uploaded_by) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-        [id, filename, originalName || filename, filePath, size || 0, type || '', userId]
-      );
-
-      uploadedFiles.push({
-        filename: originalName || filename,
-        url: filePath,
-        size: size,
-        type: type
-      });
-    }
-    // 方式2：接收 multipart/form-data 文件（原有方式）
-    else {
-      const files = ctx.request.files?.files;
-      if (!files) {
-        ctx.fail(1001, '参数错误');
-        return;
-      }
-
-      const fileArray = Array.isArray(files) ? files : [files];
-
-      for (const file of fileArray) {
-        const fileUrl = `/uploads/${file.newFilename}`;
-
-        await pool.query(
-          'INSERT INTO files (project_id, filename, original_name, path, size, type, uploaded_by) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-          [id, file.originalFilename, file.originalFilename, fileUrl, file.size || 0, file.mimetype || '', userId]
-        );
-
-        uploadedFiles.push({
-          filename: file.originalFilename,
-          url: fileUrl
-        });
-      }
-    }
-
-    ctx.success(uploadedFiles);
+    const result = await projectService.uploadFile(id, fileData, userId, user);
+    ctx.success(result);
   } catch (error) {
+    if (error.name === 'BusinessError') {
+      ctx.fail(error.code, error.message);
+      return;
+    }
     logger.error('上传文件失败:', error);
     ctx.fail(5001, '上传文件失败');
+  }
+};
+
+/**
+ * 删除工程附件
+ * 从路径参数和用户信息提取参数，调用 projectService.deleteFile
+ * 对应路由：DELETE /v1/projects/:id/files/:fileId
+ */
+const deleteFile = async (ctx) => {
+  const { id, fileId } = ctx.params;
+  const userId = ctx.state.user.id;
+  const user = ctx.state.user;
+
+  try {
+    const result = await projectService.deleteFile(id, fileId, userId, user);
+    ctx.success(result);
+  } catch (error) {
+    if (error.name === 'BusinessError') {
+      ctx.fail(error.code, error.message);
+      return;
+    }
+    logger.error('删除附件失败:', error);
+    ctx.fail(5001, '删除附件失败');
   }
 };
 
@@ -455,7 +378,12 @@ const createProjectSchema = Joi.object({
   }),
   remark: Joi.string().max(500).allow('').messages({
     'string.max': '工程备注不能超过500个文字'
-  })
+  }),
+  // 按工日分配模式下各施工人员的工日数（可选，仅work_days模式有效）
+  workerWorkDays: Joi.array().items(Joi.object({
+    userId: Joi.number().integer().positive().required(),
+    workdays: Joi.number().min(0).required()
+  })).optional()
 });
 
 const getProjectsSchema = Joi.object({
@@ -573,6 +501,7 @@ module.exports = {
   transferSubproject,
   updateSubprojectStatus,
   uploadFile,
+  deleteFile,
   getProjectWorkers,
   createProjectSchema,
   getProjectsSchema,

@@ -33,22 +33,66 @@ fun ProfileScreen(
     onAbout: () -> Unit = {},
     onMessages: () -> Unit = {},
     onLogout: () -> Unit = {},
-    viewModel: ProfileViewModel = hiltViewModel()
+    viewModel: ProfileViewModel = hiltViewModel(),
+    userNickname: String = "",
+    unreadCount: Int = 0
 ) {
     val nickname by viewModel.nickname.collectAsStateWithLifecycle()
     val roleDisplay by viewModel.roleDisplay.collectAsStateWithLifecycle()
     val role by viewModel.role.collectAsStateWithLifecycle()
+
+    // 退出登录确认弹窗状态
+    var showLogoutDialog by remember { mutableStateOf(false) }
+
+    // 退出登录确认弹窗
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            title = {
+                Text(
+                    text = "确认退出登录",
+                    fontWeight = FontWeight.SemiBold
+                )
+            },
+            text = {
+                Text(
+                    text = "您确定要退出当前账号吗？退出后需要重新登录才能使用系统功能。",
+                    fontSize = 14.sp,
+                    color = AppColors.TextSecondary
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLogoutDialog = false
+                        viewModel.logout()
+                        onLogout()
+                    }
+                ) {
+                    Text("确认退出", color = AppColors.Error, fontWeight = FontWeight.Medium)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showLogoutDialog = false }
+                ) {
+                    Text("取消", color = AppColors.TextSecondary)
+                }
+            },
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
     ) {
-        // 顶部导航栏
+        // 顶部导航栏（显示响应式用户昵称和未读消息数）
         GreenTopNavBar(
             title = "个人中心",
-            userNickname = "",
-            unreadCount = -1
+            userNickname = userNickname.ifBlank { nickname }.ifBlank { "未登录" },
+            unreadCount = unreadCount
         )
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -82,9 +126,9 @@ fun ProfileScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // 退出登录按钮
+        // 退出登录按钮（点击弹出确认弹窗）
         OutlinedButton(
-            onClick = { viewModel.logout(); onLogout() },
+            onClick = { showLogoutDialog = true },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(48.dp),
             shape = RoundedCornerShape(24.dp),
             colors = ButtonDefaults.outlinedButtonColors(contentColor = AppColors.Error)

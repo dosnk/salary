@@ -15,6 +15,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    // 启用BuildConfig，供NetworkModule判断DEBUG/RELEASE构建类型
+    // 用于控制HttpLoggingInterceptor日志级别（DEBUG=HEADERS, RELEASE=NONE）
+    buildFeatures {
+        buildConfig = true
+    }
 }
 
 dependencies {

@@ -1108,6 +1108,9 @@ router.put('/:id/subprojects/:subprojectId/status', auth.authenticate, requireSu
 
 router.post('/:id/files', auth.authenticate, projectController.uploadFile);
 
+// 删除工程附件（物理文件+数据库记录）
+router.delete('/:id/files/:fileId', auth.authenticate, projectController.deleteFile);
+
 router.get('/:id/workers', auth.authenticate, projectController.getProjectWorkers);
 
 module.exports = router;

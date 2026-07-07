@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -22,23 +24,26 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FilterAlt
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -51,7 +56,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -75,11 +79,13 @@ import java.util.Locale
 @Composable
 fun ProjectListScreen(
     onNavigateToProject: (Int) -> Unit = {},
-    viewModel: ProjectListViewModel = hiltViewModel()
+    viewModel: ProjectListViewModel = hiltViewModel(),
+    userNickname: String = "",
+    /** 刷新触发器：值变化时静默刷新列表数据（用于Tab切换时刷新） */
+    refreshTrigger: Int = 0
 ) {
     val state by viewModel.state.collectAsState()
     val advancedFilter by viewModel.advancedFilter.collectAsState()
-    val userNickname by viewModel.userNickname.collectAsState()
     val successMessage by viewModel.successMessage.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
     var searchKeyword by remember { mutableStateOf("") }
@@ -88,6 +94,14 @@ fun ProjectListScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+
+    // Tab切换时静默刷新工程列表数据（首次进入refreshTrigger=0不触发，后续切换递增触发）
+    LaunchedEffect(refreshTrigger) {
+        if (refreshTrigger > 0) {
+            viewModel.silentRefresh()
+        }
+    }
+
     // 搜索防抖Job
     var searchDebounceJob by remember { mutableStateOf<Job?>(null) }
 
@@ -254,11 +268,9 @@ fun ProjectListScreen(
             currentFilter = advancedFilter,
             onApply = { filter ->
                 viewModel.updateAdvancedFilter(filter)
-                showAdvancedFilter = false
             },
             onReset = {
                 viewModel.clearAllFilters()
-                showAdvancedFilter = false
             },
             onDismiss = { showAdvancedFilter = false }
         )
@@ -266,7 +278,10 @@ fun ProjectListScreen(
 }
 
 /**
- * 搜索栏 - 搜索框 + 高级筛选按钮（漏斗图标）
+ * 搜索栏 - 白色圆角容器 + 搜索框 + 绿色筛选按钮
+ * 布局参考HTML .search-bar：白色背景、圆角12dp、搜索框与筛选按钮间距10dp
+ * 筛选按钮：绿色背景、白色文字、48dp宽
+ * 卡片带柔和阴影，与列表卡片质感一致
  */
 @Composable
 private fun SearchRow(
@@ -275,50 +290,88 @@ private fun SearchRow(
     onSearch: () -> Unit = {},
     onOpenAdvancedFilter: () -> Unit
 ) {
-    Row(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = AppColors.Surface,
+        // 柔和阴影：与工程卡片一致的elevation 2dp
+        shadowElevation = 2.dp
     ) {
-        // 搜索框
-        OutlinedTextField(
-            value = searchKeyword,
-            onValueChange = onSearchKeywordChange,
-            placeholder = { Text("搜索工程名称、描述或施工员") },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            singleLine = true,
-            modifier = Modifier.weight(1f),
-            shape = RoundedCornerShape(12.dp),
-            keyboardOptions = KeyboardOptions(
-                imeAction = ImeAction.Search
-            ),
-            keyboardActions = KeyboardActions(
-                onSearch = { onSearch() }
-            )
-        )
-        // 高级筛选按钮
-        IconButton(
-            onClick = onOpenAdvancedFilter,
-            modifier = Modifier
-                .background(
-                    Brush.verticalGradient(listOf(AppColors.Green400, AppColors.Green500)),
-                    RoundedCornerShape(12.dp)
-                )
-                .size(48.dp)
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Icon(
-                Icons.Default.FilterAlt,
-                contentDescription = "高级筛选",
-                tint = Color.White
+            // 搜索框（占主要宽度）- 高度52dp确保placeholder完整显示，用TextSecondary确保清晰可见
+            OutlinedTextField(
+                value = searchKeyword,
+                onValueChange = onSearchKeywordChange,
+                placeholder = {
+                    Text(
+                        "搜索工程名称、描述或施工员",
+                        fontSize = 13.sp,
+                        color = AppColors.TextSecondary,
+                        modifier = Modifier.wrapContentHeight(Alignment.CenterVertically)
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = AppColors.TextSecondary
+                    )
+                },
+                singleLine = true,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(52.dp),
+                shape = RoundedCornerShape(8.dp),
+                textStyle = androidx.compose.ui.text.TextStyle(
+                    fontSize = 14.sp,
+                    lineHeight = 18.sp
+                ),
+                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = AppColors.Green400,
+                    unfocusedBorderColor = AppColors.Green100,
+                    cursorColor = AppColors.Green400
+                ),
+                keyboardOptions = KeyboardOptions(
+                    imeAction = ImeAction.Search
+                ),
+                keyboardActions = KeyboardActions(
+                    onSearch = { onSearch() }
+                )
             )
+            // 筛选按钮：绿色背景、白色文字（参考HTML .filter-btn）
+            Surface(
+                onClick = onOpenAdvancedFilter,
+                shape = RoundedCornerShape(8.dp),
+                color = AppColors.Green400,
+                modifier = Modifier.size(52.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    Text(
+                        text = "筛选",
+                        fontSize = 14.sp,
+                        color = Color.White,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
         }
     }
 }
 
 /**
  * 筛选标签行 - 已激活的筛选条件显示为可关闭的Tag
+ * 紧凑布局：减小padding，避免过多占用屏幕高度
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -330,14 +383,14 @@ private fun FilterTagsRow(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
+            .padding(horizontal = 12.dp, vertical = 2.dp),
         shape = RoundedCornerShape(8.dp),
         color = AppColors.Surface
     ) {
         FlowRow(
-            modifier = Modifier.padding(8.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             // 月份标签
             filter.month?.let { month ->
@@ -368,7 +421,13 @@ private fun FilterTagsRow(
                 )
             }
             // 清空按钮
-            TextButton(onClick = onClearAll) {
+            TextButton(
+                onClick = onClearAll,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    horizontal = 8.dp,
+                    vertical = 0.dp
+                )
+            ) {
                 Text("清空", fontSize = 12.sp, color = AppColors.TextSecondary)
             }
         }
@@ -412,6 +471,8 @@ private fun FilterTag(
 /**
  * 高级筛选弹窗 - 底部弹出
  * 包含：月份选择、工程状态选择、结算状态选择、开始/结束日期
+ * 交互优化：选择筛选条件后自动应用，无需点击"应用"按钮
+ * 标题栏右侧"重置"按钮可一键清除全部筛选条件
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -424,6 +485,12 @@ private fun AdvancedFilterSheet(
     val sheetState = rememberModalBottomSheetState()
     var editFilter by remember(currentFilter) { mutableStateOf(currentFilter) }
 
+    // 自动应用筛选：editFilter变更后立即回调onApply
+    val applyFilter: (AdvancedFilterState) -> Unit = { newFilter ->
+        editFilter = newFilter
+        onApply(newFilter)
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -434,24 +501,50 @@ private fun AdvancedFilterSheet(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            // 标题栏
+            // 标题栏：左侧关闭 + 中间标题 + 右侧重置
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 TextButton(onClick = onDismiss) {
-                    Text("取消", color = AppColors.TextSecondary)
+                    Text("关闭", color = AppColors.TextSecondary)
                 }
                 Text("高级筛选", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                TextButton(onClick = { onApply(editFilter) }) {
-                    Text("应用", color = AppColors.Green400, fontWeight = FontWeight.SemiBold)
+                // 重置按钮：浅灰背景胶囊 + 刷新图标，点击只重置不退出弹窗
+                Surface(
+                    onClick = {
+                        editFilter = AdvancedFilterState()
+                        onReset()
+                    },
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xFFF5F5F5),
+                    border = BorderStroke(1.dp, Color(0xFFE0E0E0))
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = AppColors.Green400
+                        )
+                        Text(
+                            "重置",
+                            color = AppColors.Green400,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // 月份选择
+            // 月份选择 - 确认后自动应用
             FilterOptionRow(label = "月份") {
                 var showMonthPicker by remember { mutableStateOf(false) }
                 TextButton(onClick = { showMonthPicker = true }) {
@@ -466,7 +559,7 @@ private fun AdvancedFilterSheet(
                         currentYear = editFilter.year ?: java.time.LocalDate.now().year,
                         currentMonth = editFilter.month ?: java.time.LocalDate.now().monthValue,
                         onConfirm = { year, month ->
-                            editFilter = editFilter.copy(year = year, month = month)
+                            applyFilter(editFilter.copy(year = year, month = month))
                             showMonthPicker = false
                         },
                         onDismiss = { showMonthPicker = false }
@@ -474,7 +567,7 @@ private fun AdvancedFilterSheet(
                 }
             }
 
-            // 工程状态选择
+            // 工程状态选择 - 选择后自动应用
             FilterOptionRow(label = "工程状态") {
                 var showStatusPicker by remember { mutableStateOf(false) }
                 TextButton(onClick = { showStatusPicker = true }) {
@@ -487,13 +580,16 @@ private fun AdvancedFilterSheet(
                     StatusPickerSheet(
                         options = statusOptions,
                         current = editFilter.status,
-                        onConfirm = { editFilter = editFilter.copy(status = it); showStatusPicker = false },
+                        onConfirm = {
+                            applyFilter(editFilter.copy(status = it))
+                            showStatusPicker = false
+                        },
                         onDismiss = { showStatusPicker = false }
                     )
                 }
             }
 
-            // 结算状态选择
+            // 结算状态选择 - 选择后自动应用
             FilterOptionRow(label = "结算状态") {
                 var showSettlementPicker by remember { mutableStateOf(false) }
                 TextButton(onClick = { showSettlementPicker = true }) {
@@ -506,62 +602,66 @@ private fun AdvancedFilterSheet(
                     StatusPickerSheet(
                         options = settlementStatusOptions,
                         current = editFilter.settlementStatus,
-                        onConfirm = { editFilter = editFilter.copy(settlementStatus = it); showSettlementPicker = false },
+                        onConfirm = {
+                            applyFilter(editFilter.copy(settlementStatus = it))
+                            showSettlementPicker = false
+                        },
                         onDismiss = { showSettlementPicker = false }
                     )
                 }
             }
 
-            // 开始日期
+            // 开始日期 - 选择后自动应用
             FilterOptionRow(label = "开始日期") {
-                var dateValue by remember { mutableStateOf(editFilter.startDate ?: "") }
-                OutlinedTextField(
-                    value = dateValue,
-                    onValueChange = {
-                        dateValue = it
-                        editFilter = editFilter.copy(startDate = it.ifBlank { null })
-                    },
-                    placeholder = { Text("yyyy-MM-dd", fontSize = 12.sp) },
-                    singleLine = true,
-                    modifier = Modifier.width(160.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp)
-                )
+                var showDatePicker by remember { mutableStateOf(false) }
+                TextButton(onClick = { showDatePicker = true }) {
+                    Text(
+                        editFilter.startDate ?: "请选择日期",
+                        color = if (editFilter.startDate != null) AppColors.Green400 else AppColors.TextPlaceholder
+                    )
+                }
+                if (showDatePicker) {
+                    DatePickerDialogSheet(
+                        initialDate = editFilter.startDate,
+                        onConfirm = { dateStr ->
+                            applyFilter(editFilter.copy(startDate = dateStr))
+                            showDatePicker = false
+                        },
+                        onClear = {
+                            applyFilter(editFilter.copy(startDate = null))
+                            showDatePicker = false
+                        },
+                        onDismiss = { showDatePicker = false }
+                    )
+                }
             }
 
-            // 结束日期
+            // 结束日期 - 选择后自动应用
             FilterOptionRow(label = "结束日期") {
-                var dateValue by remember { mutableStateOf(editFilter.endDate ?: "") }
-                OutlinedTextField(
-                    value = dateValue,
-                    onValueChange = {
-                        dateValue = it
-                        editFilter = editFilter.copy(endDate = it.ifBlank { null })
-                    },
-                    placeholder = { Text("yyyy-MM-dd", fontSize = 12.sp) },
-                    singleLine = true,
-                    modifier = Modifier.width(160.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp)
-                )
+                var showDatePicker by remember { mutableStateOf(false) }
+                TextButton(onClick = { showDatePicker = true }) {
+                    Text(
+                        editFilter.endDate ?: "请选择日期",
+                        color = if (editFilter.endDate != null) AppColors.Green400 else AppColors.TextPlaceholder
+                    )
+                }
+                if (showDatePicker) {
+                    DatePickerDialogSheet(
+                        initialDate = editFilter.endDate,
+                        onConfirm = { dateStr ->
+                            applyFilter(editFilter.copy(endDate = dateStr))
+                            showDatePicker = false
+                        },
+                        onClear = {
+                            applyFilter(editFilter.copy(endDate = null))
+                            showDatePicker = false
+                        },
+                        onDismiss = { showDatePicker = false }
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // 重置按钮
-            Button(
-                onClick = onReset,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = AppColors.Surface,
-                    contentColor = AppColors.TextPrimary
-                )
-            ) {
-                Text("重置")
-            }
-
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }
@@ -598,8 +698,9 @@ private fun MonthPickerSheet(
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState()
-    var selectedYear by remember { mutableStateOf(currentYear) }
-    var selectedMonth by remember { mutableStateOf(currentMonth) }
+    // 使用currentYear/currentMonth作为key，弹窗重新打开时同步当前选中值
+    var selectedYear by remember(currentYear) { mutableStateOf(currentYear) }
+    var selectedMonth by remember(currentMonth) { mutableStateOf(currentMonth) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -668,6 +769,7 @@ private fun MonthPickerSheet(
 
 /**
  * 状态选择弹窗
+ * 优化：选中项显示绿色背景胶囊，提升视觉辨识度
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -685,22 +787,48 @@ private fun StatusPickerSheet(
         containerColor = AppColors.Surface
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "请选择",
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 15.sp,
+                color = AppColors.TextSecondary,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
             options.forEach { (value, label) ->
                 val isSelected = value == current
-                TextButton(
+                Surface(
                     onClick = { onConfirm(value) },
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isSelected) AppColors.Green50 else Color.Transparent,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp)
+                        .padding(vertical = 2.dp)
                 ) {
-                    Text(
-                        label,
-                        color = if (isSelected) AppColors.Green400 else AppColors.TextPrimary,
-                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            label,
+                            color = if (isSelected) AppColors.Green400 else AppColors.TextPrimary,
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                            fontSize = 14.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                tint = AppColors.Green400,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
                 }
             }
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }
@@ -738,7 +866,8 @@ private fun ProjectList(
 
     LazyColumn(
         state = listState,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+        // 水平内边距约屏幕宽度的1%（360dp屏幕下约3.6dp，取4dp），使卡片宽度约占屏幕98%
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         groupedProjects.forEach { (yearMonth, monthProjects) ->
@@ -760,7 +889,8 @@ private fun ProjectList(
 
         // 加载更多指示器
         if (hasMore) {
-            item {
+            // 使用固定key标识加载更多项，避免重复组合
+            item(key = "loading_more") {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -779,28 +909,21 @@ private fun ProjectList(
 }
 
 /**
- * 月份分组标题 - 绿色渐变背景
+ * 月份分组标题 - 绿色背景
+ * 布局参考HTML .month-title：绿色背景、白色文字16sp、四角圆角8dp
  */
 @Composable
 private fun MonthGroupHeader(yearMonth: String) {
-    Box(
+    Text(
+        text = yearMonth,
+        fontSize = 16.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = Color.White,
         modifier = Modifier
             .fillMaxWidth()
-            .background(
-                Brush.horizontalGradient(
-                    listOf(AppColors.Green400, AppColors.Green500)
-                ),
-                RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)
-            )
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-    ) {
-        Text(
-            text = yearMonth,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color.White
-        )
-    }
+            .background(AppColors.Green400, RoundedCornerShape(8.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+    )
 }
 
 /**
@@ -858,15 +981,82 @@ private fun settlementStatusText(status: String): String = when (status) {
 
 /** 按月分组工程列表 */
 private fun groupProjectsByMonth(projects: List<ProjectUiModel>): Map<String, List<ProjectUiModel>> {
-    val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.CHINA)
+    // 兼容多种后端返回格式：
+    // - "yyyy-MM-dd HH:mm"（后端TO_CHAR实际返回格式）
+    // - "yyyy-MM-dd'T'HH:mm:ss"（ISO标准格式）
+    val parserIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.CHINA)
+    val parserBackend = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA)
     val formatter = SimpleDateFormat("yyyy年M月", Locale.CHINA)
     return projects
         .groupBy { project ->
+            // 优先尝试ISO标准格式，失败则尝试后端实际格式，都失败则标记为未知月份
+            val date = try {
+                parserIso.parse(project.createdAt)
+            } catch (_: Exception) {
+                try {
+                    parserBackend.parse(project.createdAt)
+                } catch (_: Exception) {
+                    null
+                }
+            }
+            date?.let { formatter.format(it) } ?: "未知月份"
+        }
+}
+
+/**
+ * 日期选择弹窗 - 替代原文本输入框，避免用户输入错误格式
+ * @param initialDate 初始日期字符串（yyyy-MM-dd格式），可为null
+ * @param onConfirm 确认回调，返回yyyy-MM-dd格式字符串
+ * @param onClear 清除日期回调
+ * @param onDismiss 关闭弹窗回调
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DatePickerDialogSheet(
+    initialDate: String?,
+    onConfirm: (String) -> Unit,
+    onClear: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    // 将初始日期字符串转换为DatePicker所需的毫秒时间戳
+    val initialMillis = remember(initialDate) {
+        initialDate?.let { dateStr ->
             try {
-                val date = parser.parse(project.createdAt)
-                date?.let { formatter.format(it) } ?: "未知月份"
-            } catch (e: Exception) {
-                "未知月份"
+                SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).parse(dateStr)?.time
+            } catch (_: Exception) {
+                null
+            }
+        } ?: System.currentTimeMillis()
+    }
+    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
+
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    // 将选中的毫秒时间戳转换为yyyy-MM-dd格式字符串
+                    datePickerState.selectedDateMillis?.let { millis ->
+                        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA)
+                            .format(java.util.Date(millis))
+                        onConfirm(dateStr)
+                    } ?: onDismiss()
+                }
+            ) {
+                Text("确定", color = AppColors.Green400)
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onClear) {
+                    Text("清除", color = AppColors.TextSecondary)
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("取消", color = AppColors.TextSecondary)
+                }
             }
         }
+    ) {
+        DatePicker(state = datePickerState)
+    }
 }

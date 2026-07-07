@@ -99,6 +99,15 @@ class ProfileApiViewModel @Inject constructor(
                         _messages.value = data.list
                     }
                 }
+                loadUnreadCount()
+            } catch (_: Exception) { }
+        }
+    }
+
+    /** 仅加载未读消息数（用于首页角标刷新，开销小） */
+    fun loadUnreadCount() {
+        viewModelScope.launch {
+            try {
                 val countResp = messageApi.getUnreadCount()
                 if (countResp.code == 200) {
                     val data = countResp.data
@@ -116,9 +125,9 @@ class ProfileApiViewModel @Inject constructor(
             try {
                 val response = userApi.changePassword(ChangePasswordRequest(oldPassword, newPassword))
                 if (response.code == 200) callback(null)
-                else callback(response.msg)
+                else callback(NetworkErrorHandler.translateServerError(response.msg, "修改密码失败"))
             } catch (e: Exception) {
-                callback(e.message ?: "修改失败")
+                callback(NetworkErrorHandler.translate(e, "修改密码失败"))
             }
         }
     }
@@ -129,9 +138,9 @@ class ProfileApiViewModel @Inject constructor(
             try {
                 val response = userApi.createUser(request)
                 if (response.code == 200) { loadUsers(); callback(null) }
-                else callback(response.msg)
+                else callback(NetworkErrorHandler.translateServerError(response.msg, "创建用户失败"))
             } catch (e: Exception) {
-                callback(e.message ?: "创建失败")
+                callback(NetworkErrorHandler.translate(e, "创建用户失败"))
             }
         }
     }
@@ -142,9 +151,9 @@ class ProfileApiViewModel @Inject constructor(
             try {
                 val response = userApi.resetPassword(userId, ResetPasswordRequest(newPassword))
                 if (response.code == 200) callback(null)
-                else callback(response.msg)
+                else callback(NetworkErrorHandler.translateServerError(response.msg, "重置密码失败"))
             } catch (e: Exception) {
-                callback(e.message ?: "重置失败")
+                callback(NetworkErrorHandler.translate(e, "重置密码失败"))
             }
         }
     }
@@ -155,9 +164,9 @@ class ProfileApiViewModel @Inject constructor(
             try {
                 val response = userApi.deleteUser(userId)
                 if (response.code == 200) { loadUsers(); callback(null) }
-                else callback(response.msg)
+                else callback(NetworkErrorHandler.translateServerError(response.msg, "删除用户失败"))
             } catch (e: Exception) {
-                callback(NetworkErrorHandler.translate(e, "删除失败"))
+                callback(NetworkErrorHandler.translate(e, "删除用户失败"))
             }
         }
     }
@@ -168,8 +177,8 @@ class ProfileApiViewModel @Inject constructor(
             try {
                 val response = dictionaryApi.createSpaceType(CreateDictionaryRequest(name, description))
                 if (response.code == 200) { loadDictionaries(); callback(null) }
-                else callback(response.msg)
-            } catch (e: Exception) { callback(NetworkErrorHandler.translate(e, "操作失败")) }
+                else callback(NetworkErrorHandler.translateServerError(response.msg, "添加空间类型失败"))
+            } catch (e: Exception) { callback(NetworkErrorHandler.translate(e, "添加空间类型失败")) }
         }
     }
 
@@ -179,8 +188,8 @@ class ProfileApiViewModel @Inject constructor(
             try {
                 val response = dictionaryApi.deleteSpaceType(id)
                 if (response.code == 200) { loadDictionaries(); callback(null) }
-                else callback(response.msg)
-            } catch (e: Exception) { callback(NetworkErrorHandler.translate(e, "操作失败")) }
+                else callback(NetworkErrorHandler.translateServerError(response.msg, "删除空间类型失败"))
+            } catch (e: Exception) { callback(NetworkErrorHandler.translate(e, "删除空间类型失败")) }
         }
     }
 
@@ -190,8 +199,8 @@ class ProfileApiViewModel @Inject constructor(
             try {
                 val response = dictionaryApi.createConstructionPlan(CreateDictionaryRequest(name, description))
                 if (response.code == 200) { loadDictionaries(); callback(null) }
-                else callback(response.msg)
-            } catch (e: Exception) { callback(NetworkErrorHandler.translate(e, "操作失败")) }
+                else callback(NetworkErrorHandler.translateServerError(response.msg, "添加施工方案失败"))
+            } catch (e: Exception) { callback(NetworkErrorHandler.translate(e, "添加施工方案失败")) }
         }
     }
 
@@ -201,8 +210,8 @@ class ProfileApiViewModel @Inject constructor(
             try {
                 val response = dictionaryApi.deleteConstructionPlan(id)
                 if (response.code == 200) { loadDictionaries(); callback(null) }
-                else callback(response.msg)
-            } catch (e: Exception) { callback(NetworkErrorHandler.translate(e, "操作失败")) }
+                else callback(NetworkErrorHandler.translateServerError(response.msg, "删除施工方案失败"))
+            } catch (e: Exception) { callback(NetworkErrorHandler.translate(e, "删除施工方案失败")) }
         }
     }
 

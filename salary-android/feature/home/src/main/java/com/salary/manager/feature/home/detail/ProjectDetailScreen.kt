@@ -2,6 +2,7 @@ package com.salary.manager.feature.home.detail
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,14 +16,26 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -36,6 +49,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -44,24 +58,34 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.request.crossfade
 import com.salary.core.common.util.AmountFormatter
 import com.salary.core.common.util.DateFormatter
 import com.salary.core.design.component.ProjectStatusTag
 import com.salary.core.design.component.SalaryTag
 import com.salary.core.design.theme.AppColors
 import com.salary.core.ui.state.UiState
+import com.salary.manager.feature.home.dashboard.MediaViewerDialog
 
 /**
  * 工程详情页面 - 对齐Vue前端ProjectDetail.vue设计
@@ -74,6 +98,8 @@ fun ProjectDetailScreen(
     projectId: Int,
     onBack: () -> Unit = {},
     onEdit: (Int) -> Unit = {},
+    /** 工程数据变更回调（编辑工程/删除附件/编辑子项目后触发），用于通知上层列表刷新 */
+    onDataChanged: () -> Unit = {},
     viewModel: ProjectDetailViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -82,18 +108,36 @@ fun ProjectDetailScreen(
         viewModel.loadProject(projectId)
     }
 
+    // 监听成功消息：保存成功时通知上层刷新列表
+    LaunchedEffect(viewModel.successMessage) {
+        viewModel.successMessage?.let {
+            onDataChanged()
+        }
+    }
+
     Scaffold(
+        containerColor = AppColors.Background,
         topBar = {
-            // 绿色渐变TopAppBar，对齐Vue前端van-nav-bar设计
-            TopAppBar(
-                title = {
-                    Text(
-                        "工程详情",
-                        color = Color.White,
-                        fontWeight = FontWeight.SemiBold
+            // 自定义绿色渐变顶部栏，与状态栏融合
+            // 原TopAppBar设置containerColor=Transparent导致状态栏区域为白色，与内容区绿色渐变不融合
+            // 改用Box+statusBarsPadding，绿色渐变背景覆盖状态栏+标题栏，与GreenTopNavBar风格一致
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(AppColors.Green400, AppColors.Green600)
+                        )
                     )
-                },
-                navigationIcon = {
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .height(56.dp)
+                        .padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     IconButton(onClick = onBack) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
@@ -101,31 +145,22 @@ fun ProjectDetailScreen(
                             tint = Color.White
                         )
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent
-                )
-            )
+                    Text(
+                        text = "工程详情",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
         }
     ) { padding ->
-        // 绿色渐变背景延伸到TopAppBar下方
+        // 滑动返回手势由 AppNavHost 中的 SwipeBackLayout 统一处理
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(AppColors.Background)
         ) {
-            // 顶部绿色渐变区域
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(120.dp)
-                    .background(
-                        Brush.linearGradient(
-                            colors = listOf(AppColors.Green400, AppColors.Green600)
-                        )
-                    )
-            )
-
             when (state) {
                 is UiState.Loading -> {
                     Box(
@@ -143,6 +178,7 @@ fun ProjectDetailScreen(
                         detail = detail,
                         projectId = projectId,
                         onEdit = onEdit,
+                        viewModel = viewModel,
                         modifier = Modifier.padding(padding)
                     )
                 }
@@ -174,12 +210,24 @@ fun ProjectDetailContent(
     detail: ProjectDetailUiModel,
     projectId: Int,
     onEdit: (Int) -> Unit,
+    viewModel: ProjectDetailViewModel,
     modifier: Modifier = Modifier
 ) {
     // 子项目编辑弹窗状态
     var editingSubproject by remember { mutableStateOf<SubprojectUiModel?>(null) }
+    // 附件查看弹窗状态
+    var showAttachmentDialog by remember { mutableStateOf(false) }
+    // 编辑工程弹窗状态
+    var showEditProjectDialog by remember { mutableStateOf(false) }
     // 修改历史展开/收起状态
     var historyExpanded by remember { mutableStateOf(false) }
+
+    // 打开编辑工程弹窗时加载施工人员列表
+    LaunchedEffect(showEditProjectDialog) {
+        if (showEditProjectDialog) {
+            viewModel.loadConstructors()
+        }
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -202,12 +250,17 @@ fun ProjectDetailContent(
             WorkerTagSection(detail)
         }
 
-        // ===== 操作区 =====
+        // ===== 操作区（含编辑工程 + 查看附件，水平排列） =====
         item {
             SectionTitle("操作")
         }
         item {
-            ActionSection(projectId = projectId, onEdit = onEdit)
+            ActionSection(
+                projectId = projectId,
+                onEdit = { showEditProjectDialog = true },
+                fileCount = detail.files.size,
+                onViewAttachment = { showAttachmentDialog = true }
+            )
         }
 
         // ===== 子项目列表区 =====
@@ -220,26 +273,14 @@ fun ProjectDetailContent(
             }
         } else {
             item {
-                SubprojectTableHeader()
-            }
-            itemsIndexed(detail.subprojects) { index, sub ->
-                SubprojectTableRow(
-                    index = index,
-                    subproject = sub,
-                    onEdit = { editingSubproject = sub }
+                SubprojectTable(
+                    subprojects = detail.subprojects,
+                    onEdit = { sub -> editingSubproject = sub }
                 )
             }
         }
 
-        // ===== 附件管理区 =====
-        item {
-            SectionTitle("附件管理")
-        }
-        item {
-            AttachmentSection(fileCount = detail.files.size)
-        }
-
-        // ===== 修改历史区 =====
+        // ===== 修改历史区（流式展示，无外层边框） =====
         item {
             SectionTitle("修改历史")
         }
@@ -254,7 +295,8 @@ fun ProjectDetailContent(
             } else {
                 detail.history.take(3)
             }
-            items(displayHistory) { item ->
+            // 使用历史记录id作为稳定唯一key，提升列表复用性能
+            items(displayHistory, key = { it.id }) { item ->
                 HistoryItem(item)
             }
             if (detail.history.size > 3) {
@@ -284,10 +326,47 @@ fun ProjectDetailContent(
     editingSubproject?.let { sub ->
         SubprojectEditDialog(
             subproject = sub,
+            saving = viewModel.savingSubproject.collectAsState().value,
             onDismiss = { editingSubproject = null },
-            onConfirm = {
-                // TODO: 调用API保存子项目修改
+            onConfirm = { lengthMeter, widthMeter, remark ->
+                viewModel.updateSubproject(
+                    projectId = projectId,
+                    subprojectId = sub.id,
+                    lengthMeter = lengthMeter,
+                    widthMeter = widthMeter,
+                    remark = remark
+                )
                 editingSubproject = null
+            }
+        )
+    }
+
+    // 附件查看弹窗
+    if (showAttachmentDialog) {
+        AttachmentViewDialog(
+            files = detail.files,
+            onDelete = { fileId -> viewModel.deleteFile(projectId, fileId) },
+            onDismiss = { showAttachmentDialog = false }
+        )
+    }
+
+    // 编辑工程弹窗
+    if (showEditProjectDialog) {
+        EditProjectDialog(
+            detail = detail,
+            constructors = viewModel.constructors.collectAsState().value,
+            saving = viewModel.savingProject.collectAsState().value,
+            onDismiss = { showEditProjectDialog = false },
+            onConfirm = { name, remark, status, salaryDistribution, constructorIds, workerWorkdays ->
+                viewModel.updateProject(
+                    projectId = projectId,
+                    name = name,
+                    remark = remark,
+                    status = status,
+                    salaryDistribution = salaryDistribution,
+                    constructorIds = constructorIds,
+                    workerWorkdays = workerWorkdays
+                )
             }
         )
     }
@@ -498,25 +577,38 @@ fun WorkerTagSection(detail: ProjectDetailUiModel) {
         if (detail.workers.isEmpty()) {
             CellRow(label = "暂无施工人员", value = "")
         } else {
-            FlowRow(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                detail.workers.forEach { worker ->
-                    // 人员Tag，按工日分配时显示工日数
-                    val tagText = if (detail.salaryDistribution == "work_days") {
-                        "${worker.nickname} ${worker.workdays ?: 1}工日"
-                    } else {
-                        worker.nickname
+                // 按工日分配时，在施工人员上方显示工日汇总信息
+                if (detail.salaryDistribution == "work_days") {
+                    WorkdaysSummaryRow(detail.workers)
+                }
+
+                // 施工人员Tag列表
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    detail.workers.forEach { worker ->
+                        // 人员Tag，按工日分配时显示工日数
+                        val tagText = if (detail.salaryDistribution == "work_days") {
+                            // workdays为Double，显示时取整
+                            val days = worker.workdays?.toInt() ?: 1
+                            "${worker.nickname} ${days}工日"
+                        } else {
+                            worker.nickname
+                        }
+                        SalaryTag(
+                            text = tagText,
+                            backgroundColor = AppColors.Green400.copy(alpha = 0.12f),
+                            textColor = AppColors.Green400
+                        )
                     }
-                    SalaryTag(
-                        text = tagText,
-                        backgroundColor = AppColors.Green400.copy(alpha = 0.12f),
-                        textColor = AppColors.Green400
-                    )
                 }
             }
         }
@@ -524,10 +616,72 @@ fun WorkerTagSection(detail: ProjectDetailUiModel) {
 }
 
 /**
- * 操作区 - 编辑工程按钮
+ * 工日汇总信息行
+ *
+ * 按工日分配模式下，显示在施工人员Tag列表上方的摘要信息：
+ * - 总工日
+ * - 各施工人员的工日明细（昵称: 工日）
+ *
+ * @param workers 施工人员列表
  */
 @Composable
-fun ActionSection(projectId: Int, onEdit: (Int) -> Unit) {
+private fun WorkdaysSummaryRow(workers: List<WorkerUiModel>) {
+    // 计算总工日
+    val totalWorkdays = workers.sumOf { it.workdays ?: 0.0 }
+    // 工日明细
+    val detailText = workers.joinToString("、") { worker ->
+        val days = worker.workdays?.toInt() ?: 0
+        "${worker.nickname}: ${days}工日"
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = AppColors.Green50
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "按工日分配",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = AppColors.Green600
+                )
+                Text(
+                    text = "总工日: ${totalWorkdays.toInt()}",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AppColors.Green400
+                )
+            }
+            Text(
+                text = detailText,
+                fontSize = 11.sp,
+                color = AppColors.TextTertiary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+/**
+ * 操作区 - 编辑工程按钮 + 查看附件按钮，水平排列（操作左，附件右）
+ */
+@Composable
+fun ActionSection(
+    projectId: Int,
+    onEdit: (Int) -> Unit,
+    fileCount: Int,
+    onViewAttachment: () -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -538,10 +692,13 @@ fun ActionSection(projectId: Int, onEdit: (Int) -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
-            horizontalArrangement = Arrangement.Center
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            // 左侧：编辑工程按钮
             Button(
                 onClick = { onEdit(projectId) },
+                modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = AppColors.Green400,
                     contentColor = Color.White
@@ -550,104 +707,122 @@ fun ActionSection(projectId: Int, onEdit: (Int) -> Unit) {
             ) {
                 Text("编辑工程", fontSize = 14.sp)
             }
+            // 右侧：查看附件按钮
+            OutlinedButton(
+                onClick = onViewAttachment,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = AppColors.Green400
+                ),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("附件管理 ($fileCount)", fontSize = 14.sp)
+            }
         }
     }
 }
 
 /**
- * 子项目表格表头 - 对齐Vue前端subproject-table thead
+ * 子项目表格组件 - 对齐主页历史记录的表格样式
+ *
+ * 支持水平滚动：表头与表体使用固定列宽，总宽度超过容器可用宽度时可左右滑动查看。
+ * 列宽方案：序号40 + 空间80 + 方案100 + 尺寸110 + 数量80 + 金额90 + 操作48 = 548dp
+ * 边框线规范：表头顶部和底部为深绿#4ADE80+1.5dp，数据行底部为中绿#86EFAC+1dp，最后一行底部为深绿+1.5dp
+ *
+ * @param subprojects 子项目列表
+ * @param onEdit 点击编辑按钮回调，参数为子项目UI模型
  */
 @Composable
-fun SubprojectTableHeader() {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp),
-        colors = CardDefaults.cardColors(containerColor = AppColors.Green50)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            TableHeaderCell("序号", weight = 0.5f)
-            TableHeaderCell("空间", weight = 1f)
-            TableHeaderCell("方案", weight = 1f)
-            TableHeaderCell("尺寸(米)", weight = 1f)
-            TableHeaderCell("数量", weight = 0.6f)
-            TableHeaderCell("金额", weight = 1f)
-            TableHeaderCell("操作", weight = 1f)
-        }
-    }
-}
-
-/**
- * 子项目表格行 - 对齐Vue前端subproject-table tbody
- */
-@Composable
-fun SubprojectTableRow(
-    index: Int,
-    subproject: SubprojectUiModel,
-    onEdit: () -> Unit
+fun SubprojectTable(
+    subprojects: List<SubprojectUiModel>,
+    onEdit: (SubprojectUiModel) -> Unit
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(0.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (index % 2 == 0) Color.White else Color(0xFFFAFAFA)
-        )
+    val scrollState = rememberScrollState()
+    // 固定总宽度，超过容器宽度时启用水平滚动
+    val tableWidth = 548.dp
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(scrollState)
     ) {
+        // ===== 表头（固定宽度，浅灰底+主色顶/底线） =====
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                .width(tableWidth)
+                .background(AppColors.NeutralSurface)
+                .drawBehind {
+                    // 表头顶部水平边框线（主色，加粗）
+                    drawLine(
+                        color = AppColors.Green400,
+                        start = Offset(0f, 0f),
+                        end = Offset(size.width, 0f),
+                        strokeWidth = 1.5.dp.toPx()
+                    )
+                    // 表头底部水平边框线（主色，加粗，区分表头与表体）
+                    drawLine(
+                        color = AppColors.Green400,
+                        start = Offset(0f, size.height),
+                        end = Offset(size.width, size.height),
+                        strokeWidth = 1.5.dp.toPx()
+                    )
+                }
+                .padding(vertical = 8.dp, horizontal = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TableCell("${index + 1}", weight = 0.5f)
-            TableCell(subproject.spaceTypeName, weight = 1f)
-            TableCell(subproject.constructionPlanName, weight = 1f)
-            TableCell(
-                "${formatNumber(subproject.length)} × ${formatNumber(subproject.width)}",
-                weight = 1f
-            )
-            TableCell(formatNumber(subproject.quantity), weight = 0.6f)
-            TableCell(AmountFormatter.format(subproject.amount), weight = 1f)
-            // 操作按钮
+            SubprojectHeaderCell("序号", 40.dp)
+            SubprojectHeaderCell("空间", 80.dp)
+            SubprojectHeaderCell("方案", 100.dp)
+            SubprojectHeaderCell("尺寸(米)", 110.dp)
+            SubprojectHeaderCell("数量", 80.dp)
+            SubprojectHeaderCell("金额", 90.dp)
+            SubprojectHeaderCell("操作", 48.dp)
+        }
+
+        // ===== 表体（与表头对齐，相同列宽） =====
+        subprojects.forEachIndexed { index, sub ->
+            val isLastRow = index == subprojects.lastIndex
             Row(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                modifier = Modifier
+                    .width(tableWidth)
+                    .drawBehind {
+                        // 数据行底部水平边框线：行间用中绿，末行用主色收尾
+                        drawLine(
+                            color = if (isLastRow) AppColors.Green400 else AppColors.OutlineVariant,
+                            start = Offset(0f, size.height),
+                            end = Offset(size.width, size.height),
+                            strokeWidth = if (isLastRow) 1.5.dp.toPx() else 1.dp.toPx()
+                        )
+                    }
+                    .padding(vertical = 4.dp, horizontal = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // 编辑按钮
-                OutlinedButton(
-                    onClick = onEdit,
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                    shape = RoundedCornerShape(4.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = AppColors.Green400
-                    )
+                SubprojectCell("${index + 1}", 40.dp)
+                SubprojectCell(sub.spaceTypeName, 80.dp)
+                SubprojectCell(sub.constructionPlanName, 100.dp)
+                // 数据库存储厘米，UI显示时除以100转为米（与表头"尺寸(米)"单位一致）
+                SubprojectCell(
+                    "${formatNumber(sub.length / 100.0)} × ${formatNumber(sub.width / 100.0)}",
+                    110.dp
+                )
+                SubprojectCell(formatNumber(sub.quantity), 80.dp)
+                SubprojectCell(AmountFormatter.format(sub.amount), 90.dp, color = AppColors.Green400)
+                // 操作列：编辑图标按钮（紧凑高度）
+                Box(
+                    modifier = Modifier.width(48.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text("编辑", fontSize = 11.sp)
-                }
-                // 转交按钮（禁用）
-                OutlinedButton(
-                    onClick = { },
-                    enabled = false,
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                    shape = RoundedCornerShape(4.dp)
-                ) {
-                    Text("转交", fontSize = 11.sp)
-                }
-                // 历史按钮（禁用）
-                OutlinedButton(
-                    onClick = { },
-                    enabled = false,
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                    shape = RoundedCornerShape(4.dp)
-                ) {
-                    Text("历史", fontSize = 11.sp)
+                    IconButton(
+                        onClick = { onEdit(sub) },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "编辑子项目",
+                            tint = AppColors.Green400,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
         }
@@ -655,57 +830,55 @@ fun SubprojectTableRow(
 }
 
 /**
- * 表头单元格
+ * 表头单元格（固定宽度）
  */
 @Composable
-fun RowScope.TableHeaderCell(text: String, weight: Float) {
-    Box(
-        modifier = Modifier.weight(weight),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        Text(
-            text = text,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = AppColors.TextPrimary
-        )
-    }
+private fun RowScope.SubprojectHeaderCell(text: String, width: androidx.compose.ui.unit.Dp) {
+    Text(
+        text = text,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = AppColors.TextPrimary,
+        modifier = Modifier.width(width)
+    )
 }
 
 /**
- * 表格数据单元格
+ * 表体单元格（固定宽度，超长省略）
  */
 @Composable
-fun RowScope.TableCell(text: String, weight: Float) {
-    Box(
-        modifier = Modifier.weight(weight),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        Text(
-            text = text,
-            fontSize = 12.sp,
-            color = AppColors.TextSecondary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
+private fun RowScope.SubprojectCell(
+    text: String,
+    width: androidx.compose.ui.unit.Dp,
+    color: Color = AppColors.TextPrimary
+) {
+    Text(
+        text = text,
+        fontSize = 12.sp,
+        color = color,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.width(width)
+    )
 }
 
 /**
  * 子项目编辑弹窗 - 对齐Vue前端编辑弹窗设计
  * 包含：空间类型、施工方案、长宽、单价(只读)、计算预览、备注
+ * 注意：弹窗内长度/宽度以米为单位展示和编辑，保存时由ViewModel转换为厘米
  */
 @Composable
 fun SubprojectEditDialog(
     subproject: SubprojectUiModel,
+    saving: Boolean,
     onDismiss: () -> Unit,
-    onConfirm: () -> Unit
+    onConfirm: (lengthMeter: Double, widthMeter: Double, remark: String?) -> Unit
 ) {
-    // 表单状态
+    // 表单状态（数据库存厘米，弹窗显示米，需除以100）
     var spaceType by remember { mutableStateOf(subproject.spaceTypeName) }
     var constructionScheme by remember { mutableStateOf(subproject.constructionPlanName) }
-    var length by remember { mutableStateOf(subproject.length.toString()) }
-    var width by remember { mutableStateOf(subproject.width.toString()) }
+    var length by remember { mutableStateOf(formatNumber(subproject.length / 100.0)) }
+    var width by remember { mutableStateOf(formatNumber(subproject.width / 100.0)) }
     var remark by remember { mutableStateOf("") }
 
     // 计算面积（单位：米）
@@ -715,7 +888,7 @@ fun SubprojectEditDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = AppColors.Green50,
+        containerColor = Color.White,
         shape = RoundedCornerShape(12.dp),
         title = {
             Row(
@@ -725,13 +898,12 @@ fun SubprojectEditDialog(
             ) {
                 Text(
                     "编辑子项目",
-                    fontSize = 16.sp,
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color.White
+                    color = AppColors.TextPrimary
                 )
             }
         },
-        titleContentColor = Color.White,
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -754,7 +926,7 @@ fun SubprojectEditDialog(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
-                // 长度
+                // 长度（米）
                 OutlinedTextField(
                     value = length,
                     onValueChange = { length = it },
@@ -762,7 +934,7 @@ fun SubprojectEditDialog(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
-                // 宽度
+                // 宽度（米）
                 OutlinedTextField(
                     value = width,
                     onValueChange = { width = it },
@@ -774,14 +946,14 @@ fun SubprojectEditDialog(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color.White, RoundedCornerShape(8.dp))
+                        .background(AppColors.Green50, RoundedCornerShape(8.dp))
                         .border(1.dp, AppColors.Green100, RoundedCornerShape(8.dp))
                         .padding(10.dp)
                 ) {
                     Text(
                         "${formatNumber(area)} m²",
                         fontSize = 13.sp,
-                        color = AppColors.TextPrimary,
+                        color = AppColors.Green400,
                         fontWeight = FontWeight.Medium
                     )
                 }
@@ -797,17 +969,28 @@ fun SubprojectEditDialog(
         },
         confirmButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onDismiss) {
+                OutlinedButton(onClick = onDismiss, enabled = !saving) {
                     Text("取消")
                 }
                 Button(
-                    onClick = onConfirm,
+                    onClick = {
+                        onConfirm(lengthValue, widthValue, remark.ifBlank { null })
+                    },
+                    enabled = !saving && lengthValue > 0,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = AppColors.Green400,
                         contentColor = Color.White
                     )
                 ) {
-                    Text("保存")
+                    if (saving) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("保存")
+                    }
                 }
             }
         }
@@ -815,51 +998,655 @@ fun SubprojectEditDialog(
 }
 
 /**
- * 附件管理区 - 查看附件按钮
+ * 判断是否为图片类型
+ */
+private fun isImageType(type: String?): Boolean =
+    type?.startsWith("image/") == true
+
+/**
+ * 判断是否为视频类型
+ */
+private fun isVideoType(type: String?): Boolean =
+    type?.startsWith("video/") == true
+
+/**
+ * 判断是否为媒体文件（图片或视频）
+ */
+private fun isMediaFile(type: String?): Boolean =
+    isImageType(type) || isVideoType(type)
+
+/**
+ * 附件管理弹窗 - 宽度占屏幕98%，支持媒体直接预览和删除
+ *
+ * 改造点：
+ * 1. 使用Dialog + usePlatformDefaultWidth=false，宽度fillMaxWidth(0.98f)
+ * 2. 媒体文件（图片/视频）直接在弹窗内预览，点击可全屏查看
+ * 3. 每个附件项右上角增加删除按钮，二次确认后删除
+ *
+ * @param files 附件列表（fileUrl已为完整URL）
+ * @param onDelete 删除附件回调，参数为文件ID（由调用方闭包捕获projectId）
+ * @param onDismiss 关闭弹窗回调
  */
 @Composable
-fun AttachmentSection(fileCount: Int) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+fun AttachmentViewDialog(
+    files: List<FileUiModel>,
+    onDelete: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    // 待全屏预览的媒体文件（null表示不预览）
+    var previewFile by remember { mutableStateOf<FileUiModel?>(null) }
+    // 待删除的文件（null表示不显示删除确认弹窗）
+    var deletingFile by remember { mutableStateOf<FileUiModel?>(null) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(0.98f),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp)
+            ) {
+                // ===== 标题栏（保留左右内边距） =====
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "附件管理 (${files.size})",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = AppColors.TextPrimary
+                    )
+                    if (files.isNotEmpty()) {
+                        Text(
+                            "共 ${files.size} 个",
+                            fontSize = 12.sp,
+                            color = AppColors.TextTertiary
+                        )
+                    }
+                }
+
+                HorizontalDivider(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 10.dp),
+                    thickness = 1.dp,
+                    color = AppColors.Green100
+                )
+
+                // ===== 内容区（媒体预览占满弹窗宽度） =====
+                if (files.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("暂无附件", color = AppColors.TextTertiary, fontSize = 14.sp)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(files, key = { it.id }) { file ->
+                            AttachmentItemRow(
+                                file = file,
+                                onClick = {
+                                    // 媒体文件点击进入全屏预览
+                                    if (isMediaFile(file.type)) {
+                                        previewFile = file
+                                    }
+                                },
+                                onDelete = { deletingFile = file }
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // ===== 关闭按钮（保留左右内边距） =====
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .align(Alignment.End)
+                        .padding(end = 16.dp)
+                ) {
+                    Text("关闭", color = AppColors.Green400, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+    }
+
+    // 全屏媒体预览弹窗
+    previewFile?.let { file ->
+        MediaViewerDialog(
+            fileUrl = file.fileUrl,
+            fileName = file.fileName,
+            fileType = file.type,
+            onDismiss = { previewFile = null }
+        )
+    }
+
+    // 删除确认弹窗（二次确认避免误删）
+    deletingFile?.let { file ->
+        AlertDialog(
+            onDismissRequest = { deletingFile = null },
+            title = {
+                Text(
+                    "删除附件",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            },
+            text = {
+                Text(
+                    "确认删除附件「${file.fileName}」吗？\n删除后不可恢复。",
+                    fontSize = 14.sp,
+                    color = AppColors.TextSecondary
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDelete(file.id)
+                        deletingFile = null
+                    }
+                ) {
+                    Text("确认删除", color = Color(0xFFE53935), fontWeight = FontWeight.Medium)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingFile = null }) {
+                    Text("取消", color = AppColors.TextSecondary)
+                }
+            }
+        )
+    }
+}
+
+/**
+ * 附件列表项 - 纵向Column布局
+ *
+ * - 文件信息行（图标+文件名+删除按钮）：保留horizontal padding，与标题栏对齐
+ * - 媒体文件预览：宽度占满弹窗（无horizontal padding），高度按原始长宽比自适应；点击进入全屏预览
+ * - 非媒体文件：仅显示文件图标+文件名+大小+上传时间
+ *
+ * @param file 附件UI模型
+ * @param onClick 点击附件内容区域回调（媒体文件用于打开全屏预览）
+ * @param onDelete 点击删除按钮回调
+ */
+@Composable
+fun AttachmentItemRow(
+    file: FileUiModel,
+    onClick: () -> Unit = {},
+    onDelete: () -> Unit = {}
+) {
+    val context = LocalContext.current
+    val isMedia = isMediaFile(file.type)
+    val isVideo = isVideoType(file.type)
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        // ===== 顶部行：文件信息（左）+ 删除按钮（右），保留horizontal padding =====
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.Center
+                .padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            OutlinedButton(
-                onClick = { /* TODO: 打开附件查看 */ },
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = AppColors.Green400
-                ),
-                shape = RoundedCornerShape(8.dp)
+            // 文件类型图标
+            Icon(
+                imageVector = if (isImageType(file.type)) {
+                    Icons.Default.Image
+                } else if (isVideo) {
+                    Icons.Default.PlayCircle
+                } else {
+                    Icons.Default.Description
+                },
+                contentDescription = null,
+                tint = AppColors.Green400,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            // 文件名 + 大小/时间
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = file.fileName,
+                    fontSize = 13.sp,
+                    color = AppColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "大小：${formatFileSize(file.fileSize)}  上传：${DateFormatter.formatDate(file.uploadedAt)}",
+                    fontSize = 11.sp,
+                    color = AppColors.TextTertiary
+                )
+            }
+            // 删除按钮（红色垃圾桶图标）
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.size(32.dp)
             ) {
-                Text("查看附件 ($fileCount)")
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "删除附件",
+                    tint = Color(0xFFE53935),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+
+        // ===== 媒体预览区（仅媒体文件显示，宽度占满弹窗） =====
+        if (isMedia) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFFF5F5F5))
+                    .clickable(enabled = true, onClick = onClick)
+            ) {
+                // 图片/视频缩略图：宽度占满弹窗（无horizontal padding），高度按原始长宽比自适应
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(file.fileUrl)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = file.fileName,
+                    modifier = Modifier.fillMaxWidth(),
+                    contentScale = ContentScale.Fit
+                )
+
+                // 视频文件叠加播放图标（居中）
+                if (isVideo) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(120.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayCircle,
+                            contentDescription = "播放视频",
+                            tint = Color.White,
+                            modifier = Modifier.size(48.dp)
+                        )
+                    }
+                    // 右下角"视频"标签
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(6.dp),
+                        color = Color(0x88000000),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text(
+                            text = "视频",
+                            fontSize = 10.sp,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
             }
         }
     }
 }
 
 /**
- * 修改历史条目 - 对齐Vue前端history-item设计
- * 左侧绿色边框、操作类型+时间、操作人、描述
+ * 编辑工程弹窗
+ *
+ * 支持编辑：
+ * - 工程名称、工程备注、工程状态
+ * - 工资分配方式（平均分配 / 按工日分配）
+ * - 施工人员多选（按工日分配模式下显示工日输入框）
+ *
+ * 保存时调用 onConfirm 回调，由 ViewModel 调用 updateProject 接口
+ *
+ * @param detail 当前工程详情（提供默认值）
+ * @param constructors 可选施工人员列表（由 ViewModel 异步加载）
+ * @param saving 是否保存中
+ * @param onDismiss 关闭弹窗回调
+ * @param onConfirm 保存回调，参数：名称、备注、状态、分配方式、施工人员ID列表、工日映射
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun EditProjectDialog(
+    detail: ProjectDetailUiModel,
+    constructors: List<com.salary.core.network.api.UserDto>,
+    saving: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (
+        name: String,
+        remark: String?,
+        status: String,
+        salaryDistribution: String,
+        constructorIds: List<Int>,
+        workerWorkdays: Map<Int, String>
+    ) -> Unit
+) {
+    // 表单状态（默认值取自当前工程详情）
+    var name by remember { mutableStateOf(detail.name) }
+    var remark by remember { mutableStateOf(detail.remark ?: "") }
+    var status by remember { mutableStateOf(detail.status) }
+    var salaryDistribution by remember { mutableStateOf(detail.salaryDistribution ?: "average") }
+    // 选中的施工人员ID集合（默认勾选当前工程的施工人员）
+    var selectedConstructorIds by remember {
+        mutableStateOf(detail.workers.map { it.userId }.toSet())
+    }
+    // 工日输入值（userId → 工日字符串），默认值取自当前工程的 workdays
+    var workerWorkdays by remember {
+        mutableStateOf(
+            detail.workers.associate { it.userId to (it.workdays?.toString() ?: "") }
+        )
+    }
+
+    // 工程状态选项
+    val statusOptions = listOf(
+        "preparing" to "备料中",
+        "constructing" to "施工中",
+        "completed" to "已完工",
+        "canceled" to "已取消"
+    )
+    // 工资分配方式选项
+    val distributionOptions = listOf(
+        "average" to "平均分配",
+        "work_days" to "按工日分配"
+    )
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(0.92f),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                // ===== 标题 =====
+                Text(
+                    "编辑工程",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AppColors.TextPrimary
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // 滚动表单区
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // ===== 工程名称 =====
+                    Column {
+                        Text("工程名称", fontSize = 13.sp, color = AppColors.TextSecondary)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = name,
+                            onValueChange = { name = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(8.dp),
+                            placeholder = { Text("请输入工程名称", fontSize = 14.sp) }
+                        )
+                    }
+
+                    // ===== 工程状态 =====
+                    Column {
+                        Text("工程状态", fontSize = 13.sp, color = AppColors.TextSecondary)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            statusOptions.forEach { (value, label) ->
+                                StatusChip(
+                                    text = label,
+                                    selected = status == value,
+                                    onClick = { status = value }
+                                )
+                            }
+                        }
+                    }
+
+                    // ===== 工程备注 =====
+                    Column {
+                        Text("工程备注", fontSize = 13.sp, color = AppColors.TextSecondary)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = remark,
+                            onValueChange = { remark = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            maxLines = 3,
+                            shape = RoundedCornerShape(8.dp),
+                            placeholder = { Text("请输入工程备注（可选）", fontSize = 14.sp) }
+                        )
+                    }
+
+                    // ===== 工资分配方式 =====
+                    Column {
+                        Text("工资分配方式", fontSize = 13.sp, color = AppColors.TextSecondary)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            distributionOptions.forEach { (value, label) ->
+                                StatusChip(
+                                    text = label,
+                                    selected = salaryDistribution == value,
+                                    onClick = { salaryDistribution = value }
+                                )
+                            }
+                        }
+                    }
+
+                    // ===== 施工人员多选 =====
+                    Column {
+                        Text("施工人员", fontSize = 13.sp, color = AppColors.TextSecondary)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        if (constructors.isEmpty()) {
+                            Text(
+                                "正在加载施工人员列表...",
+                                fontSize = 12.sp,
+                                color = AppColors.TextTertiary
+                            )
+                        } else {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                constructors.forEach { worker ->
+                                    val selected = worker.id in selectedConstructorIds
+                                    // 方形标签式选择器：选中时绿色实底，未选中时浅绿描边
+                                    Surface(
+                                        onClick = {
+                                            selectedConstructorIds = if (selected) {
+                                                selectedConstructorIds - worker.id
+                                            } else {
+                                                selectedConstructorIds + worker.id
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = if (selected) AppColors.Green400 else Color.White,
+                                        border = androidx.compose.foundation.BorderStroke(
+                                            1.dp,
+                                            if (selected) AppColors.Green400 else AppColors.Green200
+                                        )
+                                    ) {
+                                        Text(
+                                            text = worker.nickname,
+                                            fontSize = 13.sp,
+                                            color = if (selected) Color.White else AppColors.Green400,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ===== 按工日分配模式：工日输入 =====
+                    if (salaryDistribution == "work_days" && selectedConstructorIds.isNotEmpty()) {
+                        Column {
+                            Text("工日输入", fontSize = 13.sp, color = AppColors.TextSecondary)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            constructors.filter { it.id in selectedConstructorIds }.forEach { worker ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = worker.nickname,
+                                        fontSize = 13.sp,
+                                        color = AppColors.TextPrimary,
+                                        modifier = Modifier.width(80.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    OutlinedTextField(
+                                        value = workerWorkdays[worker.id] ?: "",
+                                        onValueChange = { value ->
+                                            // 仅允许数字和小数点
+                                            val filtered = value.filter { it.isDigit() || it == '.' }
+                                            workerWorkdays = workerWorkdays + (worker.id to filtered)
+                                        },
+                                        modifier = Modifier.width(100.dp),
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(8.dp),
+                                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
+                                        ),
+                                        placeholder = { Text("工日", fontSize = 13.sp) }
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("天", fontSize = 13.sp, color = AppColors.TextTertiary)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // ===== 按钮区：取消 + 保存 =====
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("取消", color = AppColors.TextSecondary)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            onConfirm(
+                                name.trim(),
+                                remark.trim().ifBlank { null },
+                                status,
+                                salaryDistribution,
+                                selectedConstructorIds.toList(),
+                                workerWorkdays
+                            )
+                        },
+                        enabled = !saving && name.isNotBlank() && selectedConstructorIds.isNotEmpty(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AppColors.Green400,
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(if (saving) "保存中..." else "保存", fontSize = 14.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 状态选择标签（胶囊样式）
+ * 选中：绿色实底+白字；未选中：白底+绿色描边+绿字
+ */
+@Composable
+private fun StatusChip(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = if (selected) AppColors.Green400 else Color.White,
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (selected) AppColors.Green400 else AppColors.Green200
+        )
+    ) {
+        Text(
+            text = text,
+            fontSize = 13.sp,
+            color = if (selected) Color.White else AppColors.Green400,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+        )
+    }
+}
+
+/**
+ * 格式化文件大小
+ */
+private fun formatFileSize(bytes: Long): String {
+    return when {
+        bytes < 1024 -> "${bytes}B"
+        bytes < 1024 * 1024 -> String.format("%.1fKB", bytes / 1024.0)
+        else -> String.format("%.1fMB", bytes / (1024.0 * 1024.0))
+    }
+}
+
+/**
+ * 修改历史条目 - 流式展示，无外层边框
+ * 左侧绿色竖线 + 操作类型+时间、操作人、描述
  */
 @Composable
 fun HistoryItem(item: HistoryUiModel) {
-    Card(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .border(3.dp, AppColors.Green400, RoundedCornerShape(0.dp)),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFFAFAFA)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.Top
     ) {
+        // 左侧绿色竖线（时间轴样式）
+        Box(
+            modifier = Modifier
+                .width(3.dp)
+                .height(48.dp)
+                .background(AppColors.Green400, RoundedCornerShape(1.5.dp))
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        // 右侧内容
         Column(
-            modifier = Modifier.padding(10.dp)
+            modifier = Modifier.weight(1f)
         ) {
             // 头部：操作类型 + 时间
             Row(
@@ -879,7 +1666,7 @@ fun HistoryItem(item: HistoryUiModel) {
                     color = AppColors.TextTertiary
                 )
             }
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(2.dp))
             // 操作人
             Text(
                 text = "操作人：${item.nickname.ifBlank { item.username }}",
@@ -888,20 +1675,13 @@ fun HistoryItem(item: HistoryUiModel) {
             )
             // 描述
             if (item.description.isNotBlank()) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(AppColors.Green50, RoundedCornerShape(4.dp))
-                        .padding(6.dp, 8.dp)
-                ) {
-                    Text(
-                        text = item.description,
-                        fontSize = 12.sp,
-                        color = AppColors.Green400,
-                        lineHeight = 18.sp
-                    )
-                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = item.description,
+                    fontSize = 12.sp,
+                    color = AppColors.Green400,
+                    lineHeight = 18.sp
+                )
             }
         }
     }

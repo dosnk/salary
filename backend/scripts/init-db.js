@@ -124,7 +124,8 @@ const MIGRATIONS = [
         applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `,
-    down: `DROP TABLE IF EXISTS db_versions CASCADE;`
+    down: `DROP TABLE IF EXISTS db_versions CASCADE;`,
+    tables: ['db_versions']
   },
   {
     version: 'V1.1',
@@ -244,7 +245,6 @@ const MIGRATIONS = [
         settled_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         remark TEXT,
         CONSTRAINT ck_settlement_amount CHECK (total_amount >= 0),
-        CONSTRAINT ck_settlement_actual CHECK (actual_amount >= 0),
         CONSTRAINT uk_settlement_user_time UNIQUE(user_id, settled_at, settlement_no)
       );
 
@@ -286,8 +286,7 @@ const MIGRATIONS = [
         plans_snapshot JSONB NOT NULL,
         advances_snapshot JSONB NOT NULL,
         calculation_snapshot JSONB NOT NULL,
-        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-        CONSTRAINT ck_snapshot_actual CHECK (actual_amount >= 0)
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
 
       CREATE TABLE IF NOT EXISTS wage_distributions (
@@ -370,7 +369,8 @@ const MIGRATIONS = [
       DROP TABLE IF EXISTS construction_plans CASCADE;
       DROP TABLE IF EXISTS space_types CASCADE;
       DROP TABLE IF EXISTS users CASCADE;
-    `
+    `,
+    tables: ['users', 'projects', 'subprojects', 'construction_plans', 'space_types', 'wage_settlements', 'wage_advances', 'wage_distributions']
   },
   {
     version: 'V1.2',
@@ -645,6 +645,204 @@ const MIGRATIONS = [
       DELETE FROM space_types WHERE name IN ('客厅','餐厅','厨房','公卫','主卫','大阳台','小阳台','房间','走道','入户','房间凹位','公卫凹位','主卫凹位','楼梯口','电梯口','凹位','其他（自定义）');
       DELETE FROM action_types WHERE code IN ('CREATE_PROJECT','UPDATE_PROJECT','DELETE_PROJECT','ADD_SUBPROJECT','UPDATE_SUBPROJECT','DELETE_SUBPROJECT','SETTLE_WAGE','CANCEL_WAGE','ADVANCE_WAGE','UPLOAD_FILE','TRANSFER_SUBPROJECT');
     `
+  },
+  {
+    version: 'V1.6',
+    description: '修复管理员视角结算状态视图（admin可正确看到settling/settled状态）',
+    up: `
+      CREATE OR REPLACE VIEW v_project_user_settlement_status AS
+      -- 施工人员的结算状态
+      SELECT
+        COALESCE(pus.id, ROW_NUMBER() OVER (ORDER BY p.id, u.id)) AS id,
+        p.id AS project_id,
+        u.id AS user_id,
+        COALESCE(
+          pus.settlement_status,
+          CASE
+            WHEN ws.id IS NOT NULL THEN 'settled'
+            WHEN p.status = 'completed' THEN 'settling'
+            WHEN EXISTS (
+              SELECT 1 FROM subprojects sp
+              WHERE sp.project_id = p.id
+              AND sp.status = 'completed'
+            ) THEN 'settling'
+            ELSE 'unsettled'
+          END
+        ) AS settlement_status,
+        COALESCE(pus.settlement_id, ws.id) AS settlement_id,
+        COALESCE(pus.settled_at, ws.settled_at) AS settled_at,
+        COALESCE(pus.created_at, CURRENT_TIMESTAMP) AS created_at,
+        COALESCE(pus.updated_at, CURRENT_TIMESTAMP) AS updated_at
+      FROM projects p
+      JOIN project_workers pw ON pw.project_id = p.id
+      JOIN users u ON u.id = pw.user_id
+      LEFT JOIN project_user_status pus ON pus.project_id = p.id AND pus.user_id = u.id
+      LEFT JOIN wage_settlements ws ON
+        ws.user_id = u.id
+        AND (ws.project_id = p.id OR ws.project_ids::jsonb @> to_jsonb(p.id))
+      UNION
+      -- 管理员和资料员可以查看所有工程（修复：根据工程状态判断结算进度，而非固定unsettled）
+      SELECT
+        COALESCE(pus.id, ROW_NUMBER() OVER (ORDER BY p.id, u.id) + 100000) AS id,
+        p.id AS project_id,
+        u.id AS user_id,
+        COALESCE(
+          pus.settlement_status,
+          CASE
+            WHEN ws.id IS NOT NULL THEN 'settled'
+            WHEN p.status = 'completed' THEN 'settling'
+            WHEN EXISTS (
+              SELECT 1 FROM subprojects sp
+              WHERE sp.project_id = p.id
+              AND sp.status = 'completed'
+            ) THEN 'settling'
+            ELSE 'unsettled'
+          END
+        ) AS settlement_status,
+        pus.settlement_id,
+        pus.settled_at,
+        COALESCE(pus.created_at, CURRENT_TIMESTAMP) AS created_at,
+        COALESCE(pus.updated_at, CURRENT_TIMESTAMP) AS updated_at
+      FROM projects p
+      CROSS JOIN users u
+      LEFT JOIN project_user_status pus ON pus.project_id = p.id AND pus.user_id = u.id
+      LEFT JOIN wage_settlements ws ON
+        ws.user_id = u.id
+        AND (ws.project_id = p.id OR ws.project_ids::jsonb @> to_jsonb(p.id))
+      WHERE u.role IN ('admin', 'documenter');
+    `,
+    down: `DROP VIEW IF EXISTS v_project_user_settlement_status;`
+  },
+  {
+    version: 'V1.7',
+    description: '创建AI模块表（材料分类/材料参数/AI对话历史/知识库文档分块）',
+    up: `
+      -- 1. 材料分类表
+      CREATE TABLE IF NOT EXISTS material_categories (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(50) NOT NULL UNIQUE,
+        description TEXT,
+        sort_order INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- 2. 材料参数表（知识库核心，排料引擎从此表读取材料数据）
+      CREATE TABLE IF NOT EXISTS material_params (
+        id SERIAL PRIMARY KEY,
+        category_id INTEGER NOT NULL REFERENCES material_categories(id) ON DELETE CASCADE,
+        name VARCHAR(100) NOT NULL,
+        brand VARCHAR(100),
+        specification VARCHAR(200),
+        unit VARCHAR(20) NOT NULL DEFAULT '张',
+        unit_price NUMERIC(14,4) NOT NULL DEFAULT 0,
+        width_cm NUMERIC(10,2),           -- 板材宽度(cm)
+        length_cm NUMERIC(10,2),          -- 板材长度(cm)
+        thickness_cm NUMERIC(6,2),        -- 板材厚度(cm)
+        coverage_area NUMERIC(10,4),      -- 单张覆盖面积(㎡)
+        keel_spacing_cm NUMERIC(6,2),     -- 龙骨间距(cm)
+        weight_per_unit NUMERIC(10,4),    -- 单位重量(kg)
+        is_active BOOLEAN DEFAULT TRUE,
+        remark TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- 3. AI对话历史表
+      CREATE TABLE IF NOT EXISTS ai_chat_history (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        session_id VARCHAR(50) NOT NULL,
+        role VARCHAR(20) NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+        content TEXT NOT NULL,
+        intent VARCHAR(50),               -- 意图标签
+        metadata JSONB,                   -- 附加元数据
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- 4. 知识库文档分块表（RAG检索核心）
+      --    embedding列: 优先使用vector(1536)，pgvector不可用时降级为TEXT
+      --    使用DO块动态创建，确保兼容所有环境
+      DO $$
+      BEGIN
+        -- 尝试创建pgvector扩展（如果可用）
+        BEGIN
+          CREATE EXTENSION IF NOT EXISTS vector;
+        EXCEPTION WHEN OTHERS THEN
+          RAISE NOTICE 'pgvector扩展不可用，embedding列将使用TEXT类型，向量搜索功能降级为关键词搜索';
+        END;
+
+        -- 根据vector类型是否存在，选择不同的列类型创建表
+        IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'vector') THEN
+          -- pgvector可用：embedding列使用vector(1536)类型
+          EXECUTE 'CREATE TABLE IF NOT EXISTS ai_knowledge_chunks (
+            id SERIAL PRIMARY KEY,
+            source_type VARCHAR(20) NOT NULL DEFAULT ''manual'',
+            source_id INTEGER,
+            title VARCHAR(200),
+            content TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL DEFAULT 0,
+            embedding vector(1536),
+            metadata JSONB,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          )';
+        ELSE
+          -- pgvector不可用：embedding列降级为TEXT类型
+          EXECUTE 'CREATE TABLE IF NOT EXISTS ai_knowledge_chunks (
+            id SERIAL PRIMARY KEY,
+            source_type VARCHAR(20) NOT NULL DEFAULT ''manual'',
+            source_id INTEGER,
+            title VARCHAR(200),
+            content TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL DEFAULT 0,
+            embedding TEXT,
+            metadata JSONB,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          )';
+        END IF;
+      END $$;
+
+      -- AI模块索引
+      CREATE INDEX IF NOT EXISTS idx_material_categories_name ON material_categories(name);
+      CREATE INDEX IF NOT EXISTS idx_material_params_category_id ON material_params(category_id);
+      CREATE INDEX IF NOT EXISTS idx_material_params_active ON material_params(is_active);
+      CREATE INDEX IF NOT EXISTS idx_ai_chat_history_user_id ON ai_chat_history(user_id);
+      CREATE INDEX IF NOT EXISTS idx_ai_chat_history_session_id ON ai_chat_history(session_id);
+      CREATE INDEX IF NOT EXISTS idx_ai_chat_history_created_at ON ai_chat_history(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_ai_knowledge_chunks_title ON ai_knowledge_chunks(title);
+      CREATE INDEX IF NOT EXISTS idx_ai_knowledge_chunks_source ON ai_knowledge_chunks(source_type, source_id);
+      CREATE INDEX IF NOT EXISTS idx_ai_knowledge_chunks_content ON ai_knowledge_chunks USING gin(to_tsvector('simple', content));
+
+      -- 插入默认材料分类（如果不存在）
+      INSERT INTO material_categories (name, description, sort_order) VALUES
+        ('石膏板', '吊顶石膏板材料', 1),
+        ('铝扣板', '铝扣板材料', 2),
+        ('龙骨', '吊顶龙骨材料', 3),
+        ('配件', '吊顶配件', 4)
+      ON CONFLICT (name) DO NOTHING;
+    `,
+    down: `
+      DROP TABLE IF EXISTS ai_knowledge_chunks CASCADE;
+      DROP TABLE IF EXISTS ai_chat_history CASCADE;
+      DROP TABLE IF EXISTS material_params CASCADE;
+      DROP TABLE IF EXISTS material_categories CASCADE;
+    `,
+    tables: ['material_categories', 'material_params', 'ai_chat_history', 'ai_knowledge_chunks']
+  },
+  {
+    version: 'V1.8',
+    description: '允许结算实付金额为负数（预支可超出工程总额），移除actual_amount非负CHECK约束',
+    up: `
+      ALTER TABLE wage_settlements DROP CONSTRAINT IF EXISTS ck_settlement_actual;
+      ALTER TABLE wage_settlement_snapshots DROP CONSTRAINT IF EXISTS ck_snapshot_actual;
+    `,
+    down: `
+      ALTER TABLE wage_settlements ADD CONSTRAINT ck_settlement_actual CHECK (actual_amount >= 0);
+      ALTER TABLE wage_settlement_snapshots ADD CONSTRAINT ck_snapshot_actual CHECK (actual_amount >= 0);
+    `,
+    tables: []
   }
 ];
 
@@ -663,6 +861,41 @@ const isMigrationApplied = async (client, version) => {
     }
     throw error;
   }
+};
+
+/**
+ * 校验迁移创建的关键表是否真实存在
+ * 防止"版本记录存在但表不存在"的脏数据场景（如事务提交后数据库崩溃、手动误删表等）
+ *
+ * @param {object} client - pg Client
+ * @param {string[]} tables - 该迁移创建的表名数组
+ * @returns {Promise<boolean>} true=表都存在，false=有表缺失
+ */
+const verifyMigrationObjects = async (client, tables) => {
+  if (!tables || tables.length === 0) {
+    return true;
+  }
+  const result = await client.query(
+    `SELECT tablename FROM pg_tables WHERE tablename = ANY($1)`,
+    [tables]
+  );
+  const existingTables = result.rows.map(r => r.tablename);
+  const missingTables = tables.filter(t => !existingTables.includes(t));
+  if (missingTables.length > 0) {
+    log.warn(`发现缺失的表: ${missingTables.join(', ')}（版本记录存在但表不存在，将重新执行迁移）`);
+    return false;
+  }
+  return true;
+};
+
+/**
+ * 清理指定版本的迁移记录（用于脏数据修复）
+ * @param {object} client - pg Client
+ * @param {string} version - 迁移版本号
+ */
+const cleanDirtyMigrationRecord = async (client, version) => {
+  await client.query('DELETE FROM db_versions WHERE version = $1', [version]);
+  log.warn(`已清理版本 ${version} 的脏记录`);
 };
 
 // ===================== 6. 记录迁移版本 =====================
@@ -695,15 +928,30 @@ const runMigrations = async () => {
     let skippedCount = 0;
 
     for (const migration of MIGRATIONS) {
-      const { version, description, up } = migration;
+      const { version, description, up, tables } = migration;
 
       // 检查是否已应用
       const applied = await isMigrationApplied(client, version);
 
       if (applied) {
-        log.info(`[${version}] 已应用，跳过: ${description}`);
-        skippedCount++;
-        continue;
+        // 防御性校验：版本记录存在，但关键表是否真的存在？
+        // 防止"事务回滚但版本记录留下"或"手动误删表"导致的脏数据
+        if (tables && tables.length > 0) {
+          const objectsValid = await verifyMigrationObjects(client, tables);
+          if (!objectsValid) {
+            log.warn(`[${version}] 版本记录存在但表缺失，清理脏记录后将重新执行: ${description}`);
+            await cleanDirtyMigrationRecord(client, version);
+            // 不再 continue，继续往下执行迁移
+          } else {
+            log.info(`[${version}] 已应用，跳过: ${description}`);
+            skippedCount++;
+            continue;
+          }
+        } else {
+          log.info(`[${version}] 已应用，跳过: ${description}`);
+          skippedCount++;
+          continue;
+        }
       }
 
       // 执行迁移

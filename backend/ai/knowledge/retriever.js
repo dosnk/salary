@@ -107,22 +107,53 @@ const addKnowledge = async ({ sourceType, sourceId, title, content, metadata }) 
   for (const chunk of chunks) {
     const embedding = await generateEmbedding(chunk.content);
 
-    const result = await pool.query(
-      `INSERT INTO ai_knowledge_chunks (source_type, source_id, title, content, chunk_index, embedding, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6::vector, $7)
-       RETURNING id, title, content, chunk_index`,
-      [
-        sourceType,
-        sourceId,
-        title,
-        chunk.content,
-        chunk.index,
-        embedding ? `[${embedding.join(',')}]` : null,
-        JSON.stringify(metadata || {}),
-      ]
-    );
+    // 根据embedding是否为null选择SQL：非null时尝试::vector转换（pgvector可用时生效），
+    // 为null时直接插入null，避免在TEXT类型列上执行::vector转换报错
+    const useVectorCast = embedding !== null;
+    const sql = useVectorCast
+      ? `INSERT INTO ai_knowledge_chunks (source_type, source_id, title, content, chunk_index, embedding, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6::vector, $7)
+         RETURNING id, title, content, chunk_index`
+      : `INSERT INTO ai_knowledge_chunks (source_type, source_id, title, content, chunk_index, embedding, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, title, content, chunk_index`;
 
-    results.push(result.rows[0]);
+    try {
+      const result = await pool.query(
+        sql,
+        [
+          sourceType,
+          sourceId,
+          title,
+          chunk.content,
+          chunk.index,
+          useVectorCast ? `[${embedding.join(',')}]` : null,
+          JSON.stringify(metadata || {}),
+        ]
+      );
+      results.push(result.rows[0]);
+    } catch (err) {
+      // 如果::vector转换失败（embedding列为TEXT类型），降级为直接插入null
+      if (useVectorCast) {
+        logger.warn('向量插入失败，降级为关键词模式:', err.message);
+        const fallbackResult = await pool.query(
+          `INSERT INTO ai_knowledge_chunks (source_type, source_id, title, content, chunk_index, embedding, metadata)
+           VALUES ($1, $2, $3, $4, $5, NULL, $6)
+           RETURNING id, title, content, chunk_index`,
+          [
+            sourceType,
+            sourceId,
+            title,
+            chunk.content,
+            chunk.index,
+            JSON.stringify(metadata || {}),
+          ]
+        );
+        results.push(fallbackResult.rows[0]);
+      } else {
+        throw err;
+      }
+    }
   }
 
   return results;

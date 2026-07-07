@@ -17,7 +17,7 @@ class TongyiProvider extends BaseProvider {
    * 通义千问兼容OpenAI接口格式
    */
   async chat(messages, options = {}) {
-    const fetch = (await import('node-fetch')).default;
+    // 使用Node.js 18+内置的全局fetch
 
     const body = {
       model: this.model,
@@ -68,11 +68,10 @@ class TongyiProvider extends BaseProvider {
   }
 
   /**
-   * 流式对话
+   * 真流式对话 - 使用 response.body.getReader() 逐块读取
+   * 支持 FunctionCall（通过 options.tools 传入）
    */
   async chatStream(messages, onChunk, options = {}) {
-    const fetch = (await import('node-fetch')).default;
-
     const body = {
       model: this.model,
       messages,
@@ -80,6 +79,12 @@ class TongyiProvider extends BaseProvider {
       temperature: options.temperature || this.temperature,
       stream: true,
     };
+
+    // 流式模式支持FunctionCall
+    if (options.tools && options.tools.length > 0) {
+      body.tools = options.tools.map(t => ({ type: 'function', function: t }));
+      body.tool_choice = options.toolChoice || 'auto';
+    }
 
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
@@ -92,27 +97,8 @@ class TongyiProvider extends BaseProvider {
       throw new Error(`通义千问API错误: ${response.status}`);
     }
 
-    let fullContent = '';
-    // SSE流式解析
-    const text = await response.text();
-    const lines = text.split('\n').filter(l => l.startsWith('data: '));
-
-    for (const line of lines) {
-      const data = line.slice(6);
-      if (data === '[DONE]') break;
-      try {
-        const parsed = JSON.parse(data);
-        const delta = parsed.choices[0]?.delta?.content || '';
-        if (delta) {
-          fullContent += delta;
-          if (onChunk) onChunk(delta);
-        }
-      } catch (e) {
-        // 忽略解析错误
-      }
-    }
-
-    return { content: fullContent };
+    // 调用基类真流式读取（OpenAI兼容格式）
+    return await this.readStream(response, onChunk);
   }
 }
 

@@ -91,10 +91,10 @@ const uploadController = {
   },
 
   maxFileSize: {
-    image: 10 * 1024 * 1024,
-    document: 20 * 1024 * 1024,
-    video: 200 * 1024 * 1024,
-    audio: 50 * 1024 * 1024
+    image: 20 * 1024 * 1024,       // 图片: 20MB
+    document: 50 * 1024 * 1024,    // 文档: 50MB
+    video: 500 * 1024 * 1024,      // 视频: 500MB
+    audio: 100 * 1024 * 1024       // 音频: 100MB
   },
 
   allowedExtensions: ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.pdf', '.doc', '.docx', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.mp3', '.wav', '.aac'],
@@ -120,29 +120,34 @@ const uploadController = {
       });
 
       if (isRedisAvailable()) {
-        const redis = getRedisClient();
-        const rateLimitKey = `upload:rate:${userId}`;
-        const uploadCount = await redis.incr(rateLimitKey);
+        try {
+          const redis = getRedisClient();
+          const rateLimitKey = `upload:rate:${userId}`;
+          const uploadCount = await redis.incr(rateLimitKey);
 
-        if (uploadCount === 1) {
-          await redis.expire(rateLimitKey, 60);
-        }
+          if (uploadCount === 1) {
+            await redis.expire(rateLimitKey, 60);
+          }
 
-        const maxUploadsPerMinute = 20;
-        if (uploadCount > maxUploadsPerMinute) {
-          logger.warn('文件上传频率过高', { userId, uploadCount });
-          ctx.fail(1004, '上传频率过高，请稍后再试');
-          return;
-        }
+          const maxUploadsPerMinute = 20;
+          if (uploadCount > maxUploadsPerMinute) {
+            logger.warn('文件上传频率过高', { userId, uploadCount });
+            ctx.fail(1004, '上传频率过高，请稍后再试');
+            return;
+          }
 
-        const sizeLimitKey = `upload:size:${userId}`;
-        const currentSize = parseInt(await redis.get(sizeLimitKey) || '0');
-        const maxSizePerHour = 500 * 1024 * 1024;
-        
-        if (currentSize > maxSizePerHour) {
-          logger.warn('上传总量超限', { userId, currentSize });
-          ctx.fail(1004, '上传总量超限，请稍后再试');
-          return;
+          const sizeLimitKey = `upload:size:${userId}`;
+          const currentSize = parseInt(await redis.get(sizeLimitKey) || '0');
+          const maxSizePerHour = 500 * 1024 * 1024;
+
+          if (currentSize > maxSizePerHour) {
+            logger.warn('上传总量超限', { userId, currentSize });
+            ctx.fail(1004, '上传总量超限，请稍后再试');
+            return;
+          }
+        } catch (error) {
+          // Redis异常时不阻塞上传流程，仅记录日志
+          logger.warn('上传频率限制检查失败，跳过限流', { userId, error: error.message });
         }
       } else {
         logger.warn('Redis不可用，跳过上传频率限制检查', { userId });
@@ -172,8 +177,62 @@ const uploadController = {
 
       logger.info('上传文件数量', { count: files.length, userId });
 
-      const projectName = sanitizeFileName(ctx.request.body.projectName || 'salary');
-      logger.info('工程名称', { projectName, userId });
+      // 兼容性读取工程名称:
+      // 旧版前端给 projectName part 设置了 Content-Type: text/plain，
+      // 导致 formidable v2.x 将其识别为"文件"并放到 ctx.request.files.projectName，
+      // 而不是 ctx.request.body.projectName。
+      // 新版前端已修复(不设置 Content-Type)，但这里保留兜底逻辑兼容历史版本。
+      let rawProjectName = ctx.request.body.projectName;
+      if (!rawProjectName && ctx.request.files && ctx.request.files.projectName) {
+        // 旧版前端兼容: 从 files.projectName 读取（可能是文件对象或数组）
+        const projectNameFile = Array.isArray(ctx.request.files.projectName)
+          ? ctx.request.files.projectName[0]
+          : ctx.request.files.projectName;
+        // formidable 会把 text field 内容写到临时文件，需要读取文件内容
+        if (projectNameFile && projectNameFile.filepath) {
+          try {
+            rawProjectName = fs.readFileSync(projectNameFile.filepath, 'utf8').trim();
+            logger.warn('从files中读取到projectName（旧版前端兼容）', { rawProjectName, userId });
+            // 将临时文件加入清理列表，避免残留
+            tempFiles.push(projectNameFile.filepath);
+          } catch (e) {
+            logger.warn('读取projectName临时文件失败', { error: e.message, userId });
+          }
+        }
+      }
+
+      // URL 解码工程名称
+      // 前端会对工程名进行 URL 编码（URLEncoder.encode），避免 multipart 传输中文乱码
+      // 后端收到后用 decodeURIComponent 还原
+      // 如果解码失败（旧版前端未编码），直接使用原始值
+      if (rawProjectName) {
+        try {
+          const decoded = decodeURIComponent(rawProjectName);
+          if (decoded !== rawProjectName) {
+            logger.info('projectName URL解码成功', {
+              before: rawProjectName,
+              after: decoded,
+              userId
+            });
+            rawProjectName = decoded;
+          }
+        } catch (e) {
+          // 包含非法 % 序列时 decodeURIComponent 会抛错，说明是旧版前端未编码的值
+          logger.warn('projectName URL解码失败，使用原始值', {
+            rawProjectName,
+            error: e.message,
+            userId
+          });
+        }
+      }
+
+      const projectName = sanitizeFileName(rawProjectName || 'salary');
+      logger.info('工程名称', {
+        projectName,
+        userId,
+        bodyKeys: Object.keys(ctx.request.body || {}),
+        filesKeys: Object.keys(ctx.request.files || {})
+      });
 
       const datePath = moment().format('YYYYMM');
       const uploadDir = path.join(__dirname, '../upload', datePath, projectName);
@@ -202,13 +261,19 @@ const uploadController = {
 
           if (uploadController.dangerousExtensions.includes(ext)) {
             logger.warn('危险文件类型', { ext, fileName, userId });
-            errors.push({ fileName, error: '不允许上传此类型文件' });
+            errors.push({
+              fileName,
+              error: `不允许上传此类型文件（${ext}），该文件类型被视为危险文件`
+            });
             continue;
           }
 
           if (!uploadController.allowedExtensions.includes(ext)) {
             logger.warn('不支持的文件扩展名', { ext, fileName, userId });
-            errors.push({ fileName, error: `不支持的文件类型: ${ext}` });
+            errors.push({
+              fileName,
+              error: `不支持的文件类型（${ext}），仅支持图片(jpg/png/gif/webp/bmp)、文档(pdf/doc/docx)、视频(mp4/avi/mov/wmv/flv)、音频(mp3/wav/aac)`
+            });
             continue;
           }
 
@@ -278,10 +343,15 @@ const uploadController = {
           });
 
           if (isRedisAvailable()) {
-            const redis = getRedisClient();
-            const sizeLimitKey = `upload:size:${userId}`;
-            await redis.incrby(sizeLimitKey, file.size);
-            await redis.expire(sizeLimitKey, 3600);
+            try {
+              const redis = getRedisClient();
+              const sizeLimitKey = `upload:size:${userId}`;
+              await redis.incrby(sizeLimitKey, file.size);
+              await redis.expire(sizeLimitKey, 3600);
+            } catch (error) {
+              // Redis异常时不阻塞上传成功流程，仅记录日志
+              logger.warn('记录上传总量失败', { userId, error: error.message });
+            }
           }
 
           logger.info('文件上传成功', { fileUrl, fileName, userId });

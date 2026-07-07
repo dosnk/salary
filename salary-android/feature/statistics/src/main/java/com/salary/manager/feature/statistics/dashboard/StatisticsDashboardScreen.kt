@@ -18,8 +18,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -27,13 +30,22 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -66,19 +78,31 @@ import com.salary.core.network.api.PlanTotalDto
 import com.salary.core.network.api.SalaryProjectDto
 import com.salary.core.network.api.SettlementHistoryDto
 import com.salary.core.network.api.SubprojectDto
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import com.salary.core.network.dto.ProjectDto
 import com.salary.core.ui.state.ListUiState
 import com.salary.core.ui.state.UiState
+import com.salary.manager.feature.statistics.advance.AdvanceContent
+import com.salary.manager.feature.statistics.advance.AdvanceViewModel
+import com.salary.manager.feature.statistics.advance.CreateAdvanceDialog
 
 /**
  * 统计面板页面 - 对齐Vue前端Statistics.vue设计
  *
- * 包含：顶部导航栏、4宫格统计卡片、结算单表格区域、结算历史区域
+ * 包含：顶部导航栏、Tab切换（统计/预支）、HorizontalPager左右滑动切换内容
+ * - 统计Tab：4宫格统计卡片、结算单表格区域、结算历史区域
+ * - 预支Tab：预支记录列表+创建预支
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StatisticsDashboardScreen(
-    viewModel: StatisticsDashboardViewModel = hiltViewModel()
+    viewModel: StatisticsDashboardViewModel = hiltViewModel(),
+    advanceViewModel: AdvanceViewModel = hiltViewModel(),
+    userNickname: String = "",
+    /** 刷新触发器：值变化时静默刷新统计数据（用于Tab切换时刷新） */
+    refreshTrigger: Int = 0
 ) {
     val state by viewModel.state.collectAsState()
     val settlementSummary by viewModel.settlementSummary.collectAsState()
@@ -90,18 +114,27 @@ fun StatisticsDashboardScreen(
     val settling by viewModel.settling.collectAsState()
     val expandedProjects by viewModel.expandedProjects.collectAsState()
     val expandedHistoryProjects by viewModel.expandedHistoryProjects.collectAsState()
-    val userNickname by viewModel.userNickname.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
     val successMessage by viewModel.successMessage.collectAsState()
     val statsProjectListState by viewModel.statsProjectListState.collectAsState()
     val statsPopupTitle by viewModel.statsPopupTitle.collectAsState()
     val exportingId by viewModel.exportingId.collectAsState()
 
+    // 预支ViewModel状态
+    val advanceState by advanceViewModel.state.collectAsState()
+
     val snackbarHostState = remember { SnackbarHostState() }
     var showSettleConfirm by remember { mutableStateOf(false) }
     var showStatsProjectList by remember { mutableStateOf(false) }
     var statsFilterType by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+
+    // Tab切换时静默刷新统计数据（首次进入refreshTrigger=0不触发，后续切换递增触发）
+    LaunchedEffect(refreshTrigger) {
+        if (refreshTrigger > 0) {
+            viewModel.silentRefresh()
+        }
+    }
 
     // 处理错误消息
     LaunchedEffect(errorMessage) {
@@ -124,6 +157,11 @@ fun StatisticsDashboardScreen(
         colors = listOf(Color(0xFF84CC16), Color(0xFF65A30D))
     )
 
+    // 顶部Tab：统计 / 预支，默认统计页面
+    val statisticsTabs = listOf("统计", "预支")
+    val pagerState = rememberPagerState(initialPage = 0) { statisticsTabs.size }
+    val coroutineScope = rememberCoroutineScope()
+
     Box(modifier = Modifier.fillMaxSize()) {
         when (state) {
             is UiState.Loading -> {
@@ -132,87 +170,181 @@ fun StatisticsDashboardScreen(
                 }
             }
             is UiState.Success -> {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    // 顶部导航栏
-                    item {
-                        GreenTopNavBar(
-                            title = "统计结算",
-                            userNickname = userNickname.ifEmpty { "未登录" },
-                            unreadCount = 0
-                        )
+                // 顶部导航栏固定不动，不随列表滚动
+                Column(modifier = Modifier.fillMaxSize()) {
+                    GreenTopNavBar(
+                        title = "统计结算",
+                        userNickname = userNickname.ifEmpty { "未登录" },
+                        unreadCount = 0
+                    )
+
+                    // 顶部Tab菜单：统计 / 预支
+                    TabRow(
+                        selectedTabIndex = pagerState.currentPage,
+                        containerColor = Color.White,
+                        contentColor = AppColors.Green400,
+                        indicator = { tabPositions ->
+                            TabRowDefaults.SecondaryIndicator(
+                                modifier = Modifier
+                                    .tabIndicatorOffset(tabPositions[pagerState.currentPage])
+                                    .padding(horizontal = 24.dp),
+                                height = 3.dp,
+                                color = AppColors.Green400
+                            )
+                        }
+                    ) {
+                        statisticsTabs.forEachIndexed { index, title ->
+                            Tab(
+                                selected = pagerState.currentPage == index,
+                                onClick = {
+                                    coroutineScope.launch {
+                                        pagerState.animateScrollToPage(index)
+                                    }
+                                },
+                                modifier = Modifier.height(40.dp),
+                                text = {
+                                    Text(
+                                        title,
+                                        fontSize = 14.sp,
+                                        fontWeight = if (pagerState.currentPage == index) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (pagerState.currentPage == index) AppColors.Green400 else AppColors.TextSecondary
+                                    )
+                                }
+                            )
+                        }
                     }
 
-                    // 4宫格统计卡片
-                    item {
-                        StatsGridSection(
-                            summary = settlementSummary,
-                            formatNumber = { viewModel.formatNumber(it) },
-                            onCardClick = { type ->
-                                statsFilterType = when (type) {
-                                    "未结算工程" -> "unsettled"
-                                    "预支总额" -> "advance"
-                                    "工程总额" -> "all"
-                                    "实付总额" -> "settled"
-                                    else -> "unsettled"
-                                }
-                                if (statsFilterType == "advance") {
-                                    // 预支总额点击：显示提示
-                                    scope.launch { snackbarHostState.showSnackbar("预支总额为统计汇总数据，请到预支管理页面查看详情") }
-                                } else {
-                                    viewModel.loadStatsProjectList(statsFilterType)
-                                    showStatsProjectList = true
+                    // HorizontalPager：左右滑动切换统计/预支内容
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier.fillMaxSize()
+                    ) { page ->
+                        when (page) {
+                            0 -> {
+                                // 统计内容区域
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    // 4宫格统计卡片
+                                    item {
+                                        StatsGridSection(
+                                            summary = settlementSummary,
+                                            formatNumber = { viewModel.formatNumber(it) },
+                                            onCardClick = { type ->
+                                                statsFilterType = when (type) {
+                                                    "未结算工程" -> "unsettled"
+                                                    "预支总额" -> "advance"
+                                                    "工程总额" -> "all"
+                                                    "实付总额" -> "settled"
+                                                    else -> "unsettled"
+                                                }
+                                                if (statsFilterType == "advance") {
+                                                    // 预支总额点击：切换到预支Tab
+                                                    coroutineScope.launch {
+                                                        pagerState.animateScrollToPage(1)
+                                                    }
+                                                } else {
+                                                    viewModel.loadStatsProjectList(statsFilterType)
+                                                    showStatsProjectList = true
+                                                }
+                                            }
+                                        )
+                                    }
+
+                                    // 结算单区域
+                                    item {
+                                        SettlementSheetSection(
+                                            constructionPlans = constructionPlans,
+                                            projectData = projectData,
+                                            selectedProjectIds = selectedProjectIds,
+                                            expandedProjects = expandedProjects,
+                                            calculationResult = calculationResult,
+                                            settling = settling,
+                                            greenGradient = greenGradient,
+                                            onToggleSelectAll = { viewModel.toggleSelectAll() },
+                                            onToggleProjectSelection = { id, selected ->
+                                                viewModel.toggleProjectSelection(id, selected)
+                                            },
+                                            onToggleProjectExpand = { viewModel.toggleProjectExpand(it) },
+                                            onSettle = { showSettleConfirm = true },
+                                            onExportImage = { viewModel.exportCurrentSettlementImage() },
+                                            getUnitName = { viewModel.getUnitName(it) },
+                                            formatNumber = { viewModel.formatNumber(it) }
+                                        )
+                                    }
+
+                                    // 结算历史区域
+                                    item {
+                                        SettlementHistorySection(
+                                            settlementHistory = settlementHistory,
+                                            constructionPlans = constructionPlans,
+                                            expandedHistoryProjects = expandedHistoryProjects,
+                                            greenGradient = greenGradient,
+                                            exportingId = exportingId,
+                                            onToggleHistoryProjectExpand = { settlementId, projectId ->
+                                                viewModel.toggleHistoryProjectExpand(settlementId, projectId)
+                                            },
+                                            onExportExcel = { settlementId, settlementNo ->
+                                                viewModel.exportSettlementExcel(settlementId, settlementNo)
+                                            },
+                                            onExportImage = { settlement ->
+                                                viewModel.exportSettlementImage(settlement)
+                                            },
+                                            getUnitName = { viewModel.getUnitName(it) },
+                                            formatNumber = { viewModel.formatNumber(it) }
+                                        )
+                                    }
+
+                                    // 底部间距
+                                    item {
+                                        Spacer(modifier = Modifier.height(80.dp))
+                                    }
                                 }
                             }
-                        )
-                    }
+                            1 -> {
+                                // 预支内容区域（左右滑动切到的第二页）
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    AdvanceContent(
+                                        state = advanceState,
+                                        onRetry = { advanceViewModel.loadAdvances() }
+                                    )
+                                    // 预支相关状态
+                                    var showCreateAdvanceDialog by remember { mutableStateOf(false) }
+                                    val createAdvanceError by advanceViewModel.createErrorMessage.collectAsState()
+                                    val isCreatingAdvance by advanceViewModel.isCreating.collectAsState()
 
-                    // 结算单区域
-                    item {
-                        SettlementSheetSection(
-                            constructionPlans = constructionPlans,
-                            projectData = projectData,
-                            selectedProjectIds = selectedProjectIds,
-                            expandedProjects = expandedProjects,
-                            calculationResult = calculationResult,
-                            settling = settling,
-                            greenGradient = greenGradient,
-                            onToggleSelectAll = { viewModel.toggleSelectAll() },
-                            onToggleProjectSelection = { id, selected ->
-                                viewModel.toggleProjectSelection(id, selected)
-                            },
-                            onToggleProjectExpand = { viewModel.toggleProjectExpand(it) },
-                            onSettle = { showSettleConfirm = true },
-                            getUnitName = { viewModel.getUnitName(it) },
-                            formatNumber = { viewModel.formatNumber(it) }
-                        )
+                                    // 仅施工员可创建预支，其他角色不显示FAB按钮（对齐后端权限规则）
+                                    if (advanceViewModel.canCreateAdvance()) {
+                                        FloatingActionButton(
+                                            onClick = { showCreateAdvanceDialog = true },
+                                            containerColor = AppColors.Green400,
+                                            contentColor = Color.White,
+                                            modifier = Modifier
+                                                .align(Alignment.BottomEnd)
+                                                .padding(16.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.Add,
+                                                contentDescription = "创建预支"
+                                            )
+                                        }
+                                    }
+                                    if (showCreateAdvanceDialog) {
+                                        CreateAdvanceDialog(
+                                            onDismiss = { showCreateAdvanceDialog = false },
+                                            onConfirm = { amount, advanceDate, remark ->
+                                                advanceViewModel.createAdvance(amount, advanceDate, remark)
+                                                showCreateAdvanceDialog = false
+                                            },
+                                            errorMessage = createAdvanceError,
+                                            isCreating = isCreatingAdvance
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
-
-                    // 结算历史区域
-                    item {
-                        SettlementHistorySection(
-                            settlementHistory = settlementHistory,
-                            constructionPlans = constructionPlans,
-                            expandedHistoryProjects = expandedHistoryProjects,
-                            greenGradient = greenGradient,
-                            exportingId = exportingId,
-                            onToggleHistoryProjectExpand = { settlementId, projectId ->
-                                viewModel.toggleHistoryProjectExpand(settlementId, projectId)
-                            },
-                            onExportExcel = { settlementId, settlementNo ->
-                                viewModel.exportSettlementExcel(settlementId, settlementNo)
-                            },
-                            getUnitName = { viewModel.getUnitName(it) },
-                            formatNumber = { viewModel.formatNumber(it) }
-                        )
-                    }
-
-                    // 底部间距
-                    item {
-                        Spacer(modifier = Modifier.height(80.dp))
-                    }
-                }
+                } // Column闭合
             }
             is UiState.Error -> {
                 val errorMsg = (state as UiState.Error).message
@@ -520,6 +652,7 @@ fun SettlementSheetSection(
     onToggleProjectSelection: (Int, Boolean) -> Unit,
     onToggleProjectExpand: (Int) -> Unit,
     onSettle: () -> Unit,
+    onExportImage: () -> Unit,
     getUnitName: (String?) -> String,
     formatNumber: (Double?) -> String
 ) {
@@ -528,7 +661,7 @@ fun SettlementSheetSection(
             .fillMaxWidth()
             .padding(horizontal = 8.dp)
     ) {
-        // 绿色渐变标题栏
+        // 绿色渐变标题栏（标题+导出图片按钮+结算按钮）
         SettlementTitleBar(
             title = "📋 结算单",
             greenGradient = greenGradient,
@@ -537,12 +670,27 @@ fun SettlementSheetSection(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "已选择 ${selectedProjectIds.size} 个工程",
-                        fontSize = 11.sp,
-                        color = Color.White,
-                        fontWeight = FontWeight.Medium
-                    )
+                    // 导出图片结算单按钮（在结算按钮左边）
+                    Button(
+                        onClick = onExportImage,
+                        enabled = selectedProjectIds.isNotEmpty() && !settling,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.White,
+                            contentColor = Color(0xFF65A30D),
+                            disabledContainerColor = Color(0xCCFFFFFF),
+                            disabledContentColor = Color(0xFF999999)
+                        ),
+                        shape = RoundedCornerShape(4.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "导出",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1
+                        )
+                    }
+                    // 结算按钮
                     Button(
                         onClick = onSettle,
                         enabled = selectedProjectIds.isNotEmpty() && !settling,
@@ -563,6 +711,15 @@ fun SettlementSheetSection(
                     }
                 }
             }
+        )
+
+        // 已选择工程数提示（在标题栏正下方，左对齐）
+        Text(
+            text = "已选择 ${selectedProjectIds.size} 个工程，确认后将生成结算单，结算后不可修改",
+            fontSize = 11.sp,
+            color = AppColors.TextSecondary,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 4.dp)
         )
 
         // 表格内容
@@ -616,6 +773,8 @@ fun SettlementSheetSection(
 
 /**
  * 结算单/历史标题栏 - 绿色渐变背景
+ * 注意：左侧标题使用weight(1f)占满剩余空间并单行省略，
+ *       右侧内容保持紧凑单行，避免内容过多时换行导致标题栏超高
  */
 @Composable
 fun SettlementTitleBar(
@@ -623,25 +782,26 @@ fun SettlementTitleBar(
     greenGradient: Brush,
     rightContent: @Composable () -> Unit = {}
 ) {
-    Box(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(greenGradient, RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = title,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Color.White
-            )
-            rightContent()
-        }
+        // 左侧标题：占满剩余空间，单行省略，避免换行
+        Text(
+            text = title,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        // 右侧内容：不占weight，保持紧凑
+        rightContent()
     }
 }
 
@@ -712,18 +872,18 @@ fun SettlementTable(
                 }
             }
 
-            // 单价行（灰色背景）
-            PriceRow(
-                constructionPlans = constructionPlans,
-                getUnitName = getUnitName
-            )
-
             // 合计行（蓝色渐变背景）
             TotalRow(
                 constructionPlans = constructionPlans,
                 planTotals = calculationResult.planTotals,
                 getUnitName = getUnitName,
                 formatNumber = formatNumber
+            )
+
+            // 单价行（灰色背景）
+            PriceRow(
+                constructionPlans = constructionPlans,
+                getUnitName = getUnitName
             )
 
             // 总计行（绿色渐变背景）
@@ -863,7 +1023,7 @@ fun ProjectDataRow(
                 )
                 Spacer(modifier = Modifier.width(2.dp))
                 Text(
-                    project.project_name,
+                    project.projectName,
                     fontSize = 11.sp,
                     color = Color(0xFF333333),
                     maxLines = 2,
@@ -918,7 +1078,7 @@ fun SubprojectRow(
         // 子项目名称
         Box(modifier = Modifier.width(100.dp), contentAlignment = Alignment.CenterStart) {
             Text(
-                "${subproject.space_type_name} - ${subproject.plan_name}",
+                "${subproject.spaceTypeName} - ${subproject.planName}",
                 fontSize = 10.sp,
                 color = Color(0xFF64748B),
                 modifier = Modifier.padding(start = 20.dp),
@@ -929,9 +1089,9 @@ fun SubprojectRow(
         // 各施工方案列
         constructionPlans.forEach { plan ->
             Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
-                if (subproject.plan_id == plan.id) {
+                if (subproject.planId == plan.id) {
                     Text(
-                        "${String.format("%.2f", subproject.user_quantity)}${getUnitName(plan.unit)}",
+                        "${String.format("%.2f", subproject.userQuantity)}${getUnitName(plan.unit)}",
                         fontSize = 10.sp,
                         color = Color(0xFF64748B),
                         textAlign = TextAlign.Center
@@ -1110,10 +1270,10 @@ fun AdvanceRow(
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 日期+预支标签
+        // 日期+预支标签（格式：2026.06.22预支）
         Box(modifier = Modifier.width(184.dp), contentAlignment = Alignment.CenterStart) {
             Text(
-                "${advance.advance_date} 预支",
+                "${formatAdvanceDate(advance.advanceDate)}预支",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
                 color = Color(0xFF92400E)
@@ -1128,7 +1288,7 @@ fun AdvanceRow(
         // 预支金额
         Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
             Text(
-                "¥${formatNumber(advance.advance_amount)}",
+                "¥${formatNumber(advance.advanceAmount)}",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
                 color = Color(0xFF92400E)
@@ -1193,6 +1353,7 @@ fun SettlementHistorySection(
     exportingId: Int? = null,
     onToggleHistoryProjectExpand: (Int, Int) -> Unit,
     onExportExcel: (Int, String) -> Unit = { _, _ -> },
+    onExportImage: (SettlementHistoryDto) -> Unit = {},
     getUnitName: (String?) -> String,
     formatNumber: (Double?) -> String
 ) {
@@ -1225,48 +1386,15 @@ fun SettlementHistorySection(
             settlementHistory.forEach { settlement ->
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // 绿色标题栏（含结算单号和日期）
-                SettlementTitleBar(
-                    title = "📜 结算历史",
+                // 绿色标题栏：左侧两行（结算时间 + 结算时间段），右侧导出按钮
+                // 设计说明：左侧使用 Column 显示两行文本，向左对齐；
+                //          右侧仅保留导出按钮，避免内容过多导致标题栏超高
+                SettlementHistoryTitleBar(
+                    settlement = settlement,
                     greenGradient = greenGradient,
-                    rightContent = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                settlement.settlement_no,
-                                fontSize = 11.sp,
-                                color = Color.White,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Text(
-                                "${settlement.start_month} 至 ${settlement.end_month}",
-                                fontSize = 10.sp,
-                                color = Color(0xCCFFFFFF)
-                            )
-                            // 导出Excel按钮
-                            val isExporting = exportingId == settlement.settlement_id
-                            Button(
-                                onClick = { onExportExcel(settlement.settlement_id, settlement.settlement_no) },
-                                enabled = !isExporting,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color.White,
-                                    contentColor = Color(0xFF65A30D),
-                                    disabledContainerColor = Color(0xCCFFFFFF),
-                                    disabledContentColor = Color(0xFF999999)
-                                ),
-                                shape = RoundedCornerShape(4.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = if (isExporting) "导出中" else "导出Excel",
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                        }
-                    }
+                    exportingId = exportingId,
+                    onExportExcel = { onExportExcel(settlement.settlementId, settlement.settlementNo) },
+                    onExportImage = { onExportImage(settlement) }
                 )
 
                 // 历史表格
@@ -1281,6 +1409,253 @@ fun SettlementHistorySection(
             }
         }
     }
+}
+
+/**
+ * 结算历史专用标题栏
+ * 左侧两行（向左对齐）：
+ *   第一行 - 结算时间：YYYY-MM-DD
+ *   第二行 - 结算时间段：YYYY-MM-DD 到 YYYY-MM-DD
+ * 右侧：导出按钮（点击弹出选择：导出表格文件 / 导出图片结算单）
+ *
+ * @param settlement 结算历史数据
+ * @param greenGradient 绿色渐变背景
+ * @param exportingId 当前正在导出的结算单ID
+ * @param onExportExcel 点击导出表格回调
+ * @param onExportImage 点击导出图片回调
+ */
+@Composable
+private fun SettlementHistoryTitleBar(
+    settlement: SettlementHistoryDto,
+    greenGradient: Brush,
+    exportingId: Int?,
+    onExportExcel: () -> Unit,
+    onExportImage: () -> Unit
+) {
+    // 格式化结算时间：从 settled_at（后端实际返回的字段，ISO格式）解析为 YYYY-MM-DD
+    val settledDateText = remember(settlement.settledAt) {
+        formatChineseDate(settlement.settledAt)
+    }
+    // 格式化结算时间段：YYYY-MM-DD 到 YYYY-MM-DD
+    val periodText = remember(settlement.startMonth, settlement.endMonth) {
+        buildPeriodString(settlement.startMonth, settlement.endMonth)
+    }
+    val isExporting = exportingId == settlement.settlementId
+    // 导出类型选择弹窗状态
+    var showExportDialog by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(greenGradient, RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 左侧：两行文本，向左对齐
+        Column(
+            modifier = Modifier.weight(1f),
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            // 第一行：结算时间
+            Text(
+                text = "结算时间：$settledDateText",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Start
+            )
+            // 第二行：结算时间段
+            Text(
+                text = "结算时间段：$periodText",
+                fontSize = 11.sp,
+                color = Color(0xCCFFFFFF),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Start
+            )
+        }
+        // 右侧：导出按钮（点击弹出选择弹窗）
+        Button(
+            onClick = { showExportDialog = true },
+            enabled = !isExporting,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color.White,
+                contentColor = Color(0xFF65A30D),
+                disabledContainerColor = Color(0xCCFFFFFF),
+                disabledContentColor = Color(0xFF999999)
+            ),
+            shape = RoundedCornerShape(4.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+        ) {
+            Text(
+                text = if (isExporting) "导出中" else "导出",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1
+            )
+        }
+    }
+
+    // 导出类型选择弹窗
+    if (showExportDialog) {
+        ExportTypeDialog(
+            onDismiss = { showExportDialog = false },
+            onExportExcel = {
+                showExportDialog = false
+                onExportExcel()
+            },
+            onExportImage = {
+                showExportDialog = false
+                onExportImage()
+            }
+        )
+    }
+}
+
+/**
+ * 导出类型选择弹窗
+ * 提供两种导出选项：导出表格文件（Excel）、导出图片结算单（PNG）
+ */
+@Composable
+private fun ExportTypeDialog(
+    onDismiss: () -> Unit,
+    onExportExcel: () -> Unit,
+    onExportImage: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("选择导出方式", fontWeight = FontWeight.SemiBold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // 导出表格文件
+                Surface(
+                    onClick = onExportExcel,
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFF0FDF4),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AppColors.Green100)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text("📊", fontSize = 20.sp)
+                        Column {
+                            Text(
+                                "导出表格文件",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = AppColors.TextPrimary
+                            )
+                            Text(
+                                "Excel格式，可编辑",
+                                fontSize = 11.sp,
+                                color = AppColors.TextTertiary
+                            )
+                        }
+                    }
+                }
+                // 导出图片结算单
+                Surface(
+                    onClick = onExportImage,
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFF0FDF4),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AppColors.Green100)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text("🖼️", fontSize = 20.sp)
+                        Column {
+                            Text(
+                                "导出图片结算单",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = AppColors.TextPrimary
+                            )
+                            Text(
+                                "PNG格式，样式与程序一致",
+                                fontSize = 11.sp,
+                                color = AppColors.TextTertiary
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消", color = AppColors.TextSecondary)
+            }
+        }
+    )
+}
+
+/**
+ * 将ISO日期字符串格式化为年-月-日（不含具体时间点）
+ * 支持两种输入格式：ISO标准(yyyy-MM-dd'T'HH:mm:ss) 和 后端实际(yyyy-MM-dd HH:mm)
+ */
+private fun formatChineseDate(isoString: String): String {
+    if (isoString.isBlank()) return "未知"
+    return try {
+        val date = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.CHINA).parse(isoString)
+            ?: SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).parse(isoString)
+            ?: Date()
+        SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(date)
+    } catch (e: Exception) {
+        try {
+            val date = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).parse(isoString) ?: Date()
+            SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(date)
+        } catch (e2: Exception) {
+            isoString.substring(0, minOf(10, isoString.length))
+        }
+    }
+}
+
+/**
+ * 格式化预支日期为 2026.06.22 格式
+ * 支持解析多种输入格式：ISO(yyyy-MM-dd'T'HH:mm:ss)、yyyy-MM-dd、yyyy-MM-dd HH:mm
+ */
+private fun formatAdvanceDate(dateStr: String?): String {
+    if (dateStr.isNullOrBlank()) return ""
+    return try {
+        val date = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.CHINA).parse(dateStr)
+            ?: SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).parse(dateStr)
+            ?: SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).parse(dateStr)
+            ?: return dateStr
+        SimpleDateFormat("yyyy.MM.dd", Locale.CHINA).format(date)
+    } catch (e: Exception) {
+        // 解析失败时，尝试将连字符替换为点号
+        dateStr.replace("-", ".").substring(0, minOf(10, dateStr.length))
+    }
+}
+
+/**
+ * 构建结算时间段字符串：YYYY-MM-DD 到 YYYY-MM-DD
+ * 后端 start_month/end_month 为 DATE 类型，返回 yyyy-MM-dd 格式（如 2026-06-01）
+ * 兼容处理：若返回带时间的 ISO 格式（如 2026-06-01T00:00:00），截取日期部分
+ * 例如：startMonth="2026-06-01", endMonth="2026-06-30" → "2026-06-01 到 2026-06-30"
+ */
+private fun buildPeriodString(startMonth: String, endMonth: String): String {
+    // 截取日期部分（取前10位 yyyy-MM-dd，兼容带T的ISO格式）
+    val start = startMonth.takeIf { it.isNotBlank() }
+        ?.let { it.substringBefore("T").take(10) }
+        ?: "未知"
+    val end = endMonth.takeIf { it.isNotBlank() }
+        ?.let { it.substringBefore("T").take(10) }
+        ?: "未知"
+    return "$start 到 $end"
 }
 
 /**
@@ -1313,7 +1688,7 @@ fun SettlementHistoryTable(
             // 去重后的工程列表
             val uniqueProjects = settlement.projects.distinctBy { it.id }
             uniqueProjects.forEachIndexed { index, project ->
-                val isExpanded = expandedHistoryProjects.contains("${settlement.settlement_id}-${project.id}")
+                val isExpanded = expandedHistoryProjects.contains("${settlement.settlementId}-${project.id}")
 
                 // 工程行
                 HistoryProjectDataRow(
@@ -1322,7 +1697,7 @@ fun SettlementHistoryTable(
                     constructionPlans = constructionPlans,
                     isExpanded = isExpanded,
                     onToggleExpand = {
-                        onToggleHistoryProjectExpand(settlement.settlement_id, project.id)
+                        onToggleHistoryProjectExpand(settlement.settlementId, project.id)
                     },
                     getUnitName = getUnitName,
                     formatNumber = formatNumber
@@ -1331,7 +1706,7 @@ fun SettlementHistoryTable(
                 // 展开的子项目明细
                 AnimatedVisibility(visible = isExpanded) {
                     project.subprojects.forEach { sub ->
-                        SubprojectRow(
+                        HistorySubprojectRow(
                             subproject = sub,
                             constructionPlans = constructionPlans,
                             getUnitName = getUnitName
@@ -1340,18 +1715,18 @@ fun SettlementHistoryTable(
                 }
             }
 
-            // 单价行
-            PriceRow(
-                constructionPlans = constructionPlans,
-                getUnitName = getUnitName
-            )
-
             // 合计行
             TotalRow(
                 constructionPlans = constructionPlans,
                 planTotals = settlement.planTotals,
                 getUnitName = getUnitName,
                 formatNumber = formatNumber
+            )
+
+            // 单价行
+            PriceRow(
+                constructionPlans = constructionPlans,
+                getUnitName = getUnitName
             )
 
             // 总计行
@@ -1383,6 +1758,7 @@ fun SettlementHistoryTable(
 
 /**
  * 历史表头行（无选择列）
+ * 注意：前两列总宽 = 36 + 148 = 184dp，与 TotalRow/GrandTotalRow/PriceRow 的"合并前3列"宽度一致，确保列对齐
  */
 @Composable
 fun HistoryHeaderRow(
@@ -1403,8 +1779,8 @@ fun HistoryHeaderRow(
         Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {
             Text("序号", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
-        // 工程名称
-        Box(modifier = Modifier.width(120.dp), contentAlignment = Alignment.Center) {
+        // 工程名称（宽度148dp，与TotalRow等合并宽度184dp对齐：36+148=184）
+        Box(modifier = Modifier.width(148.dp), contentAlignment = Alignment.Center) {
             Text("工程名称", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
         // 各施工方案列
@@ -1430,6 +1806,7 @@ fun HistoryHeaderRow(
 
 /**
  * 历史工程数据行（无选择列）
+ * 注意：工程名称宽度148dp，前两列总宽184dp与合计/总计行对齐
  */
 @Composable
 fun HistoryProjectDataRow(
@@ -1453,10 +1830,10 @@ fun HistoryProjectDataRow(
         Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {
             Text("${index + 1}", fontSize = 11.sp, color = Color(0xFF333333))
         }
-        // 工程名称（可展开）
+        // 工程名称（可展开，宽度148dp与表头一致）
         Box(
             modifier = Modifier
-                .width(120.dp)
+                .width(148.dp)
                 .clickable { onToggleExpand() },
             contentAlignment = Alignment.CenterStart
         ) {
@@ -1468,7 +1845,7 @@ fun HistoryProjectDataRow(
                 )
                 Spacer(modifier = Modifier.width(2.dp))
                 Text(
-                    project.project_name,
+                    project.projectName,
                     fontSize = 11.sp,
                     color = Color(0xFF333333),
                     maxLines = 2,
@@ -1495,6 +1872,59 @@ fun HistoryProjectDataRow(
         // 总额
         Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
             Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+        }
+    }
+}
+
+/**
+ * 历史子项目明细行（无选择列）
+ * 前2列合并宽度 = 36 + 148 = 184dp，与 TotalRow/GrandTotalRow/PriceRow 对齐
+ */
+@Composable
+fun HistorySubprojectRow(
+    subproject: SubprojectDto,
+    constructionPlans: List<ConstructionPlanDto>,
+    getUnitName: (String?) -> String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFF8FAFC))
+            .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
+            .padding(vertical = 4.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 空序号
+        Box(modifier = Modifier.width(36.dp))
+        // 子项目名称（宽度148dp，与工程名称列对齐）
+        Box(modifier = Modifier.width(148.dp), contentAlignment = Alignment.CenterStart) {
+            Text(
+                "${subproject.spaceTypeName} - ${subproject.planName}",
+                fontSize = 10.sp,
+                color = Color(0xFF64748B),
+                modifier = Modifier.padding(start = 20.dp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        // 各施工方案列
+        constructionPlans.forEach { plan ->
+            Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
+                if (subproject.planId == plan.id) {
+                    Text(
+                        "${String.format("%.2f", subproject.userQuantity)}${getUnitName(plan.unit)}",
+                        fontSize = 10.sp,
+                        color = Color(0xFF64748B),
+                        textAlign = TextAlign.Center
+                    )
+                } else {
+                    Text("-", fontSize = 10.sp, color = Color(0xFFCCCCCC))
+                }
+            }
+        }
+        // 总额
+        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+            Text("-", fontSize = 10.sp, color = Color(0xFFCCCCCC))
         }
     }
 }

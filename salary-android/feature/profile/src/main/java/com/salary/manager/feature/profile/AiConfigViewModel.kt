@@ -8,6 +8,7 @@ import com.salary.core.network.api.AiConfigResponse
 import com.salary.core.network.api.AiConfigUpdateRequest
 import com.salary.core.network.api.AiProviderConfigDto
 import com.salary.core.network.api.AiProviderConfigUpdate
+import com.salary.core.network.api.AiTestRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,6 +34,12 @@ class AiConfigViewModel @Inject constructor(
 
     private val _isSaving = MutableStateFlow(false)
     val isSaving: StateFlow<Boolean> = _isSaving.asStateFlow()
+
+    private val _isTesting = MutableStateFlow(false)
+    val isTesting: StateFlow<Boolean> = _isTesting.asStateFlow()
+
+    private val _testResult = MutableStateFlow<String?>(null)
+    val testResult: StateFlow<String?> = _testResult.asStateFlow()
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
@@ -69,7 +76,7 @@ class AiConfigViewModel @Inject constructor(
                     }
                     _editedProviders.value = edited
                 } else {
-                    _error.value = response.msg.ifBlank { "加载AI配置失败" }
+                    _error.value = NetworkErrorHandler.translateServerError(response.msg, "加载AI配置失败")
                 }
             } catch (e: Exception) {
                 _error.value = NetworkErrorHandler.translate(e, "加载AI配置失败")
@@ -133,7 +140,7 @@ class AiConfigViewModel @Inject constructor(
                     // 重新加载配置
                     loadConfig()
                 } else {
-                    _error.value = response.msg.ifBlank { "保存AI配置失败" }
+                    _error.value = NetworkErrorHandler.translateServerError(response.msg, "保存AI配置失败")
                 }
             } catch (e: Exception) {
                 _error.value = NetworkErrorHandler.translate(e, "保存AI配置失败")
@@ -141,6 +148,32 @@ class AiConfigViewModel @Inject constructor(
                 _isSaving.value = false
             }
         }
+    }
+
+    /** API连接测试 */
+    fun testConnection() {
+        viewModelScope.launch {
+            _isTesting.value = true
+            _testResult.value = null
+            _error.value = null
+            try {
+                val response = aiApi.testConnection(AiTestRequest(_selectedProvider.value))
+                if (response.code == 200) {
+                    _testResult.value = response.data?.providerName + " 连接测试成功"
+                } else {
+                    _testResult.value = NetworkErrorHandler.translateServerError(response.msg, "连接测试失败")
+                }
+            } catch (e: Exception) {
+                _testResult.value = NetworkErrorHandler.translate(e, "连接测试失败")
+            } finally {
+                _isTesting.value = false
+            }
+        }
+    }
+
+    /** 清除测试结果 */
+    fun clearTestResult() {
+        _testResult.value = null
     }
 
     /** 清除保存成功标记 */

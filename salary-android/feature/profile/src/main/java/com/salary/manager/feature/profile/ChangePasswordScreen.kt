@@ -34,6 +34,8 @@ fun ChangePasswordScreen(
     var newPasswordVisible by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
+    // 弹窗状态：null=不显示，"success"=成功，"fail"=失败
+    var dialogState by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     Scaffold(
         topBar = {
@@ -149,9 +151,11 @@ fun ChangePasswordScreen(
                             onSubmit(oldPassword, newPassword) { error ->
                                 isLoading = false
                                 if (error != null) {
-                                    errorMessage = error
+                                    // 失败：弹窗显示错误信息
+                                    dialogState = "fail" to error
                                 } else {
-                                    onSuccess()
+                                    // 成功：弹窗提示，点击确认后返回
+                                    dialogState = "success" to "密码修改成功"
                                 }
                             }
                         }
@@ -168,6 +172,46 @@ fun ChangePasswordScreen(
                     Text("确认修改", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
             }
+        }
+
+        // 修改密码结果弹窗：成功/失败均通过弹窗提示，点击确认按钮关闭
+        dialogState?.let { (type, message) ->
+            AlertDialog(
+                onDismissRequest = {
+                    // 仅失败时允许点击外部关闭；成功时必须点击确认按钮跳转
+                    if (type == "fail") dialogState = null
+                },
+                title = {
+                    Text(
+                        text = "提示",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = AppColors.TextPrimary
+                    )
+                },
+                text = {
+                    Text(
+                        text = message,
+                        fontSize = 15.sp,
+                        color = AppColors.TextSecondary
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val isSuccess = type == "success"
+                            dialogState = null
+                            if (isSuccess) onSuccess()
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AppColors.Green400)
+                    ) {
+                        Text("确认", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    }
+                },
+                containerColor = Color.White,
+                shape = RoundedCornerShape(16.dp)
+            )
         }
     }
 }

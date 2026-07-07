@@ -53,7 +53,9 @@ class DashboardCache @Inject constructor(
         val widthCm: String = "",
         val salaryDistribution: String = "average",
         val selectedConstructorIds: List<Int> = emptyList(),
-        val remark: String = ""
+        val remark: String = "",
+        /** 按工日分配模式下的工日映射（key=userId, value=工日数字符串） */
+        val workerWorkdays: Map<Int, String> = emptyMap()
     )
 
     /**

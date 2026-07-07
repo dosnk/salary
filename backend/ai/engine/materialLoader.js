@@ -5,8 +5,8 @@
  * 引擎不硬编码任何材料数据
  */
 
-const pool = require('../../../config/database');
-const logger = require('../../../config/logger');
+const pool = require('../../config/database');
+const logger = require('../../config/logger');
 
 /**
  * 加载指定分类的活跃材料列表

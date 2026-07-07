@@ -1,6 +1,13 @@
-const { Pool } = require('pg');
+const pg = require('pg');
+const { Pool } = pg;
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+
+// 将NUMERIC(OID=1700)、DECIMAL类型统一转为JS数字，避免前端反序列化字符串数字的兼容问题
+// pg驱动默认将NUMERIC类型作为字符串返回，这里改为float，保持其他类型默认行为不变
+pg.types.setTypeParser(1700, function (val) {
+  return val === null ? null : parseFloat(val);
+});
 
 // 配置验证
 const requiredConfig = ['DB_PASSWORD'];

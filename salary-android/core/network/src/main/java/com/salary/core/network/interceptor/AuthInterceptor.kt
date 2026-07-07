@@ -2,6 +2,7 @@ package com.salary.core.network.interceptor
 
 import com.salary.core.data.local.ServerConfig
 import com.salary.core.data.local.TokenStorage
+import com.salary.core.data.local.UserStorage
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.int
@@ -22,10 +23,16 @@ import javax.inject.Inject
  * 2. 收到401响应时自动使用refreshToken刷新accessToken
  * 3. 刷新成功后重试原请求，失败则清除token并通知UI退出登录
  * 4. 支持并发安全：多个请求同时401时只刷新一次
+ *
+ * 性能优化：
+ * - 通过TokenStorage的同步内存缓存读取token，避免runBlocking阻塞OkHttp线程池
+ * - 仅在token刷新保存（写操作）和最终清除token时使用runBlocking
+ * - 写操作频率极低（仅401时触发），不影响正常请求性能
  */
 class AuthInterceptor @Inject constructor(
     private val tokenStorage: TokenStorage,
-    private val serverConfig: ServerConfig
+    private val serverConfig: ServerConfig,
+    private val userStorage: UserStorage
 ) : Interceptor {
 
     /** 用于刷新token的独立OkHttpClient（不含AuthInterceptor，避免循环依赖） */
@@ -50,7 +57,8 @@ class AuthInterceptor @Inject constructor(
             return chain.proceed(originalRequest)
         }
 
-        val token = runBlocking { tokenStorage.getAccessToken() }
+        // 同步读取token缓存，避免runBlocking阻塞OkHttp线程池
+        val token = tokenStorage.getAccessTokenSync()
 
         val request = if (token != null) {
             originalRequest.newBuilder()
@@ -82,8 +90,8 @@ class AuthInterceptor @Inject constructor(
         response: Response,
         usedToken: String
     ): Response {
-        // 检查token是否已被其他请求刷新过（并发场景）
-        val latestToken = runBlocking { tokenStorage.getAccessToken() }
+        // 同步读取最新token，避免runBlocking
+        val latestToken = tokenStorage.getAccessTokenSync()
         if (latestToken != null && latestToken != usedToken) {
             // token已被刷新，直接用新token重试
             response.close()
@@ -94,8 +102,8 @@ class AuthInterceptor @Inject constructor(
         }
 
         synchronized(refreshLock) {
-            // 再次检查（双重检查锁）
-            val currentToken = runBlocking { tokenStorage.getAccessToken() }
+            // 再次检查（双重检查锁），同步读取避免runBlocking
+            val currentToken = tokenStorage.getAccessTokenSync()
             if (currentToken != null && currentToken != usedToken) {
                 response.close()
                 val newRequest = originalRequest.newBuilder()
@@ -110,6 +118,8 @@ class AuthInterceptor @Inject constructor(
                     val newTokens = performTokenRefresh()
                     if (newTokens != null) {
                         // 刷新成功，保存新token
+                        // 写操作必须用runBlocking，因为OkHttp拦截器不支持挂起函数
+                        // 此处频率极低（仅401时触发），不影响正常请求性能
                         runBlocking {
                             tokenStorage.saveTokens(newTokens.first, newTokens.second)
                         }
@@ -131,7 +141,8 @@ class AuthInterceptor @Inject constructor(
             while (isRefreshing && System.currentTimeMillis() - startTime < 5000) {
                 Thread.sleep(100)
             }
-            val newToken = runBlocking { tokenStorage.getAccessToken() }
+            // 同步读取最新token
+            val newToken = tokenStorage.getAccessTokenSync()
             if (newToken != null && newToken != usedToken) {
                 response.close()
                 val newRequest = originalRequest.newBuilder()
@@ -141,10 +152,12 @@ class AuthInterceptor @Inject constructor(
             }
         }
 
-        // 刷新失败，清除token并通知退出登录
+        // 刷新失败，清除token和用户信息并通知退出登录
+        // 写操作必须用runBlocking
         runBlocking {
             if (tokenStorage.isLoggedIn()) {
                 tokenStorage.clearTokens()
+                userStorage.clearUserInfo()
             }
         }
         return response
@@ -157,11 +170,9 @@ class AuthInterceptor @Inject constructor(
      */
     private fun performTokenRefresh(): Pair<String, String>? {
         return try {
-            val refreshToken = runBlocking { tokenStorage.getRefreshToken() }
-            if (refreshToken == null) return null
-
-            val baseUrl = runBlocking { serverConfig.getServerUrl() }
-            if (baseUrl.isEmpty()) return null
+            // 同步读取refreshToken和baseUrl，避免runBlocking
+            val refreshToken = tokenStorage.getRefreshTokenSync() ?: return null
+            val baseUrl = serverConfig.getServerUrlSync().ifEmpty { return null }
 
             // 构建请求体JSON
             val requestBody = """{"refreshToken":"$refreshToken"}"""

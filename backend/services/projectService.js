@@ -13,6 +13,8 @@ const projectRepo = require('../repositories/projectRepo');
 const calculation = require('./calculation');
 const cache = require('./cacheService');
 const logger = require('../config/logger');
+// V2.0: 权限辅助判断函数（用于 uploadFile / deleteFile 业务校验）
+const { isAdmin, isConstructor } = require('../middleware/rbac');
 
 /**
  * 业务异常类
@@ -104,6 +106,7 @@ module.exports = {
     salaryDistribution,
     constructors,
     remark,
+    workerWorkDays,
     userId,
     userRole,
   }) {
@@ -163,7 +166,13 @@ module.exports = {
     const widthToUse = unit === 'length' ? 100 : width;
     const { quantity, amount } = calculation.calculateSubprojectAmount(unit, length, widthToUse, unitPrice);
 
-    // 7. 在事务中执行创建操作（包含金额计算）
+    // 预先计算历史记录信息（将在事务内写入，确保与工程/子项目数据一致）
+    const historyAction = isNewProject ? 'CREATE_PROJECT' : 'ADD_SUBPROJECT';
+    const historyDesc = isNewProject
+      ? `创建工程: ${name}`
+      : `添加子项目: ${spaceType} - ${constructionScheme}`;
+
+    // 7. 在事务中执行创建操作（包含金额计算、工程总额更新、历史记录写入）
     const result = await projectRepo.createProjectWithSubproject({
       // 工程信息（新工程时使用）
       name,
@@ -180,21 +189,24 @@ module.exports = {
       quantity,
       amount,
       constructors,
+      // 按工日分配模式下的工日数据（新工程时写入project_workers.workdays）
+      workerWorkDays,
+      // 历史记录信息（事务内写入）
+      historyAction,
+      historyDesc,
     });
 
     projectId = result.projectId;
 
-    // 8. 更新工程总额
-    await recalculateProjectTotal(projectId);
+    // 8. 新工程且按工日分配模式：更新施工人员工日（createProjectWithSubproject已处理新工程的workdays，这里处理追加子项目场景）
+    // 注：新工程的workdays在事务内已写入，追加子项目时workdays保持不变（沿用首次设置）
+    if (!isNewProject && workerWorkDays && workerWorkDays.length > 0) {
+      for (const item of workerWorkDays) {
+        await projectRepo.updateWorkerWorkdays(projectId, item.userId, item.workdays);
+      }
+    }
 
-    // 9. 添加历史记录
-    const historyAction = isNewProject ? 'CREATE_PROJECT' : 'ADD_SUBPROJECT';
-    const historyDesc = isNewProject
-      ? `创建工程: ${name}`
-      : `添加子项目: ${spaceType} - ${constructionScheme}`;
-    await projectRepo.addProjectHistory(projectId, historyAction, historyDesc, userId);
-
-    // 10. 清除缓存
+    // 9. 清除缓存（工程总额更新与历史记录已在事务内完成）
     await invalidateCache(userId);
 
     logger.info('创建工程成功', {
@@ -294,8 +306,20 @@ module.exports = {
     // 通过 repo 查询工程列表
     const { list, total } = await projectRepo.findProjects(queryParams);
 
+    // repo 层已移除与 workers 完全相同的 constructors 子查询，此处补齐字段
+    // 将 workers 同一引用作为 constructors 返回，保持前端响应结构不变
+    // 同时显式将 total_amount 转为 float，避免 pg 类型解析器未生效时返回字符串
+    // 导致前端 ProjectDto.totalAmount: Double 被 coerce 为 0.0
+    const listWithConstructors = list.map((project) => ({
+      ...project,
+      total_amount: project.total_amount !== null && project.total_amount !== undefined
+        ? parseFloat(project.total_amount)
+        : 0,
+      constructors: project.workers,
+    }));
+
     const result = {
-      list,
+      list: listWithConstructors,
       total,
       page: pageNum,
       size: sizeNum,
@@ -338,19 +362,44 @@ module.exports = {
     const files = await projectRepo.findProjectFiles(projectId);
 
     // 转换子项目字段名以匹配前端期望
+    // 关键修复：显式将 NUMERIC 字段转为 float，避免 pg 类型解析器未生效时返回字符串
+    // 导致前端 kotlinx.serialization + coerceInputValues=true 静默将字符串 coerce 为 null
+    // 表现为子项目金额显示为 ¥0.00
     const subProjects = subprojects.map((sp) => ({
       ...sp,
+      // NUMERIC 字段显式 parseFloat，确保返回 JSON number
+      length: sp.length !== null ? parseFloat(sp.length) : null,
+      width: sp.width !== null ? parseFloat(sp.width) : null,
+      quantity: sp.quantity !== null ? parseFloat(sp.quantity) : null,
+      amount: sp.amount !== null ? parseFloat(sp.amount) : null,
+      price: sp.price !== null ? parseFloat(sp.price) : null,
       space_type: sp.space_type_name,
       construction_scheme: sp.construction_plan_name,
-      unit_price: sp.price,
+      unit_price: sp.price !== null ? parseFloat(sp.price) : null,
       unit_type: sp.unit,
     }));
 
-    const result = {
+    // 同样修复 workers 中的 workdays 字段（NUMERIC(6,2)）
+    // 如果 workdays 为字符串，前端 WorkerDto.workdays: Double? 会被 coerce 为 null
+    // 导致按工日分配时工费计算为 0
+    const normalizedWorkers = workers.map((w) => ({
+      ...w,
+      workdays: w.workdays !== null && w.workdays !== undefined ? parseFloat(w.workdays) : null,
+    }));
+
+    // 修复 project 的 total_amount 字段（NUMERIC(14,4)）
+    const normalizedProject = {
       ...project,
+      total_amount: project.total_amount !== null && project.total_amount !== undefined
+        ? parseFloat(project.total_amount)
+        : 0,
+    };
+
+    const result = {
+      ...normalizedProject,
       sub_projects: subProjects,
-      workers,
-      constructors: workers,
+      workers: normalizedWorkers,
+      constructors: normalizedWorkers,
       files,
     };
 
@@ -394,15 +443,21 @@ module.exports = {
     }
 
     // 构建更新字段
+    // 注意：键名必须使用 camelCase（如 salaryDistribution），
+    // 因为 projectRepo.update 的 fieldToColumn 映射表使用 camelCase 键查找数据库列名
     const updateFields = {};
     if (updates.name !== undefined) updateFields.name = updates.name;
     if (updates.description !== undefined) updateFields.description = updates.description;
     if (updates.status !== undefined) updateFields.status = updates.status;
     if (updates.salaryDistribution !== undefined) {
-      updateFields.salary_distribution = updates.salaryDistribution;
+      updateFields.salaryDistribution = updates.salaryDistribution;
     }
     if (updates.totalWorkDays !== undefined) {
-      updateFields.total_work_days = updates.totalWorkDays;
+      updateFields.totalWorkDays = updates.totalWorkDays;
+    }
+    // 工程备注字段后端使用 remark（数据库列名也是 remark，直接透传）
+    if (updates.remark !== undefined) {
+      updateFields.remark = updates.remark;
     }
 
     // 检查是否有可更新的内容
@@ -419,13 +474,28 @@ module.exports = {
       await projectRepo.updateProject(projectId, updateFields);
     }
 
-    // 更新施工人员
+    // 更新施工人员（合并工日数据，避免 replaceWorkers 替换后工日丢失）
+    // 关键修复：原实现先调用 updateProjectWorkers（删除并重新插入工人，丢失 workdays），
+    //          再调用 updateWorkerWorkDays 更新工日。但如果只传 constructors 不传 workerWorkDays，
+    //          工日数据会丢失。现在合并 constructors 和 workerWorkDays，一次性写入。
     if (hasConstructorsToUpdate) {
-      await projectRepo.updateProjectWorkers(projectId, updates.constructors);
-    }
-
-    // 更新施工人员工作天数
-    if (hasWorkDaysToUpdate) {
+      // 构建工日映射（按工日分配模式下使用）
+      const workdaysMap = {};
+      if (hasWorkDaysToUpdate) {
+        for (const item of updates.workerWorkDays) {
+          workdaysMap[item.userId] = item.workdays;
+        }
+      }
+      // 合并 constructors 和 workdays，确保替换时保留工日数据
+      // 未在 workdaysMap 中的施工人员，workdays 为 null（使用数据库默认值）
+      const constructorsWithWorkdays = updates.constructors.map(c => {
+        const userId = c.userId || c;
+        const workdays = workdaysMap[userId];
+        return workdays !== undefined ? { userId, workdays } : { userId };
+      });
+      await projectRepo.updateProjectWorkers(projectId, constructorsWithWorkdays);
+    } else if (hasWorkDaysToUpdate) {
+      // 只更新工日（未更新施工人员列表），单独更新工日
       await projectRepo.updateWorkerWorkDays(projectId, updates.workerWorkDays);
     }
 
@@ -547,14 +617,14 @@ module.exports = {
       updateFields.construction_plan_id = constructionPlan.id;
     }
 
-    // 长度转换（厘米转米）
+    // 长度（统一存储厘米，与创建工程时保持一致，不再转换为米）
     if (updates.length !== undefined) {
-      updateFields.length = updates.length / 100;
+      updateFields.length = updates.length;
     }
 
-    // 宽度转换（厘米转米）
+    // 宽度（统一存储厘米，与创建工程时保持一致，不再转换为米）
     if (updates.width !== undefined) {
-      updateFields.width = updates.width / 100;
+      updateFields.width = updates.width;
     }
 
     // 备注
@@ -574,16 +644,17 @@ module.exports = {
     // 获取更新后的子项目完整信息
     const updatedSubproject = await projectRepo.findSubprojectDetailById(subprojectId);
     if (updatedSubproject) {
-      const lengthM = parseFloat(updatedSubproject.length) || 0;
-      const widthM = parseFloat(updatedSubproject.width) || 0;
+      // 数据库存储单位为厘米，calculation 服务接收厘米，无需单位转换
+      const lengthCm = parseFloat(updatedSubproject.length) || 0;
+      const widthCm = parseFloat(updatedSubproject.width) || 0;
       const unit = updatedSubproject.unit || 'area';
       const unitPrice = parseFloat(updatedSubproject.price) || 0;
 
       // 调用 calculation 服务计算新的数量和金额
       const { quantity, amount } = calculation.calculateSubprojectAmount(
         unit,
-        lengthM * 100, // calculation 接收厘米
-        widthM * 100,
+        lengthCm,
+        widthCm,
         unitPrice
       );
 
@@ -592,8 +663,8 @@ module.exports = {
 
       logger.info('重新计算子项目金额', {
         subprojectId,
-        lengthM,
-        widthM,
+        lengthCm,
+        widthCm,
         unit,
         unitPrice,
         quantity,
@@ -737,5 +808,188 @@ module.exports = {
 
     const workers = await projectRepo.findProjectWorkers(projectId);
     return workers;
+  },
+
+  /**
+   * 更新子项目状态
+   *
+   * 业务规则：
+   * - 子项目必须存在
+   * - 只有子项目创建者可以修改状态
+   * - 状态变更与历史记录在同一事务内完成（由 repo 保证）
+   *
+   * @param {number} projectId - 工程ID（用于历史记录）
+   * @param {number} subprojectId - 子项目ID
+   * @param {string} status - 新状态（preparing/constructing/completed/canceled）
+   * @param {number} userId - 当前用户ID
+   * @returns {Promise<{id: number}>} 返回子项目ID
+   */
+  async updateSubprojectStatus(projectId, subprojectId, status, userId) {
+    // 调用 repo 在事务中完成「存在性校验 + 权限校验 + 状态更新 + 历史记录」
+    const result = await projectRepo.updateSubprojectStatus(subprojectId, status, userId, projectId);
+
+    // 子项目不存在
+    if (result.notFound) {
+      throw new BusinessError(3003, '子项目不存在');
+    }
+
+    // 权限不足
+    if (result.forbidden) {
+      throw new BusinessError(4002, '只有子项目创建者可以修改子项目状态');
+    }
+
+    // 清除缓存
+    await invalidateCache(userId);
+
+    logger.info('更新子项目状态成功', { projectId, subprojectId, status, userId });
+
+    return { id: subprojectId };
+  },
+
+  /**
+   * 上传工程附件
+   *
+   * 业务规则：
+   * - 工程必须存在
+   * - 工程创建者、施工员或管理员可上传
+   * - 支持两种方式：
+   *   1) JSON 方式：前端已上传文件，仅保存记录（fileData.path 存在）
+   *   2) multipart/form-data 方式：通过 ctx.request.files 接收
+   *
+   * @param {number} projectId - 工程ID
+   * @param {object} fileData - 文件数据（JSON 方式为请求体；multipart 方式为 { files } 对象）
+   * @param {number} userId - 当前用户ID
+   * @param {object} user - 当前用户对象（含 role，用于权限判断）
+   * @returns {Promise<Array>} 上传成功的文件列表
+   */
+  async uploadFile(projectId, fileData, userId, user) {
+    // 1. 检查工程是否存在
+    const project = await projectRepo.findProjectById(projectId);
+    if (!project) {
+      throw new BusinessError(3001, '工程不存在');
+    }
+
+    // 2. 权限校验：工程创建者、施工员或管理员可上传
+    if (userId !== project.created_by && !isAdmin(user) && !isConstructor(user)) {
+      throw new BusinessError(4002, '无操作权限');
+    }
+
+    const uploadedFiles = [];
+
+    // 方式1：接收 JSON 数据（前端已上传文件，只需保存记录）
+    if (fileData && fileData.path) {
+      const { filename, originalName, path: filePath, size, type } = fileData;
+
+      await projectRepo.addFileRecord(projectId, {
+        filename,
+        originalName: originalName || filename,
+        path: filePath,
+        size: size || 0,
+        type: type || '',
+      }, userId);
+
+      uploadedFiles.push({
+        filename: originalName || filename,
+        url: filePath,
+        size: size,
+        type: type,
+      });
+    }
+    // 方式2：接收 multipart/form-data 文件（原有方式）
+    else {
+      const files = fileData && fileData.files;
+      if (!files) {
+        throw new BusinessError(1001, '参数错误');
+      }
+
+      const fileArray = Array.isArray(files) ? files : [files];
+
+      for (const file of fileArray) {
+        const fileUrl = `/uploads/${file.newFilename}`;
+
+        await projectRepo.addFileRecord(projectId, {
+          filename: file.originalFilename,
+          originalName: file.originalFilename,
+          path: fileUrl,
+          size: file.size || 0,
+          type: file.mimetype || '',
+        }, userId);
+
+        uploadedFiles.push({
+          filename: file.originalFilename,
+          url: fileUrl,
+        });
+      }
+    }
+
+    return uploadedFiles;
+  },
+
+  /**
+   * 删除工程附件
+   *
+   * 业务规则：
+   * - 工程必须存在
+   * - 仅工程创建者、施工人员或管理员可删除
+   * - 删除数据库记录
+   * - 尝试删除物理文件（失败不影响接口结果，仅记录日志）
+   *
+   * 物理文件路径解析：files.path 存储形如 /upload/YYYYMM/工程名/uuid.ext 的 URL 路径
+   * 需要移除 /upload 前缀后与后端 upload 目录拼接得到绝对路径
+   *
+   * @param {number} projectId - 工程ID
+   * @param {number} fileId - 文件ID
+   * @param {number} userId - 当前用户ID
+   * @param {object} user - 当前用户对象（含 role，用于权限判断）
+   * @returns {Promise<{fileId: number}>} 返回被删除的文件ID
+   */
+  async deleteFile(projectId, fileId, userId, user) {
+    // 1. 检查工程是否存在
+    const project = await projectRepo.findProjectById(projectId);
+    if (!project) {
+      throw new BusinessError(3001, '工程不存在');
+    }
+
+    // 2. 权限校验：仅工程创建者、施工人员或管理员可删除
+    if (userId !== project.created_by && !isAdmin(user) && !isConstructor(user)) {
+      throw new BusinessError(4002, '无操作权限');
+    }
+
+    // 3. 查询文件记录，确认归属并获取物理路径
+    const fileRecord = await projectRepo.getFileRecordById(fileId, projectId);
+    if (!fileRecord) {
+      throw new BusinessError(3002, '附件不存在');
+    }
+
+    // 4. 删除数据库记录
+    await projectRepo.deleteFileRecord(fileId);
+
+    // 5. 尝试删除物理文件（失败不影响接口结果，仅记录日志）
+    // 物理文件路径解析：files.path 存储的是 /upload/YYYYMM/工程名/uuid.ext 形式的URL路径
+    // 需要移除 /upload 前缀后，与后端 upload 目录拼接得到绝对路径
+    try {
+      const filePath = fileRecord.path || '';
+      if (filePath.startsWith('/upload/')) {
+        const fs = require('fs');
+        const path = require('path');
+        // 移除 /upload 前缀，保留 YYYYMM/工程名/uuid.ext 相对路径
+        const relativePath = filePath.substring('/upload'.length);
+        // 与 index.js 中静态文件服务保持一致：path.join(__dirname, 'upload', decodedPath)
+        // 注意：service 层 __dirname 为 backend/services，需回退一级到 backend 目录
+        const absolutePath = path.join(__dirname, '..', 'upload', relativePath);
+        if (fs.existsSync(absolutePath)) {
+          fs.unlinkSync(absolutePath);
+          logger.info(`删除附件物理文件成功: ${absolutePath}`);
+        } else {
+          logger.warn(`附件物理文件不存在（可能已被删除）: ${absolutePath}`);
+        }
+      }
+    } catch (fileErr) {
+      logger.warn(`删除附件物理文件失败（不影响数据库记录）: ${fileErr.message}`);
+    }
+
+    logger.info('删除附件成功', { projectId, fileId, userId });
+
+    return { fileId: parseInt(fileId) };
   },
 };

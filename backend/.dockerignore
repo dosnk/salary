@@ -1,6 +1,8 @@
 node_modules
 logs
 temp
+upload
+backups
 .env
 .env.test
 .env.docker

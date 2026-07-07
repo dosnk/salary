@@ -7,60 +7,87 @@
  * - deepseek: DeepSeek
  * - glm: 智谱ChatGLM
  * - doubao: 豆包 (字节跳动)
+ *
+ * 重要：所有配置项通过 getter 动态读取 process.env，
+ * 确保运行时更新 .env / process.env 后无需重启进程或清除 require 缓存即可立即生效。
+ * （修复：原实现将 process.env 固化到对象属性，导致保存配置后连接测试仍使用旧配置）
  */
 
 require('dotenv').config();
 
-const aiConfig = {
-  // 默认提供商（从环境变量读取）
-  defaultProvider: process.env.AI_PROVIDER || 'deepseek',
+// 提供商基础配置（不随环境变量变化的静态部分）
+const providerStaticConfig = {
+  tongyi: {
+    name: '通义千问',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    maxTokens: 4096,
+    temperature: 0.7,
+  },
+  wenxin: {
+    name: '文心一言',
+    baseUrl: 'https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop',
+    maxTokens: 4096,
+    temperature: 0.7,
+  },
+  deepseek: {
+    name: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    maxTokens: 4096,
+    temperature: 0.7,
+  },
+  glm: {
+    name: '智谱ChatGLM',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    maxTokens: 4096,
+    temperature: 0.7,
+  },
+  doubao: {
+    name: '豆包',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    maxTokens: 4096,
+    temperature: 0.7,
+  },
+};
 
-  // 各提供商配置
-  providers: {
-    tongyi: {
-      name: '通义千问',
-      apiKey: process.env.TONGYI_API_KEY || '',
-      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-      model: process.env.TONGYI_MODEL || 'qwen-plus',
-      maxTokens: 4096,
-      temperature: 0.7,
-    },
-    wenxin: {
-      name: '文心一言',
-      apiKey: process.env.WENXIN_API_KEY || '',
-      secretKey: process.env.WENXIN_SECRET_KEY || '',
-      baseUrl: 'https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop',
-      model: process.env.WENXIN_MODEL || 'ernie-4.0-8k',
-      maxTokens: 4096,
-      temperature: 0.7,
-    },
-    deepseek: {
-      name: 'DeepSeek',
-      apiKey: process.env.DEEPSEEK_API_KEY || '',
-      baseUrl: 'https://api.deepseek.com/v1',
-      model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
-      maxTokens: 4096,
-      temperature: 0.7,
-    },
-    glm: {
-      name: '智谱ChatGLM',
-      apiKey: process.env.GLM_API_KEY || '',
-      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-      model: process.env.GLM_MODEL || 'glm-4',
-      maxTokens: 4096,
-      temperature: 0.7,
-    },
-    doubao: {
-      name: '豆包',
-      apiKey: process.env.DOUBAO_API_KEY || '',
-      baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
-      model: process.env.DOUBAO_MODEL || 'doubao-pro-4k',
-      maxTokens: 4096,
-      temperature: 0.7,
-    },
+// 各提供商环境变量映射
+const providerEnvKeys = {
+  tongyi: { apiKey: 'TONGYI_API_KEY', model: 'TONGYI_MODEL', defaultModel: 'qwen-plus' },
+  wenxin: { apiKey: 'WENXIN_API_KEY', secretKey: 'WENXIN_SECRET_KEY', model: 'WENXIN_MODEL', defaultModel: 'ernie-4.0-8k' },
+  deepseek: { apiKey: 'DEEPSEEK_API_KEY', model: 'DEEPSEEK_MODEL', defaultModel: 'deepseek-chat' },
+  glm: { apiKey: 'GLM_API_KEY', model: 'GLM_MODEL', defaultModel: 'glm-4' },
+  doubao: { apiKey: 'DOUBAO_API_KEY', model: 'DOUBAO_MODEL', defaultModel: 'doubao-pro-4k' },
+};
+
+/**
+ * aiConfig - 使用 getter 动态读取 process.env
+ * 每次访问属性都会读取最新的 process.env 值，
+ * 保证配置更新（updateConfig 写入 process.env）后立即生效。
+ */
+const aiConfig = {
+  // 默认提供商（动态读取）
+  get defaultProvider() {
+    return process.env.AI_PROVIDER || 'deepseek';
   },
 
-  // 对话配置
+  // 各提供商配置（动态读取环境变量，合并静态配置）
+  get providers() {
+    const result = {};
+    for (const [key, staticCfg] of Object.entries(providerStaticConfig)) {
+      const envKeys = providerEnvKeys[key];
+      result[key] = {
+        ...staticCfg,
+        apiKey: process.env[envKeys.apiKey] || '',
+        model: process.env[envKeys.model] || envKeys.defaultModel,
+      };
+      // 文心一言额外有 secretKey
+      if (envKeys.secretKey) {
+        result[key].secretKey = process.env[envKeys.secretKey] || '';
+      }
+    }
+    return result;
+  },
+
+  // 对话配置（静态）
   chat: {
     maxHistoryMessages: 20,    // 最大历史消息数
     systemPrompt: `你是"三人行吊顶管理系统"的AI助手。你的职责是：
@@ -76,7 +103,7 @@ const aiConfig = {
 - 回答要简洁专业，使用中文`,
   },
 
-  // 知识库配置
+  // 知识库配置（静态）
   knowledge: {
     chunkSize: 500,           // 文档分块大小（字符）
     chunkOverlap: 50,         // 分块重叠大小

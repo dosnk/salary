@@ -1,17 +1,12 @@
 package com.salary.manager.navigation
 
-import androidx.compose.foundation.layout.Arrangement
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.background
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.spacedBy
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Home
@@ -41,8 +36,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.salary.core.design.component.ApiLatencyChip
 import com.salary.core.design.theme.AppColors
+import com.salary.core.design.component.SwipeBackLayout
+import com.salary.core.network.interceptor.HealthMonitor
 import com.salary.core.network.interceptor.LatencyTracker
 import com.salary.manager.feature.ai.chat.AiChatScreen
 import com.salary.manager.feature.ai.knowledge.KnowledgeScreen
@@ -82,11 +78,16 @@ fun AppNavHost() {
     val appViewModel: AppViewModel = hiltViewModel()
     val serverConfig = appViewModel.serverConfig
     val tokenStorage = appViewModel.tokenStorage
+    val userStorage = appViewModel.userStorage
     val latencyTracker: LatencyTracker = appViewModel.latencyTracker
+    val healthMonitor: HealthMonitor = appViewModel.healthMonitor
     val scope = rememberCoroutineScope()
 
     var isServerConfigured by rememberSaveable { mutableStateOf(false) }
     var isChecking by rememberSaveable { mutableStateOf(true) }
+
+    // 登录成功欢迎提示：登录成功后设为true，传给MainScaffold触发Snackbar
+    var showWelcomeMessage by remember { mutableStateOf(false) }
 
     // 监听后端离线状态
     val isOnline by latencyTracker.isOnline.collectAsState()
@@ -94,16 +95,27 @@ fun AppNavHost() {
     // 监听401认证过期（AuthInterceptor检测到401后自动清除token并更新此状态）
     val isAuthenticated by tokenStorage.isAuthenticated.collectAsState()
 
+    // 监听用户昵称状态（响应式，登录/登出后自动更新）
+    val userNickname by userStorage.nicknameFlow.collectAsState()
+
     LaunchedEffect(Unit) {
+        // 初始化ServerConfig缓存（供Retrofit构建同步读取）
+        serverConfig.initConfig()
         isServerConfigured = serverConfig.isConfigured()
+        // 初始化TokenStorage缓存（供AuthInterceptor同步读取）
         tokenStorage.initAuthState()
+        userStorage.initUserState()
         isChecking = false
+        // 启动后端健康监控（定时主动探测，不依赖业务请求）
+        // 登录页等无业务请求场景也能实时显示后端在线状态
+        healthMonitor.start()
     }
 
     // 后端离线时自动退出登录
     LaunchedEffect(isOnline) {
         if (!isOnline && isAuthenticated) {
             tokenStorage.clearTokens()
+            userStorage.clearUserInfo()
         }
     }
 
@@ -114,9 +126,8 @@ fun AppNavHost() {
         }
     } else if (!isServerConfigured) {
         // 首次启动，配置服务器地址
-        ServerSetupScreen(serverConfig = serverConfig) {
-            isServerConfigured = true
-        }
+        // 注意：配置保存后，用户需重启应用以应用新地址（Retrofit单例需要重建）
+        ServerSetupScreen(onConfigured = { isServerConfigured = true })
     } else if (!isAuthenticated) {
         // 未登录或token已失效，显示登录页（含API状态栏和离线信息）
         LoginScreen(
@@ -124,14 +135,19 @@ fun AppNavHost() {
                 // 登录成功后重置追踪器状态
                 // token由LoginViewModel.saveTokens()自动更新isAuthenticated
                 latencyTracker.reset()
+                // 标记需要显示欢迎提示
+                showWelcomeMessage = true
             },
             latencyTracker = latencyTracker
         )
     } else {
         // 已登录，进入主页
         MainScaffold(
-            onLogout = { scope.launch { tokenStorage.clearTokens() } },
-            latencyTracker = latencyTracker
+            onLogout = { scope.launch { tokenStorage.clearTokens(); userStorage.clearUserInfo() } },
+            latencyTracker = latencyTracker,
+            userNickname = userNickname,
+            showWelcomeMessage = showWelcomeMessage,
+            onWelcomeShown = { showWelcomeMessage = false }
         )
     }
 }
@@ -144,7 +160,10 @@ fun AppNavHost() {
 @Composable
 fun MainScaffold(
     onLogout: () -> Unit = {},
-    latencyTracker: LatencyTracker
+    latencyTracker: LatencyTracker,
+    userNickname: String = "",
+    showWelcomeMessage: Boolean = false,
+    onWelcomeShown: () -> Unit = {}
 ) {
     val tabs = listOf(
         TabItem("主页", Icons.Default.Home, Route.Dashboard.route),
@@ -155,6 +174,24 @@ fun MainScaffold(
     )
 
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+
+    // 欢迎提示Snackbar
+    val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
+    val welcomeScope = rememberCoroutineScope()
+
+    // 登录成功后显示欢迎提示
+    LaunchedEffect(showWelcomeMessage) {
+        if (showWelcomeMessage) {
+            val displayName = userNickname.ifBlank { "用户" }
+            welcomeScope.launch {
+                snackbarHostState.showSnackbar(
+                    message = "欢迎回来，$displayName！",
+                    withDismissAction = true
+                )
+            }
+            onWelcomeShown()
+        }
+    }
 
     // 主页子页面导航: 0=工作台, 1=工程详情
     var homeSubPage by rememberSaveable { mutableIntStateOf(0) }
@@ -170,8 +207,18 @@ fun MainScaffold(
     // 个人中心子页面导航: 0=主页, 1=修改密码, 2=字典管理, 3=用户管理, 4=关于, 5=消息, 6=AI配置
     var profileSubPage by rememberSaveable { mutableIntStateOf(0) }
 
-    // 是否显示底部导航（子页面时隐藏）
-    val showBottomBar = homeSubPage == 0 &&
+    // 数据刷新触发器：切换到工程管理/统计Tab时递增，触发对应页面静默刷新
+    // 解决：主页新建工程后切换Tab数据不更新的问题
+    var projectListRefreshTrigger by rememberSaveable { mutableIntStateOf(0) }
+    var statisticsRefreshTrigger by rememberSaveable { mutableIntStateOf(0) }
+
+    // 检测键盘是否弹出（IME可见时隐藏底部导航栏，避免输入栏与键盘间产生间距）
+    val density = LocalDensity.current
+    val isImeVisible = WindowInsets.ime.getBottom(density) > 0
+
+    // 是否显示底部导航（子页面时隐藏；键盘弹出时也隐藏，避免底部导航栏占据空间导致输入栏与键盘间产生间距）
+    val showBottomBar = !isImeVisible &&
+            homeSubPage == 0 &&
             projectSubPage == 0 &&
             aiSubPage == 0 &&
             profileSubPage == 0
@@ -185,11 +232,6 @@ fun MainScaffold(
     val messages by profileApiViewModel.messages.collectAsState()
     val unreadCount by profileApiViewModel.unreadCount.collectAsState()
 
-    // API状态
-    val isOnline by latencyTracker.isOnline.collectAsState()
-    val latencyMs by latencyTracker.latencyMs.collectAsState()
-    val lastError by latencyTracker.lastError.collectAsState()
-
     // 进入子页面时加载对应数据
     LaunchedEffect(profileSubPage) {
         when (profileSubPage) {
@@ -199,9 +241,41 @@ fun MainScaffold(
         }
     }
 
+    // Tab切换时触发对应页面数据刷新
+    // 切换到工程管理/统计Tab时递增刷新触发器，触发静默刷新
+    // 切换到个人中心Tab时加载未读消息数
+    LaunchedEffect(selectedTab) {
+        when (selectedTab) {
+            1 -> projectListRefreshTrigger++  // 工程管理：静默刷新工程列表
+            2 -> statisticsRefreshTrigger++   // 统计：静默刷新统计数据
+            4 -> profileApiViewModel.loadUnreadCount()
+        }
+    }
+
     Scaffold(
+        // 不让Scaffold消耗IME（键盘）insets，避免键盘高度通过padding传递给内容
+        // 键盘适配由各页面内部自行处理（如AI对话页面的InputBar使用windowInsetsPadding）
+        // 否则键盘高度会被应用两次：Scaffold的padding + 页面内部的imePadding/windowInsetsPadding
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
+        snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
         bottomBar = {
-            if (showBottomBar) {
+            // 底部导航栏：键盘收起时拉幕式展开，键盘弹出时拉幕式收起
+            // 使用 expandVertically + fadeIn 实现优雅的拉幕过渡效果
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showBottomBar,
+                enter = androidx.compose.animation.expandVertically(
+                    expandFrom = androidx.compose.ui.Alignment.Bottom,
+                    animationSpec = androidx.compose.animation.core.tween(durationMillis = 250)
+                ) + androidx.compose.animation.fadeIn(
+                    animationSpec = androidx.compose.animation.core.tween(durationMillis = 250)
+                ),
+                exit = androidx.compose.animation.shrinkVertically(
+                    shrinkTowards = androidx.compose.ui.Alignment.Bottom,
+                    animationSpec = androidx.compose.animation.core.tween(durationMillis = 200)
+                ) + androidx.compose.animation.fadeOut(
+                    animationSpec = androidx.compose.animation.core.tween(durationMillis = 200)
+                )
+            ) {
                 NavigationBar(
                     containerColor = Color.White
                 ) {
@@ -232,26 +306,36 @@ fun MainScaffold(
         }
     ) { padding ->
         // 只应用底部导航栏的padding，顶部由各页面自行处理（GreenTopNavBar含statusBarsPadding）
-        Column(modifier = Modifier
+        Box(modifier = Modifier
             .fillMaxSize()
             .padding(bottom = padding.calculateBottomPadding())) {
-
-            // 页面内容区域（占据上方空间，可滚动）
-            Box(modifier = Modifier.weight(1f)) {
-                when (selectedTab) {
-                    0 -> {
+            when (selectedTab) {
+                0 -> {
                     // 主页/工作台 - 支持子页面导航
                     when (homeSubPage) {
                         0 -> DashboardScreen(
                             onNavigateToProject = { projectId ->
                                 homeProjectId = projectId
                                 homeSubPage = 1
+                            },
+                            latencyTracker = latencyTracker,
+                            userNickname = userNickname
+                        )
+                        1 -> {
+                            // 工程详情页：滑动返回 + 系统返回拦截，避免误退出应用
+                            BackHandler { homeSubPage = 0 }
+                            SwipeBackLayout(onBack = { homeSubPage = 0 }) {
+                                ProjectDetailScreen(
+                                    projectId = homeProjectId,
+                                    onBack = { homeSubPage = 0 },
+                                    onDataChanged = {
+                                        // 工程数据变更时，递增工程管理和统计的刷新触发器
+                                        projectListRefreshTrigger++
+                                        statisticsRefreshTrigger++
+                                    }
+                                )
                             }
-                        )
-                        1 -> ProjectDetailScreen(
-                            projectId = homeProjectId,
-                            onBack = { homeSubPage = 0 }
-                        )
+                        }
                     }
                 }
                 1 -> {
@@ -261,39 +345,71 @@ fun MainScaffold(
                             onNavigateToProject = { projectId ->
                                 projectProjectId = projectId
                                 projectSubPage = 1
+                            },
+                            userNickname = userNickname,
+                            refreshTrigger = projectListRefreshTrigger
+                        )
+                        1 -> {
+                            // 工程详情页：滑动返回 + 系统返回拦截，避免误退出应用
+                            BackHandler { projectSubPage = 0 }
+                            SwipeBackLayout(onBack = { projectSubPage = 0 }) {
+                                ProjectDetailScreen(
+                                    projectId = projectProjectId,
+                                    onBack = { projectSubPage = 0 },
+                                    onDataChanged = {
+                                        // 工程数据变更时，递增工程管理和统计的刷新触发器
+                                        projectListRefreshTrigger++
+                                        statisticsRefreshTrigger++
+                                    }
+                                )
                             }
-                        )
-                        1 -> ProjectDetailScreen(
-                            projectId = projectProjectId,
-                            onBack = { projectSubPage = 0 }
-                        )
+                        }
                     }
                 }
                 2 -> {
-                    // 统计
-                    StatisticsDashboardScreen()
+                    // 统计（含预支Tab）
+                    StatisticsDashboardScreen(
+                        userNickname = userNickname,
+                        refreshTrigger = statisticsRefreshTrigger
+                    )
                 }
                 3 -> {
                     // AI模块 - 支持子页面导航
                     when (aiSubPage) {
                         0 -> AiChatScreen(
                             onNavigateToLayout = { aiSubPage = 1 },
-                            onNavigateToKnowledge = { aiSubPage = 3 }
+                            onNavigateToKnowledge = { aiSubPage = 3 },
+                            userNickname = userNickname
                         )
-                        1 -> MaterialLayoutScreen(
-                            onNavigateToPreview = { aiSubPage = 2 },
-                            onBack = { aiSubPage = 0 }
-                        )
-                        2 -> LayoutPreviewScreen(
-                            onBack = { aiSubPage = 1 }
-                        )
-                        3 -> KnowledgeScreen(
-                            onBack = { aiSubPage = 0 }
-                        )
+                        1 -> {
+                            BackHandler { aiSubPage = 0 }
+                            SwipeBackLayout(onBack = { aiSubPage = 0 }) {
+                                MaterialLayoutScreen(
+                                    onNavigateToPreview = { aiSubPage = 2 },
+                                    onBack = { aiSubPage = 0 }
+                                )
+                            }
+                        }
+                        2 -> {
+                            BackHandler { aiSubPage = 1 }
+                            SwipeBackLayout(onBack = { aiSubPage = 1 }) {
+                                LayoutPreviewScreen(
+                                    onBack = { aiSubPage = 1 }
+                                )
+                            }
+                        }
+                        3 -> {
+                            BackHandler { aiSubPage = 0 }
+                            SwipeBackLayout(onBack = { aiSubPage = 0 }) {
+                                KnowledgeScreen(
+                                    onBack = { aiSubPage = 0 }
+                                )
+                            }
+                        }
                     }
                 }
                 4 -> {
-                    // 个人中心 - 支持子页面导航
+                    // 个人中心 - 支持子页面导航，所有子页面均支持滑动返回
                     when (profileSubPage) {
                         0 -> ProfileScreen(
                             onChangePassword = { profileSubPage = 1 },
@@ -302,119 +418,94 @@ fun MainScaffold(
                             onAiConfig = { profileSubPage = 6 },
                             onAbout = { profileSubPage = 4 },
                             onMessages = { profileSubPage = 5 },
-                            onLogout = onLogout
+                            onLogout = onLogout,
+                            userNickname = userNickname,
+                            unreadCount = unreadCount
                         )
-                        1 -> ChangePasswordScreen(
-                            onBack = { profileSubPage = 0 },
-                            onSuccess = { profileSubPage = 0 },
-                            onSubmit = { oldPwd, newPwd, callback ->
-                                profileApiViewModel.changePassword(oldPwd, newPwd, callback)
+                        1 -> {
+                            BackHandler { profileSubPage = 0 }
+                            SwipeBackLayout(onBack = { profileSubPage = 0 }) {
+                                ChangePasswordScreen(
+                                    onBack = { profileSubPage = 0 },
+                                    onSuccess = { profileSubPage = 0 },
+                                    onSubmit = { oldPwd, newPwd, callback ->
+                                        profileApiViewModel.changePassword(oldPwd, newPwd, callback)
+                                    }
+                                )
                             }
-                        )
-                        2 -> DictionaryScreen(
-                            onBack = { profileSubPage = 0 },
-                            spaceTypes = spaceTypes,
-                            constructionPlans = constructionPlans,
-                            wageDistributionTypes = wageDistributionTypes,
-                            onAddSpaceType = { name, desc, callback ->
-                                profileApiViewModel.addSpaceType(name, desc, callback)
-                            },
-                            onDeleteSpaceType = { id, callback ->
-                                profileApiViewModel.deleteSpaceType(id, callback)
-                            },
-                            onAddConstructionPlan = { name, desc, callback ->
-                                profileApiViewModel.addConstructionPlan(name, desc, callback)
-                            },
-                            onDeleteConstructionPlan = { id, callback ->
-                                profileApiViewModel.deleteConstructionPlan(id, callback)
-                            }
-                        )
-                        3 -> UserManagementScreen(
-                            onBack = { profileSubPage = 0 },
-                            users = users,
-                            onCreateUser = { request, callback ->
-                                profileApiViewModel.createUser(request, callback)
-                            },
-                            onResetPassword = { userId, newPassword, callback ->
-                                profileApiViewModel.resetPassword(userId, newPassword, callback)
-                            },
-                            onDeleteUser = { userId, callback ->
-                                profileApiViewModel.deleteUser(userId, callback)
-                            }
-                        )
-                        4 -> AboutScreen(
-                            onBack = { profileSubPage = 0 },
-                            versionName = com.salary.manager.BuildConfig.VERSION_NAME
-                        )
-                        5 -> MessageScreen(
-                            onBack = { profileSubPage = 0 },
-                            messages = messages,
-                            unreadCount = unreadCount,
-                            onMarkRead = { id -> profileApiViewModel.markMessageRead(id) },
-                            onMarkAllRead = { profileApiViewModel.markAllMessagesRead() },
-                            onDeleteMessage = { id -> profileApiViewModel.deleteMessage(id) }
-                        )
-                        6 -> AiConfigScreen(
-                            onBack = { profileSubPage = 0 }
-                        )
-                    }
-                }
-            }
-            // 关闭内部 Box (页面内容区域)
-        }
-
-        // ===== 底部版权信息 + API时延信息（同一行，左边版权，右边时延）
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = "©微信群：三人行必有我师",
-                fontSize = 12.sp,
-                color = AppColors.TextSecondary
-            )
-            // API时延信息显示在右边
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                // 状态指示点
-                Box(
-                    modifier = Modifier
-                        .size(6.dp)
-                        .background(
-                            color = if (isOnline) Color(0xFF4CAF50) else AppColors.Error,
-                            shape = RoundedCornerShape(3.dp)
-                        )
-                )
-                // 状态文字
-                if (isOnline) {
-                    Text(
-                        text = if (latencyMs > 0) "服务器在线：${latencyMs}ms" else "服务器在线",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = when {
-                            latencyMs <= 0 -> Color(0xFF4CAF50)
-                            latencyMs < 200 -> Color(0xFF4CAF50)
-                            latencyMs < 500 -> Color(0xFFFF9800)
-                            else -> Color(0xFFFF5722)
                         }
-                    )
-                } else {
-                    val errorText = when {
-                        lastError != null -> lastError
-                        else -> "连接失败"
+                        2 -> {
+                            BackHandler { profileSubPage = 0 }
+                            SwipeBackLayout(onBack = { profileSubPage = 0 }) {
+                                DictionaryScreen(
+                                    onBack = { profileSubPage = 0 },
+                                    spaceTypes = spaceTypes,
+                                    constructionPlans = constructionPlans,
+                                    wageDistributionTypes = wageDistributionTypes,
+                                    onAddSpaceType = { name, desc, callback ->
+                                        profileApiViewModel.addSpaceType(name, desc, callback)
+                                    },
+                                    onDeleteSpaceType = { id, callback ->
+                                        profileApiViewModel.deleteSpaceType(id, callback)
+                                    },
+                                    onAddConstructionPlan = { name, desc, callback ->
+                                        profileApiViewModel.addConstructionPlan(name, desc, callback)
+                                    },
+                                    onDeleteConstructionPlan = { id, callback ->
+                                        profileApiViewModel.deleteConstructionPlan(id, callback)
+                                    }
+                                )
+                            }
+                        }
+                        3 -> {
+                            BackHandler { profileSubPage = 0 }
+                            SwipeBackLayout(onBack = { profileSubPage = 0 }) {
+                                UserManagementScreen(
+                                    onBack = { profileSubPage = 0 },
+                                    users = users,
+                                    onCreateUser = { request, callback ->
+                                        profileApiViewModel.createUser(request, callback)
+                                    },
+                                    onResetPassword = { userId, newPassword, callback ->
+                                        profileApiViewModel.resetPassword(userId, newPassword, callback)
+                                    },
+                                    onDeleteUser = { userId, callback ->
+                                        profileApiViewModel.deleteUser(userId, callback)
+                                    }
+                                )
+                            }
+                        }
+                        4 -> {
+                            BackHandler { profileSubPage = 0 }
+                            SwipeBackLayout(onBack = { profileSubPage = 0 }) {
+                                AboutScreen(
+                                    onBack = { profileSubPage = 0 },
+                                    versionName = com.salary.manager.BuildConfig.VERSION_NAME
+                                )
+                            }
+                        }
+                        5 -> {
+                            BackHandler { profileSubPage = 0 }
+                            SwipeBackLayout(onBack = { profileSubPage = 0 }) {
+                                MessageScreen(
+                                    onBack = { profileSubPage = 0 },
+                                    messages = messages,
+                                    unreadCount = unreadCount,
+                                    onMarkRead = { id -> profileApiViewModel.markMessageRead(id) },
+                                    onMarkAllRead = { profileApiViewModel.markAllMessagesRead() },
+                                    onDeleteMessage = { id -> profileApiViewModel.deleteMessage(id) }
+                                )
+                            }
+                        }
+                        6 -> {
+                            BackHandler { profileSubPage = 0 }
+                            SwipeBackLayout(onBack = { profileSubPage = 0 }) {
+                                AiConfigScreen(
+                                    onBack = { profileSubPage = 0 }
+                                )
+                            }
+                        }
                     }
-                    Text(
-                        text = "服务器离线：$errorText",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = AppColors.Error,
-                        maxLines = 1
-                    )
                 }
             }
         }

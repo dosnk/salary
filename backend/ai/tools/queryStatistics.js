@@ -3,7 +3,7 @@
  * 带权限过滤
  */
 
-const pool = require('../../../config/database');
+const pool = require('../../config/database');
 
 const execute = async (args, user) => {
   const { month } = args;

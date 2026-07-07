@@ -1,6 +1,7 @@
 package com.salary.core.network.api
 
 import com.salary.core.network.dto.ApiResponse
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import retrofit2.http.Body
 import retrofit2.http.DELETE
@@ -17,7 +18,7 @@ interface UserApi {
 
     /** 获取用户列表（admin） */
     @GET("v1/users")
-    suspend fun getUsers(@Query("page") page: Int = 1, @Query("pageSize") pageSize: Int = 50): ApiResponse<UserListResponse>
+    suspend fun getUsers(@Query("page") page: Int = 1, @Query("size") size: Int = 50): ApiResponse<UserListResponse>
 
     /** 获取施工员列表 */
     @GET("v1/users/constructors")
@@ -53,7 +54,7 @@ data class UserListResponse(
     val list: List<UserDto>,
     val total: Int,
     val page: Int,
-    val pageSize: Int
+    val size: Int
 )
 
 @Serializable
@@ -64,6 +65,7 @@ data class UserDto(
     val phone: String? = null,
     /** 角色：admin/constructor/documenter，施工人员列表API可能不返回此字段 */
     val role: String = "constructor",
+    @SerialName("created_at")
     val createdAt: String? = null
 )
 

@@ -14,7 +14,8 @@ const resetPassword = async (ctx) => {
     const bcrypt = require('bcryptjs');
     
     // 生成密码哈希
-    const saltRounds = 10;
+    // bcrypt盐值轮数：12轮（约250ms/次），符合2026年安全标准
+    const saltRounds = 12;
     const passwordHash = await bcrypt.hash(newPassword, saltRounds);
     
     const result = await pool.query(

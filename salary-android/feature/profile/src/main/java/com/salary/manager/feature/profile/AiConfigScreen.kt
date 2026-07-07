@@ -39,6 +39,8 @@ fun AiConfigScreen(
     val config by viewModel.config.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val isSaving by viewModel.isSaving.collectAsStateWithLifecycle()
+    val isTesting by viewModel.isTesting.collectAsStateWithLifecycle()
+    val testResult by viewModel.testResult.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val saveSuccess by viewModel.saveSuccess.collectAsStateWithLifecycle()
     val editedProviders by viewModel.editedProviders.collectAsStateWithLifecycle()
@@ -176,56 +178,113 @@ fun AiConfigScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // 各提供商详细配置
+                // 选中提供商的参数配置（只显示当前选中的提供商）
+                val currentProviderName = providerNames[selectedProvider] ?: selectedProvider
                 Text(
-                    text = "提供商配置",
+                    text = "$currentProviderName 参数配置",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = AppColors.TextPrimary
                 )
 
-                providerOrder.forEach { providerKey ->
-                    val providerConfig = config?.providers?.get(providerKey)
-                    val edited = editedProviders[providerKey]
+                val providerConfig = config?.providers?.get(selectedProvider)
+                val edited = editedProviders[selectedProvider]
 
-                    if (providerConfig != null) {
-                        ProviderConfigCard(
-                            providerKey = providerKey,
-                            providerName = providerNames[providerKey] ?: providerKey,
-                            config = providerConfig,
-                            editedApiKey = edited?.apiKey ?: "",
-                            editedSecretKey = edited?.secretKey ?: "",
-                            editedModel = edited?.model ?: "",
-                            onApiKeyChange = { viewModel.updateApiKey(providerKey, it) },
-                            onSecretKeyChange = { viewModel.updateSecretKey(providerKey, it) },
-                            onModelChange = { viewModel.updateModel(providerKey, it) },
-                        )
-                    }
+                if (providerConfig != null) {
+                    ProviderConfigCard(
+                        providerKey = selectedProvider,
+                        providerName = currentProviderName,
+                        config = providerConfig,
+                        editedApiKey = edited?.apiKey ?: "",
+                        editedSecretKey = edited?.secretKey ?: "",
+                        editedModel = edited?.model ?: "",
+                        onApiKeyChange = { viewModel.updateApiKey(selectedProvider, it) },
+                        onSecretKeyChange = { viewModel.updateSecretKey(selectedProvider, it) },
+                        onModelChange = { viewModel.updateModel(selectedProvider, it) },
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // 保存按钮
-                Button(
-                    onClick = { viewModel.saveConfig() },
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    shape = RoundedCornerShape(24.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = AppColors.Green400),
-                    enabled = !isSaving
+                // 按钮行：API连接测试（左）+ 保存配置（右）
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    if (isSaving) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            color = Color.White,
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Text("保存配置", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    // API连接测试按钮
+                    OutlinedButton(
+                        onClick = { viewModel.testConnection() },
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = RoundedCornerShape(24.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = AppColors.Green400
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, AppColors.Green400),
+                        enabled = !isTesting
+                    ) {
+                        if (isTesting) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = AppColors.Green400,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text("API连接测试", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    // 保存配置按钮
+                    Button(
+                        onClick = { viewModel.saveConfig() },
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = RoundedCornerShape(24.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AppColors.Green400),
+                        enabled = !isSaving
+                    ) {
+                        if (isSaving) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text("保存配置", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(32.dp))
             }
+        }
+
+        // API连接测试结果弹窗
+        testResult?.let { result ->
+            AlertDialog(
+                onDismissRequest = { viewModel.clearTestResult() },
+                title = {
+                    Text(
+                        text = if (result.contains("成功")) "连接测试成功" else "连接测试失败",
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (result.contains("成功")) AppColors.Green400 else Color(0xFFD32F2F)
+                    )
+                },
+                text = {
+                    Text(
+                        text = result,
+                        fontSize = 14.sp,
+                        color = AppColors.TextSecondary,
+                        lineHeight = 20.sp
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { viewModel.clearTestResult() }
+                    ) {
+                        Text("确认", color = AppColors.Green400, fontWeight = FontWeight.Medium)
+                    }
+                },
+                shape = RoundedCornerShape(16.dp)
+            )
         }
     }
 }
@@ -339,6 +398,22 @@ private fun ProviderConfigCard(
                 fontSize = 12.sp,
                 color = AppColors.TextTertiary
             )
+
+            // 参数信息（只读）
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(24.dp)
+            ) {
+                Text(
+                    text = "最大Token: ${config.maxTokens}",
+                    fontSize = 12.sp,
+                    color = AppColors.TextTertiary
+                )
+                Text(
+                    text = "温度: ${config.temperature}",
+                    fontSize = 12.sp,
+                    color = AppColors.TextTertiary
+                )
+            }
         }
     }
 }

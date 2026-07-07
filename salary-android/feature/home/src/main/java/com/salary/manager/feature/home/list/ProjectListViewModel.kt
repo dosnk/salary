@@ -15,6 +15,8 @@ import javax.inject.Inject
 
 /**
  * 工程列表UI模型
+ * totalWorkdays: 按工日分配模式下的总工日（用于计算工日工费）
+ * workerWageDetails: 按工日分配模式下的各施工人员工日及工费明细
  */
 data class ProjectUiModel(
     val id: Int,
@@ -25,7 +27,22 @@ data class ProjectUiModel(
     val salaryDistribution: String?,
     val workerNames: List<String>,
     val workerCount: Int,
-    val createdAt: String
+    val createdAt: String,
+    /** 总工日（按工日分配模式下使用） */
+    val totalWorkdays: Double = 0.0,
+    /** 各施工人员的工日及工费明细（仅按工日分配模式下使用） */
+    val workerWageDetails: List<WorkerWageDetail> = emptyList()
+)
+
+/**
+ * 施工人员工日工费明细（工程列表卡片按工日分配模式下显示）
+ */
+data class WorkerWageDetail(
+    val nickname: String,
+    /** 工日数 */
+    val workdays: Double,
+    /** 按工日比例分摊的工费 */
+    val wage: Double
 )
 
 /**
@@ -65,9 +82,8 @@ class ProjectListViewModel @Inject constructor(
     private val _advancedFilter = MutableStateFlow(AdvancedFilterState())
     val advancedFilter: StateFlow<AdvancedFilterState> = _advancedFilter.asStateFlow()
 
-    /** 用户昵称 */
-    private val _userNickname = MutableStateFlow("")
-    val userNickname: StateFlow<String> = _userNickname.asStateFlow()
+    /** 用户昵称（从UserStorage响应式获取） */
+    val userNickname: StateFlow<String> = userStorage.nicknameFlow
 
     /** 成功消息 */
     private val _successMessage = MutableStateFlow<String?>(null)
@@ -86,31 +102,26 @@ class ProjectListViewModel @Inject constructor(
 
     init {
         loadProjects()
-        loadUserNickname()
-    }
-
-    /**
-     * 加载用户昵称
-     */
-    private fun loadUserNickname() {
-        viewModelScope.launch {
-            _userNickname.value = userStorage.getNickname() ?: ""
-        }
     }
 
     /**
      * 加载工程列表
+     * @param isLoadMore 是否为加载更多
+     * @param silent 静默模式：不显示Loading状态、不覆盖错误状态，用于Tab切换时的后台刷新
      */
-    private fun loadProjects(isLoadMore: Boolean = false) {
+    private fun loadProjects(isLoadMore: Boolean = false, silent: Boolean = false) {
         if (isLoadingMore) return
-        // 重试限制：如果超过最大重试次数且不是加载更多，拒绝重试
-        if (!isLoadMore && retryCount >= maxRetryCount) {
+        // 重试限制：如果超过最大重试次数且不是加载更多，拒绝重试（静默模式跳过此限制）
+        if (!isLoadMore && !silent && retryCount >= maxRetryCount) {
             _state.value = com.salary.core.ui.state.ListUiState.Error("加载失败次数过多，请稍后重试")
             return
         }
         viewModelScope.launch {
             if (!isLoadMore) {
-                _state.value = com.salary.core.ui.state.ListUiState.Loading
+                // 静默模式下不显示Loading，避免页面闪烁
+                if (!silent) {
+                    _state.value = com.salary.core.ui.state.ListUiState.Loading
+                }
                 currentPage = 1
             }
             isLoadingMore = true
@@ -134,6 +145,22 @@ class ProjectListViewModel @Inject constructor(
                         return@launch
                     }
                     val newItems = pageData.list.map { dto ->
+                        // 计算总工日（按工日分配模式下用于计算工日工费）
+                        val totalWorkdays = dto.workers.sumOf { it.workdays ?: 0.0 }
+                        // 按工日分配模式下计算每个施工人员的工日工费明细
+                        val totalAmount = dto.totalAmount
+                        val workerWageDetails = if (dto.salaryDistribution == "work_days" && totalWorkdays > 0) {
+                            dto.workers.map { worker ->
+                                val days = worker.workdays ?: 0.0
+                                // 按工日比例分摊：总额 × (个人工日 / 总工日)
+                                val wage = if (days > 0) totalAmount * (days / totalWorkdays) else 0.0
+                                WorkerWageDetail(
+                                    nickname = worker.nickname,
+                                    workdays = days,
+                                    wage = wage
+                                )
+                            }
+                        } else emptyList()
                         ProjectUiModel(
                             id = dto.id,
                             name = dto.name,
@@ -143,7 +170,9 @@ class ProjectListViewModel @Inject constructor(
                             salaryDistribution = dto.salaryDistribution,
                             workerNames = dto.workers.map { it.nickname },
                             workerCount = dto.workers.size,
-                            createdAt = dto.createdAt
+                            createdAt = dto.createdAt,
+                            totalWorkdays = totalWorkdays,
+                            workerWageDetails = workerWageDetails
                         )
                     }
 
@@ -157,24 +186,38 @@ class ProjectListViewModel @Inject constructor(
                         page = currentPage
                     )
                 } else {
-                    retryCount++
-                    _state.value = com.salary.core.ui.state.ListUiState.Error(
-                        NetworkErrorHandler.translateServerError(response.msg, "加载工程列表失败")
-                    )
+                    // 加载更多失败时回退页码，避免跳页
+                    if (isLoadMore) currentPage--
+                    if (!silent) {
+                        retryCount++
+                        _state.value = com.salary.core.ui.state.ListUiState.Error(
+                            NetworkErrorHandler.translateServerError(response.msg, "加载工程列表失败")
+                        )
+                    }
                 }
             } catch (e: Exception) {
-                retryCount++
-                _state.value = com.salary.core.ui.state.ListUiState.Error(
-                    NetworkErrorHandler.translate(e, "加载工程列表失败")
-                )
+                // 加载更多失败时回退页码，避免跳页
+                if (isLoadMore) currentPage--
+                if (!silent) {
+                    retryCount++
+                    _state.value = com.salary.core.ui.state.ListUiState.Error(
+                        NetworkErrorHandler.translate(e, "加载工程列表失败")
+                    )
+                }
             } finally {
                 isLoadingMore = false
             }
         }
     }
 
-    /** 刷新列表 */
-    fun refresh() = loadProjects(isLoadMore = false)
+    /** 刷新列表 - 重置重试计数，允许用户从错误状态恢复 */
+    fun refresh() {
+        retryCount = 0
+        loadProjects(isLoadMore = false)
+    }
+
+    /** 静默刷新（不显示Loading、不覆盖已有状态），用于Tab切换时后台刷新数据 */
+    fun silentRefresh() = loadProjects(isLoadMore = false, silent = true)
 
     /** 加载更多 */
     fun loadMore() {

@@ -7,7 +7,7 @@
 
 const { Worker } = require('worker_threads');
 const path = require('path');
-const logger = require('../../../config/logger');
+const logger = require('../../config/logger');
 
 const WORKER_FILE = path.join(__dirname, 'layoutWorker.js');
 const MAX_WORKERS = 4; // 最大Worker数

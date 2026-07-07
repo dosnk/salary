@@ -3,7 +3,7 @@
  * 带权限过滤：admin看全部，constructor看自己参与的，documenter看全部(只读)
  */
 
-const pool = require('../../../config/database');
+const pool = require('../../config/database');
 
 const execute = async (args, user) => {
   const { keyword, status } = args;

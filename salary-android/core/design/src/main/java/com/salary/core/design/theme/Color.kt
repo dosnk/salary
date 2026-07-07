@@ -34,6 +34,14 @@ object AppColors {
     val Warning = Color(0xFFF59E0B)
     val Error = Color(0xFFEF4444)
 
+    // 中性色（分隔线/边框/中性背景）
+    val Divider = Color(0xFFE8E9E6)           // 分隔线
+    val Outline = Color(0xFFE0E0E0)           // 默认描边
+    val OutlineVariant = Color(0xFFF0F0F0)    // 浅描边
+    val DisabledBorder = Color(0xFFC0C4BC)    // 未选中/禁用边框
+    val NeutralSurface = Color(0xFFF5F5F5)    // 中性浅灰背景
+    val NeutralBorder = Color(0xFFBDBDBD)     // 中性中灰边框/图标
+
     // 暗色主题
     val GreenDark = Color(0xFFA0D468)
 
@@ -58,8 +66,8 @@ object AppColors {
         onSurfaceVariant = TextSecondary,
         error = Error,
         onError = Color.White,
-        outline = Color(0xFFE0E0E0),
-        outlineVariant = Color(0xFFF0F0F0),
+        outline = Outline,
+        outlineVariant = OutlineVariant,
     )
 
     /**

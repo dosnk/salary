@@ -7,11 +7,18 @@ import com.salary.core.data.local.TokenStorage
 import com.salary.core.network.api.AiApi
 import com.salary.core.network.api.AiChatRequest
 import com.salary.core.network.api.AiChatResponse
+import com.salary.core.network.api.CreateKnowledgeRequest
+import com.salary.core.network.api.CreateMaterialRequest
+import com.salary.core.network.api.DeleteKnowledgeResponse
+import com.salary.core.network.api.KnowledgeDetailResponse
+import com.salary.core.network.api.KnowledgeItemDto
+import com.salary.core.network.api.KnowledgeListResponse
 import com.salary.core.network.api.LayoutRequest
 import com.salary.core.network.api.LayoutResponse
 import com.salary.core.network.api.MaterialCategoryDto
 import com.salary.core.network.api.MaterialDto
 import com.salary.core.network.api.MaterialOptionsDto
+import com.salary.core.network.api.UpdateMaterialRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -207,6 +214,134 @@ class AiRepository @Inject constructor(
             }
         } catch (e: Exception) {
             Result.failure(Exception(NetworkErrorHandler.translate(e, "加载材料数据失败")))
+        }
+    }
+
+    /**
+     * 创建材料参数（仅admin）
+     * @param request 创建请求
+     */
+    suspend fun createMaterial(request: CreateMaterialRequest): Result<MaterialDto> {
+        return try {
+            val response = aiApi.createMaterial(request)
+            if (response.code == 200) {
+                val data = response.data ?: return Result.failure(Exception("响应数据为空"))
+                Result.success(data)
+            } else {
+                Result.failure(Exception(response.msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(NetworkErrorHandler.translate(e, "创建材料失败")))
+        }
+    }
+
+    /**
+     * 更新材料参数（仅admin）
+     * @param id 材料ID
+     * @param request 更新请求
+     */
+    suspend fun updateMaterial(id: Int, request: UpdateMaterialRequest): Result<MaterialDto> {
+        return try {
+            val response = aiApi.updateMaterial(id, request)
+            if (response.code == 200) {
+                val data = response.data ?: return Result.failure(Exception("响应数据为空"))
+                Result.success(data)
+            } else {
+                Result.failure(Exception(response.msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(NetworkErrorHandler.translate(e, "更新材料失败")))
+        }
+    }
+
+    /**
+     * 删除材料参数（仅admin，软删除）
+     * @param id 材料ID
+     */
+    suspend fun deleteMaterial(id: Int): Result<Unit> {
+        return try {
+            val response = aiApi.deleteMaterial(id)
+            if (response.code == 200) {
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception(response.msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(NetworkErrorHandler.translate(e, "删除材料失败")))
+        }
+    }
+
+    /**
+     * 获取知识库文档列表
+     * @param page 页码（从1开始）
+     * @param pageSize 每页数量
+     */
+    suspend fun listKnowledge(page: Int = 1, pageSize: Int = 20): Result<KnowledgeListResponse> {
+        return try {
+            val response = aiApi.listKnowledge(page, pageSize)
+            if (response.code == 200) {
+                val data = response.data ?: return Result.failure(Exception("响应数据为空"))
+                Result.success(data)
+            } else {
+                Result.failure(Exception(response.msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(NetworkErrorHandler.translate(e, "加载知识库列表失败")))
+        }
+    }
+
+    /**
+     * 添加知识文档
+     * @param title 文档标题
+     * @param content 文档内容（10-50000字符）
+     */
+    suspend fun createKnowledge(title: String, content: String): Result<Unit> {
+        return try {
+            val request = CreateKnowledgeRequest(title = title, content = content, sourceType = "manual")
+            val response = aiApi.createKnowledge(request)
+            if (response.code == 200) {
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception(response.msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(NetworkErrorHandler.translate(e, "添加知识文档失败")))
+        }
+    }
+
+    /**
+     * 获取知识文档详情
+     * @param title 文档标题
+     */
+    suspend fun getKnowledgeDetail(title: String): Result<KnowledgeDetailResponse> {
+        return try {
+            val response = aiApi.getKnowledgeDetail(java.net.URLEncoder.encode(title, "UTF-8"))
+            if (response.code == 200) {
+                val data = response.data ?: return Result.failure(Exception("响应数据为空"))
+                Result.success(data)
+            } else {
+                Result.failure(Exception(response.msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(NetworkErrorHandler.translate(e, "加载知识文档详情失败")))
+        }
+    }
+
+    /**
+     * 删除知识文档
+     * @param title 文档标题
+     */
+    suspend fun deleteKnowledge(title: String): Result<DeleteKnowledgeResponse> {
+        return try {
+            val response = aiApi.deleteKnowledge(java.net.URLEncoder.encode(title, "UTF-8"))
+            if (response.code == 200) {
+                val data = response.data ?: return Result.failure(Exception("响应数据为空"))
+                Result.success(data)
+            } else {
+                Result.failure(Exception(response.msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(NetworkErrorHandler.translate(e, "删除知识文档失败")))
         }
     }
 }

@@ -8,7 +8,7 @@
  * - chat: 通用对话
  */
 
-const logger = require('../../config/logger');
+const logger = require('../config/logger');
 
 // 意图关键词映射
 const INTENT_PATTERNS = {

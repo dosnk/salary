@@ -268,7 +268,8 @@ const changePassword = async (ctx) => {
     }
 
     // 加密新密码
-    const saltRounds = 10;
+    // bcrypt盐值轮数：12轮（约250ms/次），符合2026年安全标准
+    const saltRounds = 12;
     const hashedPassword = await bcrypt.hash(new_password, saltRounds);
 
     // 更新密码
@@ -312,7 +313,8 @@ const createUser = async (ctx) => {
       }
     }
 
-    const saltRounds = 10;
+    // bcrypt盐值轮数：12轮（约250ms/次），符合2026年安全标准
+    const saltRounds = 12;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
     const result = await pool.query(
@@ -341,7 +343,8 @@ const resetPassword = async (ctx) => {
       return;
     }
 
-    const saltRounds = 10;
+    // bcrypt盐值轮数：12轮（约250ms/次），符合2026年安全标准
+    const saltRounds = 12;
     const hashedPassword = await bcrypt.hash(new_password, saltRounds);
 
     await pool.query(

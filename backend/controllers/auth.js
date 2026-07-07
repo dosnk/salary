@@ -60,17 +60,27 @@ const login = async (ctx) => {
     await loginSchema.validateAsync({ username, password }, { abortEarly: false });
 
     // 登录失败次数检查 (Redis限流)
+    // Redis异常时不阻塞登录流程，仅跳过限流检查
     const redis = getRedisClient();
     const lockKey = `login_lock:${username}`;
     const attemptKey = `login_attempts:${username}`;
 
     if (isRedisAvailable()) {
-      // 检查是否被锁定
-      const isLocked = await redis.get(lockKey);
-      if (isLocked) {
-        const ttl = await redis.ttl(lockKey);
-        ctx.fail(2002, `登录失败次数过多，请${Math.ceil(ttl / 60)}分钟后重试`);
-        return;
+      try {
+        // 检查是否被锁定
+        const isLocked = await redis.get(lockKey);
+        if (isLocked) {
+          let remainMinutes = 30; // 兜底值
+          try {
+            const ttl = await redis.ttl(lockKey);
+            remainMinutes = Math.ceil(ttl / 60);
+          } catch (_) { /* ttl获取失败使用兜底值 */ }
+          ctx.fail(2002, `登录失败次数过多，请${remainMinutes}分钟后重试`);
+          return;
+        }
+      } catch (error) {
+        // Redis异常时跳过锁定检查，继续登录流程
+        logger.warn('登录锁定检查失败', { username, error: error.message });
       }
     }
 
@@ -86,13 +96,17 @@ const login = async (ctx) => {
     // 验证密码
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      // 记录失败次数
+      // 记录失败次数（Redis异常时不阻塞密码错误流程）
       if (isRedisAvailable()) {
-        const attempts = await redis.incr(attemptKey);
-        await redis.expire(attemptKey, 1800); // 30分钟
-        if (attempts >= 5) {
-          await redis.set(lockKey, '1', 'EX', 1800); // 锁定30分钟
-          logger.warn(`用户 ${username} 登录失败${attempts}次，已锁定30分钟`);
+        try {
+          const attempts = await redis.incr(attemptKey);
+          await redis.expire(attemptKey, 1800); // 30分钟
+          if (attempts >= 5) {
+            await redis.set(lockKey, '1', 'EX', 1800); // 锁定30分钟
+            logger.warn(`用户 ${username} 登录失败${attempts}次，已锁定30分钟`);
+          }
+        } catch (error) {
+          logger.warn('记录登录失败次数失败', { username, error: error.message });
         }
       }
       ctx.fail(2002);
@@ -101,21 +115,30 @@ const login = async (ctx) => {
 
     // 登录成功，清除失败记录
     if (isRedisAvailable()) {
-      await redis.del(attemptKey);
-      await redis.del(lockKey);
+      try {
+        await redis.del(attemptKey);
+        await redis.del(lockKey);
+      } catch (error) {
+        logger.warn('清除登录失败记录失败', { username, error: error.message });
+      }
     }
 
     // 生成Token对
     const tokens = generateTokens(user);
 
     // 存储refreshToken到Redis (用于登出时失效)
+    // Redis异常时跳过存储，用户仍可登录但refreshToken校验会降级
     if (isRedisAvailable()) {
-      await redis.set(
-        `refresh_token:${user.id}`,
-        tokens.refreshToken,
-        'EX',
-        30 * 24 * 60 * 60 // 30天
-      );
+      try {
+        await redis.set(
+          `refresh_token:${user.id}`,
+          tokens.refreshToken,
+          'EX',
+          30 * 24 * 60 * 60 // 30天
+        );
+      } catch (error) {
+        logger.warn('存储refreshToken失败', { userId: user.id, error: error.message });
+      }
     }
 
     ctx.success({
@@ -155,12 +178,18 @@ const refreshToken = async (ctx) => {
     }
 
     // 验证Redis中的refreshToken是否有效
+    // Redis异常时降级处理：跳过校验，仅依赖JWT签名验证
     const redis = getRedisClient();
     if (isRedisAvailable()) {
-      const storedToken = await redis.get(`refresh_token:${decoded.id}`);
-      if (storedToken !== refreshToken) {
-        ctx.fail(4002, 'refreshToken已失效');
-        return;
+      try {
+        const storedToken = await redis.get(`refresh_token:${decoded.id}`);
+        if (storedToken !== refreshToken) {
+          ctx.fail(4002, 'refreshToken已失效');
+          return;
+        }
+      } catch (error) {
+        // Redis异常时跳过refreshToken校验，降级为仅依赖JWT签名
+        logger.warn('refreshToken校验失败，降级处理', { userId: decoded.id, error: error.message });
       }
     }
 
@@ -179,12 +208,16 @@ const refreshToken = async (ctx) => {
 
     // 更新Redis中的refreshToken
     if (isRedisAvailable()) {
-      await redis.set(
-        `refresh_token:${decoded.id}`,
-        tokens.refreshToken,
-        'EX',
-        30 * 24 * 60 * 60
-      );
+      try {
+        await redis.set(
+          `refresh_token:${decoded.id}`,
+          tokens.refreshToken,
+          'EX',
+          30 * 24 * 60 * 60
+        );
+      } catch (error) {
+        logger.warn('更新refreshToken失败', { userId: decoded.id, error: error.message });
+      }
     }
 
     ctx.success(tokens);
@@ -238,7 +271,8 @@ const register = async (ctx) => {
     }
 
     // 加密密码
-    const saltRounds = 10;
+    // bcrypt盐值轮数：12轮（约250ms/次），符合2026年安全标准
+    const saltRounds = 12;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
     // 创建用户
@@ -251,14 +285,19 @@ const register = async (ctx) => {
     const tokens = generateTokens(user);
 
     // 存储refreshToken
+    // Redis异常时不阻塞注册流程，用户仍可登录但refreshToken校验会降级
     const redis = getRedisClient();
     if (isRedisAvailable()) {
-      await redis.set(
-        `refresh_token:${user.id}`,
-        tokens.refreshToken,
-        'EX',
-        30 * 24 * 60 * 60
-      );
+      try {
+        await redis.set(
+          `refresh_token:${user.id}`,
+          tokens.refreshToken,
+          'EX',
+          30 * 24 * 60 * 60
+        );
+      } catch (error) {
+        logger.warn('注册时存储refreshToken失败', { userId: user.id, error: error.message });
+      }
     }
 
     ctx.success({
@@ -306,9 +345,14 @@ const logout = async (ctx) => {
 
   try {
     // 清除Redis中的refreshToken
+    // Redis异常时不阻塞退出登录流程，客户端清除本地token即可
     const redis = getRedisClient();
     if (isRedisAvailable()) {
-      await redis.del(`refresh_token:${userId}`);
+      try {
+        await redis.del(`refresh_token:${userId}`);
+      } catch (error) {
+        logger.warn('退出登录时清除refreshToken失败', { userId, error: error.message });
+      }
     }
 
     ctx.success({ message: '退出登录成功' });

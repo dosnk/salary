@@ -10,11 +10,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -37,6 +42,11 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -69,7 +80,8 @@ import com.salary.core.design.theme.AppColors
 fun AiChatScreen(
     onNavigateToLayout: () -> Unit = {},
     onNavigateToKnowledge: () -> Unit = {},
-    viewModel: AiChatViewModel = hiltViewModel()
+    viewModel: AiChatViewModel = hiltViewModel(),
+    userNickname: String = ""
 ) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
@@ -86,12 +98,11 @@ fun AiChatScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .imePadding()
     ) {
-        // 顶部导航栏 - 绿色渐变自适应高度
+        // 顶部导航栏 - 固定在顶部，不响应键盘弹出（避免被推到屏幕外）
         GreenTopNavBar(
             title = "AI助手",
-            userNickname = "",
+            userNickname = userNickname.ifBlank { "未登录" },
             unreadCount = -1 // 不显示消息图标
         ) {
             // 排料计算入口
@@ -113,7 +124,7 @@ fun AiChatScreen(
                 onClick = { viewModel.clearChat() }
             )
         }
-            // 消息列表
+            // 消息列表 - 响应键盘高度自动收缩（weight根据剩余空间分配）
             LazyColumn(
                 state = listState,
                 modifier = Modifier
@@ -144,7 +155,7 @@ fun AiChatScreen(
                 }
             }
 
-            // 输入栏
+            // 输入栏 - 仅此处应用 imePadding，随键盘上推，不影响顶部导航栏
             InputBar(
                 text = inputText,
                 onTextChange = { viewModel.updateInputText(it) },
@@ -318,6 +329,15 @@ private fun QuickQuestionsSection(
 
 /**
  * 底部输入栏
+ *
+ * 发送按钮采用微信样式：仅在输入框获得焦点（用户点击输入框准备输入）时才显示，
+ * 并以水平展开动画从右侧滑入；失去焦点时自动收起。
+ * 按钮样式：绿色圆形背景 + 白色发送图标（微信风格）。
+ *
+ * 键盘适配：使用 windowInsetsPadding 应用 ime ∪ navigationBars 的 insets。
+ * - 键盘未弹出：应用系统导航栏高度（手势条/虚拟按键），避免输入栏被遮挡
+ * - 键盘弹出时：应用键盘高度（navigationBars 被 ime 覆盖，取并集最大值，避免叠加空白）
+ * 修复：原 imePadding + navigationBarsPadding 串联使用，键盘弹出后两者叠加导致输入栏与键盘间出现大量空白
  */
 @Composable
 private fun InputBar(
@@ -327,20 +347,27 @@ private fun InputBar(
     isLoading: Boolean
 ) {
     Surface(
-        shadowElevation = 8.dp,
-        color = Color.White
+        shadowElevation = 2.dp,
+        color = Color.White,
+        modifier = Modifier
+            .fillMaxWidth()
+            // 使用 windowInsetsPadding 应用 ime 和 navigationBars 的并集
+            // 避免 imePadding + navigationBarsPadding 串联时键盘弹出后产生叠加空白
+            .windowInsetsPadding(
+                WindowInsets.ime.union(WindowInsets.navigationBars)
+            )
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .imePadding(),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             OutlinedTextField(
                 value = text,
                 onValueChange = onTextChange,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f),
                 placeholder = {
                     Text(
                         "输入消息...",
@@ -363,29 +390,51 @@ private fun InputBar(
                 )
             )
 
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // 发送按钮
-            Surface(
-                onClick = { if (text.isNotBlank() && !isLoading) onSend() },
-                shape = CircleShape,
-                color = if (text.isNotBlank() && !isLoading) AppColors.Green400 else AppColors.Green100,
-                modifier = Modifier.size(44.dp)
+            // 发送按钮：输入第一个文字后在输入框右侧拉幕式优雅展开，清空后收起
+            // 微信样式：绿色圆形背景 + 白色发送图标
+            AnimatedVisibility(
+                visible = text.isNotEmpty(),
+                enter = expandHorizontally(
+                    expandFrom = Alignment.End,
+                    animationSpec = androidx.compose.animation.core.tween(durationMillis = 250)
+                ) + fadeIn(animationSpec = androidx.compose.animation.core.tween(durationMillis = 250)),
+                exit = shrinkHorizontally(
+                    shrinkTowards = Alignment.End,
+                    animationSpec = androidx.compose.animation.core.tween(durationMillis = 200)
+                ) + fadeOut(animationSpec = androidx.compose.animation.core.tween(durationMillis = 200))
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    if (isLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                            color = Color.White
-                        )
-                    } else {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "发送",
-                            modifier = Modifier.size(20.dp),
-                            tint = if (text.isNotBlank()) Color.White else AppColors.TextTertiary
-                        )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.wrapContentHeight()
+                ) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    // 发送按钮：圆角长方形 + "发送"文字
+                    val canSend = text.isNotBlank() && !isLoading
+                    Surface(
+                        onClick = { if (canSend) onSend() },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (canSend) AppColors.Green400 else AppColors.Green100,
+                        modifier = Modifier.height(40.dp)
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        ) {
+                            if (isLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = Color.White
+                                )
+                            } else {
+                                Text(
+                                    "发送",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (canSend) Color.White else AppColors.TextTertiary
+                                )
+                            }
+                        }
                     }
                 }
             }

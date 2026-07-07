@@ -18,7 +18,7 @@ interface MessageApi {
     @GET("v1/messages")
     suspend fun getMessages(
         @Query("page") page: Int = 1,
-        @Query("pageSize") pageSize: Int = 20,
+        @Query("size") size: Int = 20,
         @Query("type") type: String? = null
     ): ApiResponse<MessageListResponse>
 
@@ -44,7 +44,7 @@ data class MessageListResponse(
     val list: List<MessageDto>,
     val total: Int,
     val page: Int,
-    val pageSize: Int
+    val size: Int
 )
 
 /**

@@ -113,15 +113,5 @@ describe('RBAC权限矩阵', () => {
     });
   });
 
-  describe('数据迁移 - 仅admin', () => {
-    test('施工员不能访问数据迁移', async () => {
-      if (!pool) return;
-
-      const res = await request(app)
-        .get('/v1/migration/status')
-        .set('Authorization', `Bearer ${constructorToken}`);
-
-      expect(res.body.code).toBe(4002);
-    });
-  });
+  // 数据迁移模块已归档至 legacy/sqlite-migration/，相关测试移除
 });

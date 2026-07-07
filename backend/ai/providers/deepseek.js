@@ -13,7 +13,7 @@ class DeepSeekProvider extends BaseProvider {
   }
 
   async chat(messages, options = {}) {
-    const fetch = (await import('node-fetch')).default;
+    // 使用Node.js 18+内置的全局fetch
 
     const body = {
       model: this.model,
@@ -37,9 +37,10 @@ class DeepSeekProvider extends BaseProvider {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      logger.error('DeepSeek API错误:', error);
-      throw new Error(`DeepSeek API错误: ${response.status}`);
+      const errorText = await response.text();
+      logger.error('DeepSeek API错误:', { status: response.status, body: errorText });
+      // 将响应体包含在错误信息中，便于前端和日志排查
+      throw new Error(`DeepSeek API错误: ${response.status} ${errorText.slice(0, 500)}`);
     }
 
     const data = await response.json();
@@ -62,11 +63,10 @@ class DeepSeekProvider extends BaseProvider {
   }
 
   /**
-   * 流式对话 - DeepSeek原生支持SSE
+   * 真流式对话 - 使用 response.body.getReader() 逐块读取
+   * 支持 FunctionCall（通过 options.tools 传入）
    */
   async chatStream(messages, onChunk, options = {}) {
-    const fetch = (await import('node-fetch')).default;
-
     const body = {
       model: this.model,
       messages,
@@ -75,6 +75,12 @@ class DeepSeekProvider extends BaseProvider {
       stream: true,
     };
 
+    // 流式模式支持FunctionCall
+    if (options.tools && options.tools.length > 0) {
+      body.tools = options.tools.map(t => ({ type: 'function', function: t }));
+      body.tool_choice = options.toolChoice || 'auto';
+    }
+
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: this.buildHeaders(),
@@ -82,30 +88,14 @@ class DeepSeekProvider extends BaseProvider {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`DeepSeek API错误: ${response.status}`);
+      const errorText = await response.text();
+      logger.error('DeepSeek API错误:', { status: response.status, body: errorText });
+      // 将响应体包含在错误信息中，便于前端和日志排查
+      throw new Error(`DeepSeek API错误: ${response.status} ${errorText.slice(0, 500)}`);
     }
 
-    let fullContent = '';
-    const text = await response.text();
-    const lines = text.split('\n').filter(l => l.startsWith('data: '));
-
-    for (const line of lines) {
-      const data = line.slice(6);
-      if (data === '[DONE]') break;
-      try {
-        const parsed = JSON.parse(data);
-        const delta = parsed.choices[0]?.delta?.content || '';
-        if (delta) {
-          fullContent += delta;
-          if (onChunk) onChunk(delta);
-        }
-      } catch (e) {
-        // 忽略解析错误
-      }
-    }
-
-    return { content: fullContent };
+    // 调用基类真流式读取（OpenAI兼容格式）
+    return await this.readStream(response, onChunk);
   }
 }
 
