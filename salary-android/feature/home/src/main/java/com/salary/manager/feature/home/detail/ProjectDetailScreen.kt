@@ -1624,7 +1624,8 @@ fun EditProjectDialog(
                             // 不一致时：橙色加大字号+加粗+闪烁动画（alpha 0.4↔1.0），提示用户注意
                             if (workdaysValidationHint.isNotEmpty()) {
                                 val hint = workdaysValidationHint
-                                val isConsistent = hint.contains("一致")
+                                // 注意：不能使用contains("一致")，因为"不一致"也包含"一致"二字
+                                val isConsistent = !hint.contains("不一致")
                                 // 不一致时使用无限循环透明度动画
                                 val infiniteTransition = rememberInfiniteTransition(label = "workdaysHint")
                                 val alpha by infiniteTransition.animateFloat(
