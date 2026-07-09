@@ -238,14 +238,14 @@ fun StatisticsDashboardScreen(
                                             formatNumber = { viewModel.formatNumber(it) },
                                             onCardClick = { type ->
                                                 statsFilterType = when (type) {
-                                                    "统计中工程" -> "settling"
-                                                    "预支总额" -> "advance"
-                                                    "工程总额" -> "settling"  // 工程总额与统计中工程共用同一数据源
-                                                    "实付总额" -> "settled"   // 实付总额对应已结算工程
+                                                    "待结算工程" -> "settling"
+                                                    "预支金额" -> "advance"
+                                                    "今年工量" -> "settled"
+                                                    "月均工资" -> "settled"
                                                     else -> "settling"
                                                 }
                                                 if (statsFilterType == "advance") {
-                                                    // 预支总额点击：切换到预支Tab
+                                                    // 预支金额点击：切换到预支Tab
                                                     coroutineScope.launch {
                                                         pagerState.animateScrollToPage(1)
                                                     }
@@ -482,17 +482,23 @@ fun StatisticsDashboardScreen(
 
 /**
  * 统计卡片数据
+ * @param amountLabel 金额标签（如"总额："、"月均："）
  */
 data class StatCardData(
     val title: String,
     val count: Int,
     val amount: Double,
-    val iconColor: Color
+    val iconColor: Color,
+    val amountLabel: String = "总额："
 )
 
 /**
  * 4宫格统计卡片区域
- * 数据来源：/v1/salary-sheet/projects 返回的汇总数据
+ * 4个卡片定义：
+ * - 待结算工程：settling状态工程份数+应收总额（个人维度）
+ * - 预支金额：未结算预支份数+总预支（个人维度）
+ * - 今年工量：今年已结算工程份数+工程总额（非个人分摊）
+ * - 月均工资：今年已结算工程月均份数+月均金额（个人分摊）
  */
 @Composable
 fun StatsGridSection(
@@ -502,28 +508,32 @@ fun StatsGridSection(
 ) {
     val cards = listOf(
         StatCardData(
-            title = "统计中工程",
+            title = "待结算工程",
             count = summary.totalProjects,
             amount = summary.grandTotal,
-            iconColor = Color(0xFFE6A23C) // 橙色
+            iconColor = Color(0xFFE6A23C), // 橙色
+            amountLabel = "应收："
         ),
         StatCardData(
-            title = "预支总额",
-            count = 0,
+            title = "预支金额",
+            count = summary.advanceCount,
             amount = summary.totalAdvance,
-            iconColor = Color(0xFF409EFF) // 蓝色
+            iconColor = Color(0xFF409EFF), // 蓝色
+            amountLabel = "总额："
         ),
         StatCardData(
-            title = "工程总额",
-            count = 0,
-            amount = summary.grandTotal,
-            iconColor = Color(0xFF84CC16) // 绿色
+            title = "今年工量",
+            count = summary.settledProjectCount,
+            amount = summary.settledProjectTotalAmount,
+            iconColor = Color(0xFF84CC16), // 绿色
+            amountLabel = "总额："
         ),
         StatCardData(
-            title = "实付总额",
-            count = 0,
-            amount = summary.finalTotal,
-            iconColor = Color(0xFF9333EA) // 紫色
+            title = "月均工资",
+            count = summary.settledProjectCount,
+            amount = summary.monthlyAvgAmount,
+            iconColor = Color(0xFF9333EA), // 紫色
+            amountLabel = "月均："
         )
     )
 
@@ -599,9 +609,10 @@ fun StatCardItem(
                 ) {
                     Text(
                         text = when (card.title) {
-                            "未结算工程" -> "⏱"
-                            "预支总额" -> "💰"
-                            "工程总额" -> "✓"
+                            "待结算工程" -> "⏱"
+                            "预支金额" -> "💰"
+                            "今年工量" -> "✓"
+                            "月均工资" -> "📅"
                             else -> "📅"
                         },
                         fontSize = 14.sp,
@@ -619,13 +630,13 @@ fun StatCardItem(
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
-            // 下部：总额
+            // 下部：金额（标签由卡片数据决定：总额/应收/月均）
             Row(
                 modifier = Modifier.padding(start = 40.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "总额：",
+                    text = card.amountLabel,
                     fontSize = 12.sp,
                     color = Color(0xFF64748B)
                 )
