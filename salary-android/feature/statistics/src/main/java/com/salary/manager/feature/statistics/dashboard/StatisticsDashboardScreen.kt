@@ -94,6 +94,9 @@ import com.salary.manager.feature.statistics.advance.CreateAdvanceDialog
  * 包含：顶部导航栏、Tab切换（统计/预支）、HorizontalPager左右滑动切换内容
  * - 统计Tab：4宫格统计卡片、结算单表格区域、结算历史区域
  * - 预支Tab：预支记录列表+创建预支
+ *
+ * @param onMessageClick 顶部导航栏消息图标点击回调
+ * @param unreadCount 未读消息数（由AppNavHost全局传入）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -102,7 +105,9 @@ fun StatisticsDashboardScreen(
     advanceViewModel: AdvanceViewModel = hiltViewModel(),
     userNickname: String = "",
     /** 刷新触发器：值变化时静默刷新统计数据（用于Tab切换时刷新） */
-    refreshTrigger: Int = 0
+    refreshTrigger: Int = 0,
+    onMessageClick: (() -> Unit)? = null,
+    unreadCount: Int = 0
 ) {
     val state by viewModel.state.collectAsState()
     val settlementSummary by viewModel.settlementSummary.collectAsState()
@@ -175,7 +180,8 @@ fun StatisticsDashboardScreen(
                     GreenTopNavBar(
                         title = "统计结算",
                         userNickname = userNickname.ifEmpty { "未登录" },
-                        unreadCount = 0
+                        unreadCount = unreadCount,
+                        onMessageClick = onMessageClick
                     )
 
                     // 顶部Tab菜单：统计 / 预支
@@ -232,11 +238,11 @@ fun StatisticsDashboardScreen(
                                             formatNumber = { viewModel.formatNumber(it) },
                                             onCardClick = { type ->
                                                 statsFilterType = when (type) {
-                                                    "未结算工程" -> "unsettled"
+                                                    "统计中工程" -> "settling"
                                                     "预支总额" -> "advance"
-                                                    "工程总额" -> "all"
-                                                    "实付总额" -> "settled"
-                                                    else -> "unsettled"
+                                                    "工程总额" -> "settling"  // 工程总额与统计中工程共用同一数据源
+                                                    "实付总额" -> "settled"   // 实付总额对应已结算工程
+                                                    else -> "settling"
                                                 }
                                                 if (statsFilterType == "advance") {
                                                     // 预支总额点击：切换到预支Tab
@@ -496,7 +502,7 @@ fun StatsGridSection(
 ) {
     val cards = listOf(
         StatCardData(
-            title = "未结算工程",
+            title = "统计中工程",
             count = summary.totalProjects,
             amount = summary.grandTotal,
             iconColor = Color(0xFFE6A23C) // 橙色

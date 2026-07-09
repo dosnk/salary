@@ -34,7 +34,8 @@ import com.salary.core.design.theme.AppColors
  *
  * @param title 左侧标题文字
  * @param userNickname 右侧用户昵称，为空则不显示
- * @param unreadCount 未读消息数，0则不显示Badge
+ * @param unreadCount 未读消息数，0则不显示Badge；传负数则完全不显示消息图标
+ * @param onMessageClick 消息图标点击回调（传入null时图标不可点击，仅展示）
  * @param actions 右侧额外操作图标（如排料、知识库等）
  */
 @Composable
@@ -42,6 +43,7 @@ fun GreenTopNavBar(
     title: String = "三人行装修管理系统",
     userNickname: String = "",
     unreadCount: Int = 0,
+    onMessageClick: (() -> Unit)? = null,
     actions: @Composable () -> Unit = {}
 ) {
     // 绿色渐变画刷
@@ -57,7 +59,7 @@ fun GreenTopNavBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(horizontal = 16.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // 左侧标题
@@ -80,7 +82,8 @@ fun GreenTopNavBar(
             }
             // 右侧额外操作区
             actions()
-            // 消息图标（带未读数Badge）
+            // 消息图标（带未读数Badge，可点击）
+            // unreadCount >= 0 时显示图标；onMessageClick 非空时用 IconButton 包裹使其可点击
             if (unreadCount >= 0) {
                 BadgedBox(
                     badge = {
@@ -94,12 +97,24 @@ fun GreenTopNavBar(
                         }
                     }
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Email,
-                        contentDescription = "消息",
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
-                    )
+                    if (onMessageClick != null) {
+                        IconButton(onClick = onMessageClick) {
+                            Icon(
+                                imageVector = Icons.Default.Email,
+                                contentDescription = "消息",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    } else {
+                        // 无点击回调时仅展示图标（保持向后兼容）
+                        Icon(
+                            imageVector = Icons.Default.Email,
+                            contentDescription = "消息",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
         }

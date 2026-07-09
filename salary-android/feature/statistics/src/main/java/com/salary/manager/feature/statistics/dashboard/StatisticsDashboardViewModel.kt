@@ -324,22 +324,25 @@ class StatisticsDashboardViewModel @Inject constructor(
     /**
      * 加载统计卡片对应的工程列表
      * 对齐Vue前端 showConstructingProjects/showSettlingProjects/showSettledProjects/showThisMonthProjects 逻辑
-     * @param filterType 筛选类型：unsettled/settling/settled/thisMonth
+     * @param filterType 筛选类型：settling/settled/thisMonth
+     *
+     * 卡片与filterType对应关系：
+     * - "统计中工程"卡片 → settling → 查询已完工且结算状态为统计中的工程
+     * - "工程总额"卡片 → settling → 与统计中工程共用同一数据源（后端仅返回settling工程）
+     * - "实付总额"卡片 → settled → 查询当年已结算工程
      */
     fun loadStatsProjectList(filterType: String) {
         viewModelScope.launch {
             _statsProjectListState.value = ListUiState.Loading
             _statsPopupTitle.value = when (filterType) {
-                "unsettled" -> "未结算工程"
                 "settling" -> "统计中工程"
-                "settled" -> "今年结算工程"
+                "settled" -> "今年已结算工程"
                 "thisMonth" -> "本月工程"
                 else -> "工程列表"
             }
             try {
                 val now = java.time.LocalDate.now()
                 val params = when (filterType) {
-                    "unsettled" -> mapOf("status" to "constructing", "settlementStatus" to "unsettled")
                     "settling" -> mapOf("status" to "completed", "settlementStatus" to "settling")
                     "settled" -> mapOf("status" to "completed", "settlementStatus" to "settled", "year" to now.year.toString())
                     "thisMonth" -> mapOf("yearMonth" to "${now.year}-${String.format("%02d", now.monthValue)}")

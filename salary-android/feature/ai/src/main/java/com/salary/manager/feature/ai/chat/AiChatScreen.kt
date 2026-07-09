@@ -74,6 +74,8 @@ import com.salary.core.design.theme.AppColors
  * - 快捷提问建议
  * - 清空对话
  * - 失败重试
+ *
+ * @param onMessageClick 顶部导航栏消息图标点击回调（AI页面默认不显示消息图标，此参数预留）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -81,7 +83,8 @@ fun AiChatScreen(
     onNavigateToLayout: () -> Unit = {},
     onNavigateToKnowledge: () -> Unit = {},
     viewModel: AiChatViewModel = hiltViewModel(),
-    userNickname: String = ""
+    userNickname: String = "",
+    onMessageClick: (() -> Unit)? = null
 ) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()

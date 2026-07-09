@@ -23,6 +23,8 @@ import com.salary.core.design.theme.AppColors
 
 /**
  * 个人中心页面
+ *
+ * @param onMessageClick 顶部导航栏消息图标点击回调（与菜单"消息通知"一致）
  */
 @Composable
 fun ProfileScreen(
@@ -35,7 +37,8 @@ fun ProfileScreen(
     onLogout: () -> Unit = {},
     viewModel: ProfileViewModel = hiltViewModel(),
     userNickname: String = "",
-    unreadCount: Int = 0
+    unreadCount: Int = 0,
+    onMessageClick: (() -> Unit)? = null
 ) {
     val nickname by viewModel.nickname.collectAsStateWithLifecycle()
     val roleDisplay by viewModel.roleDisplay.collectAsStateWithLifecycle()
@@ -89,10 +92,12 @@ fun ProfileScreen(
             .verticalScroll(rememberScrollState())
     ) {
         // 顶部导航栏（显示响应式用户昵称和未读消息数）
+        // 消息图标点击回调优先使用 onMessageClick，未传入时回退到 onMessages（保持向后兼容）
         GreenTopNavBar(
             title = "个人中心",
             userNickname = userNickname.ifBlank { nickname }.ifBlank { "未登录" },
-            unreadCount = unreadCount
+            unreadCount = unreadCount,
+            onMessageClick = onMessageClick ?: onMessages
         )
 
         Spacer(modifier = Modifier.height(12.dp))

@@ -101,6 +101,8 @@ import kotlinx.coroutines.launch
  * 包含：顶部导航栏、工程创建表单、工程历史列表、底部版权
  *
  * @param onNavigateToProject 点击工程卡片时导航到工程详情
+ * @param onMessageClick 顶部导航栏消息图标点击回调
+ * @param unreadCount 未读消息数（由AppNavHost全局传入，确保与个人中心一致）
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -108,7 +110,9 @@ fun DashboardScreen(
     onNavigateToProject: (Int) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel(),
     latencyTracker: LatencyTracker? = null,
-    userNickname: String = ""
+    userNickname: String = "",
+    onMessageClick: (() -> Unit)? = null,
+    unreadCount: Int = 0
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -245,10 +249,12 @@ fun DashboardScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             // ===== 顶部导航栏：绿色渐变背景，高度自适应内容 =====
+            // 优先使用AppNavHost传入的全局未读数，确保各页面未读数一致
             GreenTopNavBar(
                 title = "三人行装修管理系统",
                 userNickname = userNickname.ifBlank { uiState.userNickname }.ifBlank { "未登录" },
-                unreadCount = uiState.unreadCount
+                unreadCount = if (unreadCount > 0) unreadCount else uiState.unreadCount,
+                onMessageClick = onMessageClick
             )
 
             // ===== 可滚动内容区域 =====
@@ -410,6 +416,166 @@ fun DashboardScreen(
                             }
                         }
 
+                        // 按工日分配模式下，在分配方式与施工人员选择之间显示工日输入区
+                        // 每行固定3个施工人员，超过3个自动换行，每行宽度自动占满容器
+                        if (uiState.salaryDistribution == "work_days" &&
+                            uiState.selectedConstructorIds.isNotEmpty()
+                        ) {
+                            val selectedWorkers = uiState.constructors.filter {
+                                uiState.selectedConstructorIds.contains(it.id)
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "工日设置（每人默认1工日）",
+                                fontSize = 13.sp,
+                                color = AppColors.TextSecondary
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            // 总工日输入框：独立一行，占满容器宽度（位于工日设置上方）
+                            // 为空时不校验；有值时校验各施工人员工日之和是否等于此值
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "总工日",
+                                    fontSize = 13.sp,
+                                    color = AppColors.TextSecondary
+                                )
+                                OutlinedTextField(
+                                    value = uiState.totalWorkdaysInput,
+                                    onValueChange = { newValue: String ->
+                                        viewModel.updateTotalWorkdaysInput(newValue)
+                                    },
+                                    placeholder = {
+                                        Text(
+                                            "输入总工数进行校验（可选）",
+                                            fontSize = 12.sp,
+                                            color = AppColors.TextTertiary
+                                        )
+                                    },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Decimal
+                                    ),
+                                    // 移除固定height，使用默认高度避免Material3内部padding裁切文字
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .heightIn(min = 48.dp),
+                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                        fontSize = 14.sp,
+                                        textAlign = TextAlign.End
+                                    ),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = AppColors.Green400,
+                                        unfocusedBorderColor = AppColors.Outline
+                                    ),
+                                    shape = RoundedCornerShape(6.dp)
+                                )
+                                Text(
+                                    text = "天",
+                                    fontSize = 13.sp,
+                                    color = AppColors.TextSecondary
+                                )
+                            }
+                            // 校验结果提示
+                            if (uiState.workdaysValidationHint.isNotEmpty()) {
+                                val hint = uiState.workdaysValidationHint
+                                val isConsistent = hint.contains("一致")
+                                Text(
+                                    text = hint,
+                                    fontSize = 11.sp,
+                                    color = if (isConsistent) AppColors.Green400 else Color(0xFFE6A23C),
+                                    modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            // 按每行3个分组，使用Row+weight实现等宽占满容器
+                            selectedWorkers.chunked(3).forEach { rowWorkers ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    rowWorkers.forEach { worker ->
+                                        // 每个施工人员一个等宽标签：姓名 + 工日输入框
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = AppColors.Green50,
+                                            border = androidx.compose.foundation.BorderStroke(
+                                                1.dp,
+                                                AppColors.Green200
+                                            ),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(
+                                                    horizontal = 6.dp,
+                                                    vertical = 6.dp
+                                                ),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = worker.nickname,
+                                                    fontSize = 12.sp,
+                                                    color = AppColors.Green700,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                // 工日输入框：仅允许数字和小数点
+                                                // 默认值为空，placeholder提示"1"；空值在计算和保存时按1工日处理
+                                                // 修复：移除固定height，使用默认高度+heightIn下限，避免Material3内部padding裁切文字
+                                                val workdayValue = uiState.workerWorkdays[worker.id] ?: ""
+                                                OutlinedTextField(
+                                                    value = workdayValue,
+                                                    onValueChange = { newValue: String ->
+                                                        viewModel.updateWorkerWorkdays(worker.id, newValue)
+                                                    },
+                                                    placeholder = {
+                                                        Text(
+                                                            "1",
+                                                            fontSize = 12.sp,
+                                                            color = AppColors.TextTertiary
+                                                        )
+                                                    },
+                                                    singleLine = true,
+                                                    keyboardOptions = KeyboardOptions(
+                                                        keyboardType = KeyboardType.Decimal
+                                                    ),
+                                                    modifier = Modifier
+                                                        .width(56.dp)
+                                                        .heightIn(min = 48.dp),
+                                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                                        fontSize = 14.sp,
+                                                        textAlign = TextAlign.Center
+                                                    ),
+                                                    colors = OutlinedTextFieldDefaults.colors(
+                                                        focusedContainerColor = Color.White,
+                                                        unfocusedContainerColor = Color.White,
+                                                        focusedBorderColor = AppColors.Green400,
+                                                        unfocusedBorderColor = AppColors.Green200
+                                                    ),
+                                                    shape = RoundedCornerShape(6.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(2.dp))
+                                                Text(
+                                                    text = "天",
+                                                    fontSize = 11.sp,
+                                                    color = AppColors.TextTertiary
+                                                )
+                                            }
+                                        }
+                                    }
+                                    // 不足3个时用空占位填充，保持每行等宽对齐
+                                    repeat(3 - rowWorkers.size) {
+                                        Spacer(modifier = Modifier.weight(1f))
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                        }
+
                         // 施工人员选择（方形Checkbox标签，FlowRow自动换行，一行约7个）
                         if (uiState.constructors.isNotEmpty()) {
                             Column {
@@ -477,67 +643,6 @@ fun DashboardScreen(
                                                 fontSize = 12.sp,
                                                 color = if (isSelected) AppColors.Green400
                                                 else AppColors.TextPrimary
-                                            )
-                                        }
-                                    }
-                                }
-
-                                // 按工日分配模式下显示工日输入区（仅已选施工人员）
-                                if (uiState.salaryDistribution == "work_days" &&
-                                    uiState.selectedConstructorIds.isNotEmpty()
-                                ) {
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = "工日设置",
-                                        fontSize = 13.sp,
-                                        color = AppColors.TextSecondary
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    // 已选施工人员的工日输入列表（每行一个，姓名+工日输入框）
-                                    uiState.constructors.filter {
-                                        uiState.selectedConstructorIds.contains(it.id)
-                                    }.forEach { worker ->
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(vertical = 2.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Text(
-                                                text = worker.nickname,
-                                                fontSize = 13.sp,
-                                                color = AppColors.TextPrimary,
-                                                modifier = Modifier.weight(1f)
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            // 工日输入框：小宽度，仅允许数字和小数点
-                                            // 默认值为空，点击直接输入；空值在计算和保存时按1工日处理
-                                            // 压缩高度：移除label改用placeholder，限制固定高度
-                                            val workdayValue = uiState.workerWorkdays[worker.id] ?: ""
-                                            OutlinedTextField(
-                                                value = workdayValue,
-                                                onValueChange = { newValue: String ->
-                                                    viewModel.updateWorkerWorkdays(worker.id, newValue)
-                                                },
-                                                placeholder = {
-                                                    Text("工日(1)", fontSize = 12.sp)
-                                                },
-                                                singleLine = true,
-                                                keyboardOptions = KeyboardOptions(
-                                                    keyboardType = KeyboardType.Decimal
-                                                ),
-                                                modifier = Modifier
-                                                    .width(110.dp)
-                                                    .height(40.dp),
-                                                textStyle = androidx.compose.ui.text.TextStyle(
-                                                    fontSize = 13.sp,
-                                                    textAlign = TextAlign.End
-                                                ),
-                                                colors = OutlinedTextFieldDefaults.colors(
-                                                    focusedBorderColor = AppColors.Green400
-                                                ),
-                                                shape = RoundedCornerShape(6.dp)
                                             )
                                         }
                                     }

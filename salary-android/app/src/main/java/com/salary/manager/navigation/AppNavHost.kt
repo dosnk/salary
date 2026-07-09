@@ -207,6 +207,10 @@ fun MainScaffold(
     // 个人中心子页面导航: 0=主页, 1=修改密码, 2=字典管理, 3=用户管理, 4=关于, 5=消息, 6=AI配置
     var profileSubPage by rememberSaveable { mutableIntStateOf(0) }
 
+    // 记录点击消息图标时所在的Tab，用于消息页返回时恢复到原页面
+    // -1 表示未从其他Tab跳转过来（即从"我的"Tab直接进入消息页）
+    var messageOriginTab by rememberSaveable { mutableIntStateOf(-1) }
+
     // 数据刷新触发器：切换到工程管理/统计Tab时递增，触发对应页面静默刷新
     // 解决：主页新建工程后切换Tab数据不更新的问题
     var projectListRefreshTrigger by rememberSaveable { mutableIntStateOf(0) }
@@ -232,6 +236,17 @@ fun MainScaffold(
     val messages by profileApiViewModel.messages.collectAsState()
     val unreadCount by profileApiViewModel.unreadCount.collectAsState()
 
+    // 全局消息点击回调：跳转到消息列表页（profileSubPage=5）
+    // 所有页面顶部导航栏的消息图标共用此回调，确保点击后统一进入消息中心
+    // 记录原Tab，消息页返回时恢复到原页面（而非停留在"我的"Tab）
+    val onMessageClick: () -> Unit = {
+        if (selectedTab != 4) {
+            messageOriginTab = selectedTab  // 记录原Tab（非"我的"Tab时才记录）
+        }
+        selectedTab = 4  // 切换到"我的"Tab
+        profileSubPage = 5  // 进入消息列表子页面
+    }
+
     // 进入子页面时加载对应数据
     LaunchedEffect(profileSubPage) {
         when (profileSubPage) {
@@ -250,6 +265,12 @@ fun MainScaffold(
             2 -> statisticsRefreshTrigger++   // 统计：静默刷新统计数据
             4 -> profileApiViewModel.loadUnreadCount()
         }
+    }
+
+    // 进入主页时主动加载一次未读消息数，使所有页面顶部导航栏消息Badge一致
+    // 不依赖Tab切换，确保登录后首个页面（主页）就能看到未读数
+    LaunchedEffect(Unit) {
+        profileApiViewModel.loadUnreadCount()
     }
 
     Scaffold(
@@ -319,7 +340,9 @@ fun MainScaffold(
                                 homeSubPage = 1
                             },
                             latencyTracker = latencyTracker,
-                            userNickname = userNickname
+                            userNickname = userNickname,
+                            onMessageClick = onMessageClick,
+                            unreadCount = unreadCount
                         )
                         1 -> {
                             // 工程详情页：滑动返回 + 系统返回拦截，避免误退出应用
@@ -347,7 +370,9 @@ fun MainScaffold(
                                 projectSubPage = 1
                             },
                             userNickname = userNickname,
-                            refreshTrigger = projectListRefreshTrigger
+                            refreshTrigger = projectListRefreshTrigger,
+                            onMessageClick = onMessageClick,
+                            unreadCount = unreadCount
                         )
                         1 -> {
                             // 工程详情页：滑动返回 + 系统返回拦截，避免误退出应用
@@ -370,7 +395,9 @@ fun MainScaffold(
                     // 统计（含预支Tab）
                     StatisticsDashboardScreen(
                         userNickname = userNickname,
-                        refreshTrigger = statisticsRefreshTrigger
+                        refreshTrigger = statisticsRefreshTrigger,
+                        onMessageClick = onMessageClick,
+                        unreadCount = unreadCount
                     )
                 }
                 3 -> {
@@ -379,7 +406,8 @@ fun MainScaffold(
                         0 -> AiChatScreen(
                             onNavigateToLayout = { aiSubPage = 1 },
                             onNavigateToKnowledge = { aiSubPage = 3 },
-                            userNickname = userNickname
+                            userNickname = userNickname,
+                            onMessageClick = onMessageClick
                         )
                         1 -> {
                             BackHandler { aiSubPage = 0 }
@@ -420,7 +448,8 @@ fun MainScaffold(
                             onMessages = { profileSubPage = 5 },
                             onLogout = onLogout,
                             userNickname = userNickname,
-                            unreadCount = unreadCount
+                            unreadCount = unreadCount,
+                            onMessageClick = onMessageClick
                         )
                         1 -> {
                             BackHandler { profileSubPage = 0 }
@@ -485,10 +514,18 @@ fun MainScaffold(
                             }
                         }
                         5 -> {
-                            BackHandler { profileSubPage = 0 }
-                            SwipeBackLayout(onBack = { profileSubPage = 0 }) {
+                            // 消息页返回逻辑：若从其他Tab点击消息图标进入，返回时恢复原Tab
+                            val onMessageBack: () -> Unit = {
+                                profileSubPage = 0
+                                if (messageOriginTab in 0..3) {
+                                    selectedTab = messageOriginTab
+                                    messageOriginTab = -1  // 重置，避免下次误恢复
+                                }
+                            }
+                            BackHandler { onMessageBack() }
+                            SwipeBackLayout(onBack = onMessageBack) {
                                 MessageScreen(
-                                    onBack = { profileSubPage = 0 },
+                                    onBack = onMessageBack,
                                     messages = messages,
                                     unreadCount = unreadCount,
                                     onMarkRead = { id -> profileApiViewModel.markMessageRead(id) },

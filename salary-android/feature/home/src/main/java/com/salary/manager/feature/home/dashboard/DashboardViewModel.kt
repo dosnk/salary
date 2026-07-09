@@ -123,6 +123,13 @@ data class DashboardUiState(
      * 仅当salaryDistribution="work_days"时启用
      */
     val workerWorkdays: Map<Int, String> = emptyMap(),
+    /**
+     * 总工日校验值（按工日分配时使用）
+     * 为空时不校验；有值时校验各施工人员工日之和是否等于此值
+     */
+    val totalWorkdaysInput: String = "",
+    /** 总工日校验结果提示（空字符串表示无提示） */
+    val workdaysValidationHint: String = "",
     /** 工程备注 */
     val remark: String = "",
 
@@ -593,8 +600,69 @@ class DashboardViewModel @Inject constructor(
         val newMap = _uiState.value.workerWorkdays.toMutableMap()
         newMap[userId] = filtered
         _uiState.value = _uiState.value.copy(workerWorkdays = newMap)
+        validateWorkdays()
         recalculate()
         saveFormDebounced()
+    }
+
+    /**
+     * 更新总工日校验输入值
+     * 为空时不校验；有值时校验各施工人员工日之和是否等于此值
+     */
+    fun updateTotalWorkdaysInput(value: String) {
+        if (_uiState.value.salaryDistribution != "work_days") return
+        // 过滤非法输入：仅允许数字和小数点
+        val filtered = value.filter { it.isDigit() || it == '.' }
+        _uiState.value = _uiState.value.copy(totalWorkdaysInput = filtered)
+        validateWorkdays()
+        saveFormDebounced()
+    }
+
+    /**
+     * 校验各施工人员工日之和与总工日输入是否一致
+     * - 总工日输入为空时不校验，清空提示
+     * - 总工日输入有值时：空值工日按1计算，比较合计与输入值
+     */
+    private fun validateWorkdays() {
+        val state = _uiState.value
+        if (state.salaryDistribution != "work_days") {
+            _uiState.value = state.copy(workdaysValidationHint = "")
+            return
+        }
+        val input = state.totalWorkdaysInput.trim()
+        // 总工日输入为空：不校验
+        if (input.isEmpty()) {
+            _uiState.value = state.copy(workdaysValidationHint = "")
+            return
+        }
+        val targetTotal = input.toDoubleOrNull()
+        if (targetTotal == null || targetTotal <= 0) {
+            _uiState.value = state.copy(workdaysValidationHint = "总工日输入无效")
+            return
+        }
+        // 计算各施工人员工日之和（空值按1计算）
+        val selectedIds = state.selectedConstructorIds
+        if (selectedIds.isEmpty()) {
+            _uiState.value = state.copy(workdaysValidationHint = "")
+            return
+        }
+        val sum = selectedIds.sumOf { id ->
+            val v = state.workerWorkdays[id]?.trim()
+            val parsed = v?.toDoubleOrNull()
+            if (parsed != null && parsed > 0) parsed else 1.0
+        }
+        // 允许0.01的浮点误差
+        val diff = kotlin.math.abs(sum - targetTotal)
+        // 使用 String.format 格式化数字（保留2位小数），避免依赖文件级私有函数
+        val sumStr = String.format("%.2f", sum)
+        val targetStr = String.format("%.2f", targetTotal)
+        _uiState.value = state.copy(
+            workdaysValidationHint = if (diff > 0.01) {
+                "工日合计 $sumStr 与总工日 $targetStr 不一致"
+            } else {
+                "工日合计 $sumStr 与总工日一致 ✓"
+            }
+        )
     }
 
     /**

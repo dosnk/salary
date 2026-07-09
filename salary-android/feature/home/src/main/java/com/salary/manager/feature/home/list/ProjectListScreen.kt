@@ -74,6 +74,9 @@ import java.util.Locale
 /**
  * 工程列表页面 - 对齐Vue前端Projects.vue设计
  * 包含：搜索栏+高级筛选、筛选标签、按月分组的工程卡片列表、下拉刷新+上拉加载
+ *
+ * @param onMessageClick 顶部导航栏消息图标点击回调
+ * @param unreadCount 未读消息数（由AppNavHost全局传入）
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -82,7 +85,9 @@ fun ProjectListScreen(
     viewModel: ProjectListViewModel = hiltViewModel(),
     userNickname: String = "",
     /** 刷新触发器：值变化时静默刷新列表数据（用于Tab切换时刷新） */
-    refreshTrigger: Int = 0
+    refreshTrigger: Int = 0,
+    onMessageClick: (() -> Unit)? = null,
+    unreadCount: Int = 0
 ) {
     val state by viewModel.state.collectAsState()
     val advancedFilter by viewModel.advancedFilter.collectAsState()
@@ -127,7 +132,8 @@ fun ProjectListScreen(
         GreenTopNavBar(
             title = "工程管理",
             userNickname = userNickname.ifBlank { "未登录" },
-            unreadCount = 0
+            unreadCount = unreadCount,
+            onMessageClick = onMessageClick
         )
 
         // 搜索栏 + 高级筛选按钮
