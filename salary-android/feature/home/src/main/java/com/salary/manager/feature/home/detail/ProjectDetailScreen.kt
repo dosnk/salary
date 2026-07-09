@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -48,6 +49,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -70,6 +72,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -1354,6 +1358,49 @@ fun EditProjectDialog(
             detail.workers.associate { it.userId to (it.workdays?.toString() ?: "") }
         )
     }
+    // 总工日校验输入值（为空时不校验；有值时校验各施工人员工日之和是否等于此值）
+    var totalWorkdaysInput by remember { mutableStateOf("") }
+    // 总工日校验结果提示（空字符串表示无提示）
+    var workdaysValidationHint by remember { mutableStateOf("") }
+
+    /**
+     * 校验各施工人员工日之和是否等于总工日输入值
+     * - 总工日为空时不校验
+     * - 差值<=0.01视为一致
+     */
+    fun validateWorkdays() {
+        if (salaryDistribution != "work_days") {
+            workdaysValidationHint = ""
+            return
+        }
+        val input = totalWorkdaysInput.trim()
+        if (input.isEmpty()) {
+            workdaysValidationHint = ""
+            return
+        }
+        val targetTotal = input.toDoubleOrNull()
+        if (targetTotal == null || targetTotal <= 0) {
+            workdaysValidationHint = "总工日输入无效"
+            return
+        }
+        if (selectedConstructorIds.isEmpty()) {
+            workdaysValidationHint = ""
+            return
+        }
+        val sum = selectedConstructorIds.sumOf { id ->
+            val v = workerWorkdays[id]?.trim()
+            val parsed = v?.toDoubleOrNull()
+            if (parsed != null && parsed > 0) parsed else 1.0
+        }
+        val diff = kotlin.math.abs(sum - targetTotal)
+        val sumStr = String.format("%.2f", sum)
+        val targetStr = String.format("%.2f", targetTotal)
+        workdaysValidationHint = if (diff > 0.01) {
+            "工日合计 $sumStr 与总工日 $targetStr 不一致"
+        } else {
+            "工日合计 $sumStr 与总工日一致 ✓"
+        }
+    }
 
     // 工程状态选项
     val statusOptions = listOf(
@@ -1505,42 +1552,160 @@ fun EditProjectDialog(
                         }
                     }
 
-                    // ===== 按工日分配模式：工日输入 =====
+                    // ===== 按工日分配模式：工日输入（与主页样式一致）=====
+                    // 布局：工日设置标题 → 总工日输入框 → 校验提示 → 每行3个施工人员等宽
                     if (salaryDistribution == "work_days" && selectedConstructorIds.isNotEmpty()) {
+                        val selectedWorkers = constructors.filter { it.id in selectedConstructorIds }
                         Column {
-                            Text("工日输入", fontSize = 13.sp, color = AppColors.TextSecondary)
+                            Text(
+                                text = "工日设置（每人默认1工日）",
+                                fontSize = 13.sp,
+                                color = AppColors.TextSecondary
+                            )
                             Spacer(modifier = Modifier.height(4.dp))
-                            constructors.filter { it.id in selectedConstructorIds }.forEach { worker ->
-                                Row(
+                            // 总工日输入框：独立一行，占满容器宽度（位于工日设置上方）
+                            // 为空时不校验；有值时校验各施工人员工日之和是否等于此值
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "总工日",
+                                    fontSize = 13.sp,
+                                    color = AppColors.TextSecondary
+                                )
+                                OutlinedTextField(
+                                    value = totalWorkdaysInput,
+                                    onValueChange = { value ->
+                                        // 仅允许数字和小数点
+                                        val filtered = value.filter { it.isDigit() || it == '.' }
+                                        totalWorkdaysInput = filtered
+                                        validateWorkdays()
+                                    },
+                                    placeholder = {
+                                        Text(
+                                            "输入总工数进行校验（可选）",
+                                            fontSize = 12.sp,
+                                            color = AppColors.TextTertiary
+                                        )
+                                    },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Decimal
+                                    ),
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                        .weight(1f)
+                                        .heightIn(min = 48.dp),
+                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                        fontSize = 14.sp,
+                                        textAlign = TextAlign.End
+                                    ),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = AppColors.Green400,
+                                        unfocusedBorderColor = AppColors.Outline
+                                    ),
+                                    shape = RoundedCornerShape(6.dp)
+                                )
+                                Text(
+                                    text = "天",
+                                    fontSize = 13.sp,
+                                    color = AppColors.TextSecondary
+                                )
+                            }
+                            // 校验结果提示
+                            if (workdaysValidationHint.isNotEmpty()) {
+                                val hint = workdaysValidationHint
+                                val isConsistent = hint.contains("一致")
+                                Text(
+                                    text = hint,
+                                    fontSize = 11.sp,
+                                    color = if (isConsistent) AppColors.Green400 else Color(0xFFE6A23C),
+                                    modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            // 按每行3个分组，使用Row+weight实现等宽占满容器
+                            selectedWorkers.chunked(3).forEach { rowWorkers ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    Text(
-                                        text = worker.nickname,
-                                        fontSize = 13.sp,
-                                        color = AppColors.TextPrimary,
-                                        modifier = Modifier.width(80.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    OutlinedTextField(
-                                        value = workerWorkdays[worker.id] ?: "",
-                                        onValueChange = { value ->
-                                            // 仅允许数字和小数点
-                                            val filtered = value.filter { it.isDigit() || it == '.' }
-                                            workerWorkdays = workerWorkdays + (worker.id to filtered)
-                                        },
-                                        modifier = Modifier.width(100.dp),
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(8.dp),
-                                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
-                                        ),
-                                        placeholder = { Text("工日", fontSize = 13.sp) }
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("天", fontSize = 13.sp, color = AppColors.TextTertiary)
+                                    rowWorkers.forEach { worker ->
+                                        // 每个施工人员一个等宽标签：姓名 + 工日输入框
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = AppColors.Green50,
+                                            border = androidx.compose.foundation.BorderStroke(
+                                                1.dp,
+                                                AppColors.Green200
+                                            ),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(
+                                                    horizontal = 6.dp,
+                                                    vertical = 6.dp
+                                                ),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = worker.nickname,
+                                                    fontSize = 12.sp,
+                                                    color = AppColors.Green700,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                // 工日输入框：仅允许数字和小数点
+                                                val workdayValue = workerWorkdays[worker.id] ?: ""
+                                                OutlinedTextField(
+                                                    value = workdayValue,
+                                                    onValueChange = { value ->
+                                                        // 仅允许数字和小数点
+                                                        val filtered = value.filter { it.isDigit() || it == '.' }
+                                                        workerWorkdays = workerWorkdays + (worker.id to filtered)
+                                                        validateWorkdays()
+                                                    },
+                                                    placeholder = {
+                                                        Text(
+                                                            "1",
+                                                            fontSize = 12.sp,
+                                                            color = AppColors.TextTertiary
+                                                        )
+                                                    },
+                                                    singleLine = true,
+                                                    keyboardOptions = KeyboardOptions(
+                                                        keyboardType = KeyboardType.Decimal
+                                                    ),
+                                                    modifier = Modifier
+                                                        .width(56.dp)
+                                                        .heightIn(min = 48.dp),
+                                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                                        fontSize = 14.sp,
+                                                        textAlign = TextAlign.Center
+                                                    ),
+                                                    colors = OutlinedTextFieldDefaults.colors(
+                                                        focusedContainerColor = Color.White,
+                                                        unfocusedContainerColor = Color.White,
+                                                        focusedBorderColor = AppColors.Green400,
+                                                        unfocusedBorderColor = AppColors.Green200
+                                                    ),
+                                                    shape = RoundedCornerShape(6.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(2.dp))
+                                                Text(
+                                                    text = "天",
+                                                    fontSize = 11.sp,
+                                                    color = AppColors.TextTertiary
+                                                )
+                                            }
+                                        }
+                                    }
+                                    // 不足3个时用空占位填充，保持每行等宽对齐
+                                    repeat(3 - rowWorkers.size) {
+                                        Spacer(modifier = Modifier.weight(1f))
+                                    }
                                 }
                             }
                         }
