@@ -482,14 +482,18 @@ fun StatisticsDashboardScreen(
 
 /**
  * 统计卡片数据
- * @param amountLabel 金额标签（如"总额："、"月均："）
+ * @param count 份数显示文本（支持小数，如"1.5"）
+ * @param amount 金额
+ * @param amountLabel 金额标签（如"总额："、"应收："、"月均："）
+ * @param countSuffix 份数后辍，默认"份"
  */
 data class StatCardData(
     val title: String,
-    val count: Int,
+    val count: String,
     val amount: Double,
     val iconColor: Color,
-    val amountLabel: String = "总额："
+    val amountLabel: String = "总额：",
+    val countSuffix: String = "份"
 )
 
 /**
@@ -509,28 +513,32 @@ fun StatsGridSection(
     val cards = listOf(
         StatCardData(
             title = "待结算工程",
-            count = summary.totalProjects,
+            count = summary.totalProjects.toString(),
             amount = summary.grandTotal,
             iconColor = Color(0xFFE6A23C), // 橙色
             amountLabel = "应收："
         ),
         StatCardData(
             title = "预支金额",
-            count = summary.advanceCount,
+            count = summary.advanceCount.toString(),
             amount = summary.totalAdvance,
             iconColor = Color(0xFF409EFF), // 蓝色
             amountLabel = "总额："
         ),
         StatCardData(
             title = "今年工量",
-            count = summary.settledProjectCount,
+            count = summary.settledProjectCount.toString(),
             amount = summary.settledProjectTotalAmount,
             iconColor = Color(0xFF84CC16), // 绿色
             amountLabel = "总额："
         ),
         StatCardData(
             title = "月均工资",
-            count = summary.settledProjectCount,
+            count = if (summary.monthlyAvgCount == summary.monthlyAvgCount.toInt().toDouble()) {
+                summary.monthlyAvgCount.toInt().toString()
+            } else {
+                String.format("%.1f", summary.monthlyAvgCount)
+            },
             amount = summary.monthlyAvgAmount,
             iconColor = Color(0xFF9333EA), // 紫色
             amountLabel = "月均："
@@ -621,7 +629,7 @@ fun StatCardItem(
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "${card.count} 份${card.title}",
+                    text = "${card.count}${card.countSuffix}${card.title}",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     color = Color(0xFF333842),
