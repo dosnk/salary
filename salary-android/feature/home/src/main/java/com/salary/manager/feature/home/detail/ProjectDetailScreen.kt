@@ -1,5 +1,10 @@
 package com.salary.manager.feature.home.detail
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -69,6 +74,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -1614,14 +1620,32 @@ fun EditProjectDialog(
                                 )
                             }
                             // 校验结果提示
+                            // 一致时：绿色常规字号
+                            // 不一致时：橙色加大字号+加粗+闪烁动画（alpha 0.4↔1.0），提示用户注意
                             if (workdaysValidationHint.isNotEmpty()) {
                                 val hint = workdaysValidationHint
                                 val isConsistent = hint.contains("一致")
+                                // 不一致时使用无限循环透明度动画
+                                val infiniteTransition = rememberInfiniteTransition(label = "workdaysHint")
+                                val alpha by infiniteTransition.animateFloat(
+                                    initialValue = 0.4f,
+                                    targetValue = 1.0f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(durationMillis = 700),
+                                        repeatMode = RepeatMode.Reverse
+                                    ),
+                                    label = "hintAlpha"
+                                )
                                 Text(
                                     text = hint,
-                                    fontSize = 11.sp,
+                                    fontSize = if (isConsistent) 11.sp else 14.sp,
+                                    fontWeight = if (isConsistent) FontWeight.Normal else FontWeight.Bold,
                                     color = if (isConsistent) AppColors.Green400 else Color(0xFFE6A23C),
-                                    modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                                    modifier = Modifier
+                                        .padding(start = 4.dp, top = 2.dp)
+                                        .graphicsLayer {
+                                            this.alpha = if (isConsistent) 1.0f else alpha
+                                        }
                                 )
                             }
                             Spacer(modifier = Modifier.height(6.dp))
