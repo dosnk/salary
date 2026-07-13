@@ -761,17 +761,57 @@ module.exports = {
 
     // ========== 卡片1：待结算工程（已完工未结算，settling状态） ==========
     // 份数（工程级）：COUNT(DISTINCT p.id)
-    // 金额（个人级）：wage_distributions 中该用户在 settling 工程下的金额合计
-    // 注意：pus必须限制 user_id，否则多用户时JOIN产生笛卡尔积导致金额重复累加
+    // 金额（个人级）：按 salary_distribution 分配方式计算个人分摊金额合计
+    //   - average：子项目总额 / 施工人数
+    //   - work_days：子项目总额 * (个人工日 / 总工日)
+    // 关键：settling 工程尚未结算，wage_distributions 表无记录，
+    //       必须从 subprojects.amount 聚合并按 calculateUserWage 逻辑计算个人分摊
+    // 注意：pus必须限制 user_id，否则多用户时视图产生多行导致金额重复累加
     let settlingQuery = `
       SELECT
         COUNT(DISTINCT p.id) AS unsettled_project_count,
-        COALESCE(SUM(wd.amount), 0) AS unsettled_amount
+        COALESCE(SUM(
+          CASE
+            WHEN p.salary_distribution = 'average' THEN
+              sp_agg.sp_total / GREATEST(COALESCE(wc.worker_count, 0), 1)
+            WHEN p.salary_distribution = 'work_days' THEN
+              CASE
+                WHEN COALESCE(tw.total_workdays, 0) > 0 THEN
+                  sp_agg.sp_total * (COALESCE(uw.user_workdays, 0) / tw.total_workdays)
+                ELSE
+                  sp_agg.sp_total / GREATEST(COALESCE(wc.worker_count, 0), 1)
+              END
+            ELSE
+              sp_agg.sp_total / GREATEST(COALESCE(wc.worker_count, 0), 1)
+          END
+        ), 0) AS unsettled_amount
       FROM projects p
       INNER JOIN v_project_user_settlement_status pus
         ON p.id = pus.project_id AND pus.user_id = $1 AND pus.settlement_status = 'settling'
-      INNER JOIN subprojects sp ON p.id = sp.project_id
-      INNER JOIN wage_distributions wd ON sp.id = wd.subproject_id AND wd.user_id = $1
+      -- 子项目金额聚合（与 getProjects 保持一致，不限制子项目状态）
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(sp.amount), 0) AS sp_total
+        FROM subprojects sp
+        WHERE sp.project_id = p.id
+      ) sp_agg ON true
+      -- 施工人数（与 getProjects 保持一致，用 COUNT(DISTINCT user_id)）
+      LEFT JOIN LATERAL (
+        SELECT COUNT(DISTINCT pw2.user_id) AS worker_count
+        FROM project_workers pw2
+        WHERE pw2.project_id = p.id
+      ) wc ON true
+      -- 总工日
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(pw3.workdays), 0) AS total_workdays
+        FROM project_workers pw3
+        WHERE pw3.project_id = p.id
+      ) tw ON true
+      -- 当前用户个人工日（admin/documenter 可能不在 project_workers 中，用 LEFT JOIN 保留工程）
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(pw4.workdays, 0) AS user_workdays
+        FROM project_workers pw4
+        WHERE pw4.project_id = p.id AND pw4.user_id = $1
+      ) uw ON true
       WHERE 1=1
     `;
     let settlingParams = [userId];
