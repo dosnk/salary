@@ -33,9 +33,9 @@ interface SalarySheetApi {
     @POST("v1/salary-sheet/settle")
     suspend fun settle(@Body body: SettleRequest): ApiResponse<SettleResponseDto>
 
-    /** 获取已结算工程列表 */
+    /** 获取已结算工程列表（扁平结构：每行一个project+plan组合） */
     @GET("v1/salary-sheet/settled-projects")
-    suspend fun getSettledProjects(): ApiResponse<List<SalaryProjectDto>>
+    suspend fun getSettledProjects(): ApiResponse<List<SettledProjectRowDto>>
 
     /** 获取已结算预支列表 */
     @GET("v1/salary-sheet/settled-advances")
@@ -244,4 +244,33 @@ data class SettlementHistoryDto(
     val totalAdvance: Double = 0.0,
     @SerialName("final_total")
     val finalTotal: Double = 0.0
+)
+
+// ========== 已结算工程（扁平行结构） ==========
+
+/**
+ * 已结算工程扁平行DTO
+ * 后端 /v1/salary-sheet/settled-projects 返回的是扁平行结构（每行一个project+plan组合），
+ * 不是嵌套结构，因此需要单独的DTO接收。
+ * 字段对齐后端SQL返回：p.id, p.name as project_name, p.created_at, cp.id as plan_id,
+ * cp.name as plan_name, cp.unit, user_amount, user_quantity
+ */
+@Serializable
+data class SettledProjectRowDto(
+    val id: Int = 0,
+    @SerialName("project_name")
+    val projectName: String = "",
+    @SerialName("created_at")
+    val createdAt: String = "",
+    @SerialName("plan_id")
+    val planId: Int = 0,
+    @SerialName("plan_name")
+    val planName: String = "",
+    val unit: String? = null,
+    /** 用户分摊金额（元） */
+    @SerialName("user_amount")
+    val userAmount: Double = 0.0,
+    /** 用户分摊数量 */
+    @SerialName("user_quantity")
+    val userQuantity: Double = 0.0
 )

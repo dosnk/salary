@@ -727,6 +727,181 @@ module.exports = {
   },
 
   /**
+   * 获取仪表盘卡片统计数据（统计页顶部4个卡片）
+   * 所有计算由后端完成，前端只做展示。
+   *
+   * 卡片1 - 待结算工程（已完工未结算）：
+   *   - unsettled_project_count: settling状态工程份数（工程级，按project_id去重）
+   *   - unsettled_amount: 个人应收总额（wage_distributions金额合计，个人级）
+   *
+   * 卡片2 - 预支金额：
+   *   - advance_count: 未结算预支条数
+   *   - advance_total: 未结算预支总金额
+   *
+   * 卡片3 - 今年工程量（所有状态）：
+   *   - year_project_count: 今年创建的所有工程份数（不限结算状态，按project_id去重）
+   *   - year_project_amount: 今年创建的所有工程总额（projects.total_amount之和，工程级）
+   *
+   * 卡片4 - 月均工资：
+   *   - monthly_avg_count: 月均份数 = 今年已结算工程数 / 当前月份（工程级）
+   *   - monthly_avg_amount: 月均金额 = 今年个人已结算工资 / 当前月份（个人级）
+   *
+   * @param {Object} params
+   * @param {number} params.userId - 当前用户ID
+   * @param {string} params.role - 当前用户角色
+   * @returns {Promise<Object>} 4个卡片的聚合数据
+   */
+  async getDashboard({ userId, role }) {
+    const isConstructorUser = isConstructor({ role });
+    const currentYear = new Date().getFullYear();
+    const currentMonth = new Date().getMonth() + 1;
+    const monthDivisor = Math.max(currentMonth, 1);
+
+    logger.info(`[getDashboard] userId=${userId}, role=${role}, isConstructor=${isConstructorUser}, year=${currentYear}, month=${currentMonth}`);
+
+    // ========== 卡片1：待结算工程（已完工未结算，settling状态） ==========
+    // 份数（工程级）：COUNT(DISTINCT p.id)
+    // 金额（个人级）：wage_distributions 中该用户在 settling 工程下的金额合计
+    // 注意：pus必须限制 user_id，否则多用户时JOIN产生笛卡尔积导致金额重复累加
+    let settlingQuery = `
+      SELECT
+        COUNT(DISTINCT p.id) AS unsettled_project_count,
+        COALESCE(SUM(wd.amount), 0) AS unsettled_amount
+      FROM projects p
+      INNER JOIN v_project_user_settlement_status pus
+        ON p.id = pus.project_id AND pus.user_id = $1 AND pus.settlement_status = 'settling'
+      INNER JOIN subprojects sp ON p.id = sp.project_id
+      INNER JOIN wage_distributions wd ON sp.id = wd.subproject_id AND wd.user_id = $1
+      WHERE 1=1
+    `;
+    let settlingParams = [userId];
+
+    // 施工员额外校验必须是项目参与者
+    if (isConstructorUser) {
+      settlingQuery += `
+        AND EXISTS (
+          SELECT 1 FROM project_workers pw
+          WHERE pw.project_id = p.id AND pw.user_id = $1
+        )
+      `;
+    }
+
+    const settlingResult = await pool.query(settlingQuery, settlingParams);
+    const unsettledProjectCount = parseInt(settlingResult.rows[0].unsettled_project_count) || 0;
+    const unsettledAmount = parseFloat(settlingResult.rows[0].unsettled_amount) || 0;
+
+    // ========== 卡片2：预支金额（未结算预支） ==========
+    const advanceResult = await pool.query(`
+      SELECT
+        COUNT(*) AS advance_count,
+        COALESCE(SUM(wa.advance_amount), 0) AS advance_total
+      FROM wage_advances wa
+      WHERE wa.user_id = $1 AND wa.settled = false
+    `, [userId]);
+    const advanceCount = parseInt(advanceResult.rows[0].advance_count) || 0;
+    const advanceTotal = parseFloat(advanceResult.rows[0].advance_total) || 0;
+
+    // ========== 卡片3：今年工程量（所有状态） ==========
+    // 今年创建的所有工程（不限结算状态），份数按 project_id 去重，金额为工程级 total_amount 合计
+    // 注意：不关联 pus 视图，直接查 projects 表，避免多用户视图产生重复行导致 total_amount 重复累加
+    let yearProjectQuery = `
+      SELECT
+        COUNT(DISTINCT p.id) AS year_project_count,
+        COALESCE(SUM(COALESCE(p.total_amount, 0)), 0) AS year_project_amount
+      FROM projects p
+      WHERE EXTRACT(YEAR FROM p.created_at) = $2
+    `;
+    let yearProjectParams = [userId, currentYear];
+
+    if (isConstructorUser) {
+      yearProjectQuery += `
+        AND EXISTS (
+          SELECT 1 FROM project_workers pw
+          WHERE pw.project_id = p.id AND pw.user_id = $1
+        )
+      `;
+    }
+
+    const yearProjectResult = await pool.query(yearProjectQuery, yearProjectParams);
+    const yearProjectCount = parseInt(yearProjectResult.rows[0].year_project_count) || 0;
+    const yearProjectAmount = parseFloat(yearProjectResult.rows[0].year_project_amount) || 0;
+
+    // ========== 卡片4：月均工资 ==========
+    // 份数（工程级）：今年已结算工程数 / 当前月份
+    // 金额（个人级）：今年个人已结算工资合计 / 当前月份
+    // 说明：wage_distributions 仅在结算时生成，天然限定为已结算数据
+
+    // 4.1 今年已结算工程数（工程级，用于月均份数）
+    // 注意：pus必须限制 user_id，否则多用户时同一工程多行导致计数重复
+    let yearSettledCountQuery = `
+      SELECT COUNT(DISTINCT p.id) AS year_settled_count
+      FROM projects p
+      INNER JOIN v_project_user_settlement_status pus
+        ON p.id = pus.project_id AND pus.user_id = $1 AND pus.settlement_status = 'settled'
+      WHERE EXTRACT(YEAR FROM p.created_at) = $2
+    `;
+    let yearSettledCountParams = [userId, currentYear];
+
+    if (isConstructorUser) {
+      yearSettledCountQuery += `
+        AND EXISTS (
+          SELECT 1 FROM project_workers pw
+          WHERE pw.project_id = p.id AND pw.user_id = $1
+        )
+      `;
+    }
+
+    const yearSettledCountResult = await pool.query(yearSettledCountQuery, yearSettledCountParams);
+    const yearSettledCount = parseInt(yearSettledCountResult.rows[0].year_settled_count) || 0;
+
+    // 4.2 今年个人已结算工资合计（个人级，用于月均金额）
+    // 注意：pus必须限制 user_id，否则多用户时JOIN产生笛卡尔积导致 wd.amount 重复累加
+    let yearSettledUserQuery = `
+      SELECT COALESCE(SUM(wd.amount), 0) AS year_settled_user_amount
+      FROM projects p
+      INNER JOIN v_project_user_settlement_status pus
+        ON p.id = pus.project_id AND pus.user_id = $1 AND pus.settlement_status = 'settled'
+      INNER JOIN subprojects sp ON p.id = sp.project_id
+      INNER JOIN wage_distributions wd ON sp.id = wd.subproject_id AND wd.user_id = $1
+      WHERE EXTRACT(YEAR FROM p.created_at) = $2
+    `;
+    let yearSettledUserParams = [userId, currentYear];
+
+    if (isConstructorUser) {
+      yearSettledUserQuery += `
+        AND EXISTS (
+          SELECT 1 FROM project_workers pw
+          WHERE pw.project_id = p.id AND pw.user_id = $1
+        )
+      `;
+    }
+
+    const yearSettledUserResult = await pool.query(yearSettledUserQuery, yearSettledUserParams);
+    const yearSettledUserAmount = parseFloat(yearSettledUserResult.rows[0].year_settled_user_amount) || 0;
+
+    // 月均工资 = 今年个人已结算金额 / 当前月份（至少为1避免除零）
+    const monthlyAvgCount = yearSettledCount / monthDivisor;
+    const monthlyAvgAmount = yearSettledUserAmount / monthDivisor;
+
+    const result = {
+      // 卡片1：待结算工程
+      unsettled_project_count: unsettledProjectCount,
+      unsettled_amount: Math.round(unsettledAmount * 100) / 100,
+      // 卡片2：预支金额
+      advance_count: advanceCount,
+      advance_total: Math.round(advanceTotal * 100) / 100,
+      // 卡片3：今年工程量（所有状态）
+      year_project_count: yearProjectCount,
+      year_project_amount: Math.round(yearProjectAmount * 100) / 100,
+      // 卡片4：月均工资
+      monthly_avg_count: Math.round(monthlyAvgCount * 10) / 10,
+      monthly_avg_amount: Math.round(monthlyAvgAmount * 100) / 100
+    };
+    logger.info(`[getDashboard] result for user ${userId}: ${JSON.stringify(result)}`);
+    return result;
+  },
+
+  /**
    * 获取人员统计
    * 按人员分组统计已完工子项目的数量、金额和参与工程数
    * 业务规则：

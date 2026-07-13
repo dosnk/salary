@@ -129,6 +129,31 @@ const getWorkerStatistics = async (ctx) => {
   }
 };
 
+/**
+ * 获取仪表盘卡片统计（统计页顶部4个卡片）
+ * 所有计算由后端完成，前端直接展示。
+ * 返回字段：unsettled_project_count, unsettled_amount,
+ *           advance_count, advance_total,
+ *           year_settled_count, year_settled_amount,
+ *           monthly_avg_count, monthly_avg_amount
+ */
+const getDashboard = async (ctx) => {
+  const userId = ctx.state.user.id;
+  const role = ctx.state.user.role;
+
+  try {
+    const result = await statisticsService.getDashboard({ userId, role });
+    ctx.success(result);
+  } catch (error) {
+    if (error.name === 'BusinessError') {
+      ctx.fail(error.code, error.message);
+      return;
+    }
+    logger.error('获取仪表盘统计失败:', error);
+    ctx.fail(5001, '获取仪表盘统计失败');
+  }
+};
+
 // ========== 校验规则 ==========
 
 /** 月度统计参数校验 */
@@ -149,6 +174,7 @@ module.exports = {
   getIncomeStatistics,
   getConstructionPlanStatistics,
   getWorkerStatistics,
+  getDashboard,
   getMonthlyStatisticsSchema,
   getIncomeStatisticsSchema
 };

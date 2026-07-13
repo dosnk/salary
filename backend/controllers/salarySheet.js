@@ -624,7 +624,7 @@ const getSettledProjects = async (ctx) => {
       SELECT 
         p.id,
         p.name as project_name,
-        p.created_at,
+        TO_CHAR(p.created_at, 'YYYY-MM-DD HH24:MI') as created_at,
         cp.id as plan_id,
         cp.name as plan_name,
         cp.unit,
@@ -667,8 +667,11 @@ const getSettledProjects = async (ctx) => {
       ORDER BY p.id, cp.id
     `, [userId]);
 
+    // 显式将 NUMERIC 类型字段转为 float，避免 pg 类型解析器未生效时返回字符串
+    // 导致前端 Kotlin Double 解析失败变为 0
     const formattedRows = result.rows.map(row => ({
       ...row,
+      user_amount: parseFloat(row.user_amount || 0),
       user_quantity: parseFloat(row.user_quantity || 0)
     }));
 
@@ -794,7 +797,8 @@ const getSettlementHistory = async (ctx) => {
             unit: item.unit,
             price: item.price,
             quantity: item.quantity || item.user_quantity,
-            user_quantity: item.user_quantity
+            user_quantity: item.user_quantity,
+            user_amount: parseFloat(item.user_amount) || 0
           });
           
           // 累加施工方案汇总

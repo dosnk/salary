@@ -22,4 +22,7 @@ router.get('/construction-plans', auth.authenticate, requireStatisticsAccess(), 
 // 人员统计
 router.get('/workers', auth.authenticate, requireStatisticsAccess(), statisticsController.getWorkerStatistics);
 
+// 仪表盘卡片统计（统计页顶部4个卡片，所有计算由后端完成）
+router.get('/dashboard', auth.authenticate, requireStatisticsAccess(), statisticsController.getDashboard);
+
 module.exports = router;

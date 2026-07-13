@@ -8,12 +8,13 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -21,7 +22,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -35,7 +35,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
@@ -263,20 +262,22 @@ fun DashboardScreen(
                 onMessageClick = onMessageClick
             )
 
-            // ===== 可滚动内容区域 =====
+            // ===== 可滚动内容区域（LazyColumn懒加载，仅组合可见项） =====
             // 外层水平padding设为4dp（原8dp），使工程历史卡片宽度约占屏幕98%
             // 表单Card单独补偿4dp水平padding，保持原有视觉边距
-            Column(
+            LazyColumn(
                 modifier = Modifier
                     .weight(1f)
-                    .verticalScroll(rememberScrollState())
-                    .background(AppColors.Background)
-                    .padding(horizontal = 4.dp)
+                    .background(AppColors.Background),
+                contentPadding = PaddingValues(horizontal = 4.dp)
             ) {
-                Spacer(modifier = Modifier.height(8.dp))
+                item {
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
 
                 // ===== 工程创建表单 Card =====
-                Card(
+                item {
+                    Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 4.dp),
@@ -748,16 +749,19 @@ fun DashboardScreen(
                         }
                     }
                 }
+                } // end of form Card item
 
-                Spacer(modifier = Modifier.height(8.dp))
+                item {
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
 
-                // ===== 工程历史区域（合并外层双重Column，减少嵌套层级） =====
-                // 水平padding设为0，直接填满外层Column可用宽度，使工程历史卡片宽度约占屏幕98%
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp)
-                ) {
+                // ===== 工程历史区域标题 =====
+                item {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp)
+                    ) {
                     // 标题行：工程历史（深色大字+下方绿色短线，建立区域权威感）
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -813,9 +817,12 @@ fun DashboardScreen(
                             .height(2.dp)
                             .background(AppColors.Green400, RoundedCornerShape(1.dp))
                     )
+                    } // end of header item
+                }
 
-                    // 加载中状态
-                    if (uiState.isLoadingProjects) {
+                // 工程列表：加载中/空状态/懒加载列表
+                if (uiState.isLoadingProjects) {
+                    item {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -824,8 +831,10 @@ fun DashboardScreen(
                         ) {
                             CircularProgressIndicator(color = AppColors.Green400)
                         }
-                    } else if (uiState.projects.isEmpty()) {
-                        // 空状态
+                    }
+                } else if (uiState.projects.isEmpty()) {
+                    // 空状态
+                    item {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -834,29 +843,32 @@ fun DashboardScreen(
                         ) {
                             Text("暂无数据", color = AppColors.TextTertiary, fontSize = 14.sp)
                         }
-                    } else {
-                        // 工程卡片列表（卡片不跳转详情页，仅展示信息）
-                        uiState.projects.forEach { project ->
-                            ProjectHistoryCard(
-                                project = project,
-                                viewModel = viewModel
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                        }
+                    }
+                } else {
+                    // 工程卡片列表（LazyColumn懒加载，仅组合可见项）
+                    items(uiState.projects, key = { it.id }) { project ->
+                        ProjectHistoryCard(
+                            project = project,
+                            viewModel = viewModel
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                item {
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
 
                 // ===== 底部版权 + 服务器状态（版权左，状态右对齐）=====
                 // 补偿4dp水平padding，保持与表单Card一致的视觉边距
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                     // 左侧：版权信息
                     Text(
                         text = "©微信群：三人行必有我师",
@@ -904,8 +916,11 @@ fun DashboardScreen(
                         )
                     }
                 }
+                } // end of footer item
 
-                Spacer(modifier = Modifier.height(16.dp))
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
             }
         }
 
@@ -1056,8 +1071,7 @@ private fun ProjectHistoryCard(
         // 子项目表格（无背景化，融入卡片）
         if (project.subprojects.isNotEmpty()) {
             SubprojectTable(
-                subprojects = project.subprojects,
-                viewModel = viewModel
+                subprojects = project.subprojects
             )
             Spacer(modifier = Modifier.height(6.dp))
         }
@@ -1135,8 +1149,7 @@ private fun ProjectInfoScrollRow(
  */
 @Composable
 private fun SubprojectTable(
-    subprojects: List<SubprojectUiModel>,
-    viewModel: DashboardViewModel
+    subprojects: List<SubprojectUiModel>
 ) {
     val scrollState = rememberScrollState()
     // 固定总宽度，超过容器宽度时启用水平滚动
@@ -1194,7 +1207,7 @@ private fun SubprojectTable(
                 // 数据库存储厘米，UI显示时除以100转为米（与表头"尺寸(米)"单位一致）
                 TableCell("${formatNumber(sub.length / 100.0)} × ${formatNumber(sub.width / 100.0)}", 110.dp)
                 TableCell(
-                    "${formatNumber(sub.quantity)} ${viewModel.getUnitDisplayName(sub.unit)}",
+                    "${formatNumber(sub.quantity)} ${sub.unitDisplayName}",
                     90.dp
                 )
                 // sub.amount 已由 AmountFormatter.format 格式化为 "¥12,345.00" 格式，直接显示即可

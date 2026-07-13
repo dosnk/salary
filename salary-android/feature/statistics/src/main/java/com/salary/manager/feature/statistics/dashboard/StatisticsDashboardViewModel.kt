@@ -19,6 +19,7 @@ import com.salary.core.network.api.SalaryProjectDto
 import com.salary.core.network.api.SalarySheetApi
 import com.salary.core.network.api.SettleRequest
 import com.salary.core.network.api.SettlementHistoryDto
+import com.salary.core.network.api.StatisticsApi
 import com.salary.core.network.dto.ProjectDto
 import com.salary.core.ui.state.ListUiState
 import com.salary.core.ui.state.UiState
@@ -28,6 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -37,13 +39,14 @@ import javax.inject.Inject
 /**
  * 统计面板ViewModel - 管理结算统计、结算单数据、结算历史和工程选择逻辑
  *
- * 结算统计数据从 /v1/salary-sheet/projects 返回的数据中提取，
- * 不再调用不存在的 /v1/statistics/settlements 接口
+ * 4个卡片统计数据从 /v1/statistics/dashboard 获取（后端统一计算，前端直接展示），
+ * 结算中工程列表从 /v1/salary-sheet/projects 获取（用于页面下方展示）。
  */
 @HiltViewModel
 class StatisticsDashboardViewModel @Inject constructor(
     private val salarySheetApi: SalarySheetApi,
     private val projectApi: ProjectApi,
+    private val statisticsApi: StatisticsApi,
     private val userStorage: UserStorage,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
@@ -111,6 +114,10 @@ class StatisticsDashboardViewModel @Inject constructor(
     private val _exportingId = MutableStateFlow<Int?>(null)
     val exportingId: StateFlow<Int?> = _exportingId.asStateFlow()
 
+    private companion object {
+        const val TAG = "StatisticsDashboardVM"
+    }
+
     init {
         loadAllData()
     }
@@ -158,16 +165,22 @@ class StatisticsDashboardViewModel @Inject constructor(
     }
 
     /**
-     * 加载结算单数据（施工方案 + 工程列表 + 已结算工程）
-     * 同时从工程数据中提取4个卡片的统计信息：
-     * - 待结算工程：settling状态工程份数+个人应收总额
-     * - 预支金额：未结算预支份数+总额（个人维度）
-     * - 今年工量：今年已结算工程份数+工程总额（非个人分摊）
-     * - 月均工资：今年已结算工程月均份数+月均金额（个人分摊）
+     * 加载结算单数据（施工方案 + 工程列表 + 仪表盘卡片统计）
+     *
+     * 数据来源分工：
+     * - 施工方案列表：salarySheetApi.getConstructionPlans()
+     * - 结算中工程列表（页面下方列表展示）：salarySheetApi.getProjects()
+     * - 4个卡片统计数据：statisticsApi.getDashboard()（所有计算由后端完成，前端直接展示）
+     *
+     * 4个卡片数据由后端 /v1/statistics/dashboard 接口一次性返回：
+     * - 待结算工程：unsettledProjectCount + unsettledAmount（已完工未结算，份数工程级，金额个人级）
+     * - 预支金额：advanceCount + advanceTotal（未结算预支）
+     * - 今年工程量：yearProjectCount + yearProjectAmount（今年所有状态工程，工程级总额）
+     * - 月均工资：monthlyAvgCount + monthlyAvgAmount（份数工程级，金额个人级）
      */
     private suspend fun loadSalarySheetData() {
         try {
-            // 并行加载施工方案、工程数据、已结算工程数据
+            // 并行加载施工方案、工程列表、仪表盘统计数据
             kotlinx.coroutines.coroutineScope {
                 val plansJob = launch {
                     try {
@@ -176,7 +189,6 @@ class StatisticsDashboardViewModel @Inject constructor(
                             _constructionPlans.value = plansResponse.data!!
                         }
                     } catch (e: Exception) {
-                        // 记录错误但不中断其他数据加载
                         _errorMessage.value = NetworkErrorHandler.translate(e, "加载施工方案失败")
                     }
                 }
@@ -186,30 +198,25 @@ class StatisticsDashboardViewModel @Inject constructor(
                         if (projectsResponse.code == 200 && projectsResponse.data != null) {
                             val data = projectsResponse.data!!
                             _projectData.value = data.projects
-                            // 更新待结算工程和预支金额数据（个人维度）
-                            _settlementSummary.value = _settlementSummary.value.copy(
-                                totalProjects = data.projects.size,
-                                grandTotal = data.grandTotal,
-                                totalAdvance = data.totalAdvance,
-                                advanceCount = data.advances.size,
-                                finalTotal = data.finalTotal
-                            )
+                            // finalTotal 用于下方列表展示（结算中实付金额）
+                            _settlementSummary.update { it.copy(finalTotal = data.finalTotal) }
                         }
                     } catch (e: Exception) {
                         _errorMessage.value = NetworkErrorHandler.translate(e, "加载工程数据失败")
                     }
                 }
-                // 加载已结算工程数据（用于今年工量和月均工资）
-                val settledJob = launch {
+                // 仪表盘4个卡片数据：所有计算由后端完成
+                val dashboardJob = launch {
                     try {
-                        loadSettledProjectStats()
+                        loadDashboardStats()
                     } catch (e: Exception) {
-                        _errorMessage.value = NetworkErrorHandler.translate(e, "加载已结算工程数据失败")
+                        android.util.Log.e(TAG, "加载仪表盘统计失败", e)
+                        _errorMessage.value = NetworkErrorHandler.translate(e, "加载统计数据失败")
                     }
                 }
                 plansJob.join()
                 projectsJob.join()
-                settledJob.join()
+                dashboardJob.join()
             }
         } catch (e: Exception) {
             _errorMessage.value = NetworkErrorHandler.translate(e, "加载数据失败")
@@ -217,73 +224,37 @@ class StatisticsDashboardViewModel @Inject constructor(
     }
 
     /**
-     * 加载已结算工程统计（用于"今年工量"和"月均工资"卡片）
-     * - 今年工量：通过 projectApi 获取已结算工程列表，累加 totalAmount（工程总额）
-     * - 月均工资：通过 salarySheetApi.getSettledProjects 获取个人分摊金额，按月平均
+     * 加载仪表盘4个卡片统计数据
+     * 调用后端 /v1/statistics/dashboard 接口，所有金额计算由后端SQL聚合完成，前端不做任何计算。
      */
-    private suspend fun loadSettledProjectStats() {
-        val currentYear = java.time.LocalDate.now().year
-        val currentMonth = java.time.LocalDate.now().monthValue
-
-        // ===== 今年工量：工程总额（非个人分摊） =====
-        var settledCount = 0
-        var settledTotalAmount = 0.0
-        try {
-            val response = projectApi.getProjects(
-                page = 1,
-                size = 200,
-                status = "completed",
-                settlementStatus = "settled"
-            )
-            if (response.code == 200 && response.data != null) {
-                val pageData = response.data!!
-                // 按 createdAt 年份过滤出今年的已结算工程
-                val thisYearProjects = pageData.list.filter { dto ->
-                    try {
-                        dto.createdAt.substring(0, 4).toInt() == currentYear
-                    } catch (_: Exception) {
-                        false
-                    }
-                }
-                settledCount = thisYearProjects.size
-                settledTotalAmount = thisYearProjects.sumOf { it.totalAmount }
+    private suspend fun loadDashboardStats() {
+        val response = statisticsApi.getDashboard()
+        android.util.Log.d(TAG, "仪表盘统计: code=${response.code}, data=${response.data != null}")
+        if (response.code == 200 && response.data != null) {
+            val d = response.data!!
+            android.util.Log.d(TAG, "仪表盘数据: unsettled=${d.unsettledProjectCount}/${d.unsettledAmount}, " +
+                "advance=${d.advanceCount}/${d.advanceTotal}, " +
+                "yearProject=${d.yearProjectCount}/${d.yearProjectAmount}, " +
+                "monthlyAvg=${d.monthlyAvgCount}/${d.monthlyAvgAmount}")
+            _settlementSummary.update { current ->
+                current.copy(
+                    // 卡片1：待结算工程（份数工程级，金额个人级）
+                    totalProjects = d.unsettledProjectCount,
+                    grandTotal = d.unsettledAmount,
+                    // 卡片2：预支金额
+                    totalAdvance = d.advanceTotal,
+                    advanceCount = d.advanceCount,
+                    // 卡片3：今年工程量（所有状态，工程级总额）
+                    settledProjectCount = d.yearProjectCount,
+                    settledProjectTotalAmount = d.yearProjectAmount,
+                    // 卡片4：月均工资（份数工程级，金额个人级）
+                    // settledUserAmount 存储今年个人总额，供其他地方使用
+                    settledUserAmount = d.monthlyAvgAmount * java.time.LocalDate.now().monthValue.coerceAtLeast(1),
+                    monthlyAvgCount = d.monthlyAvgCount,
+                    monthlyAvgAmount = d.monthlyAvgAmount
+                )
             }
-        } catch (_: Exception) {
-            // 静默处理，不影响其他数据
         }
-
-        // ===== 月均工资：个人分摊金额 =====
-        var settledUserAmount = 0.0
-        try {
-            val settledResponse = salarySheetApi.getSettledProjects()
-            if (settledResponse.code == 200 && settledResponse.data != null) {
-                val settledProjects = settledResponse.data!!
-                // 按 createdAt 年份过滤出今年的已结算工程
-                val thisYearSettled = settledProjects.filter { project ->
-                    try {
-                        project.createdAt.substring(0, 4).toInt() == currentYear
-                    } catch (_: Exception) {
-                        false
-                    }
-                }
-                // 累加个人分摊金额（subprojects.userAmount）
-                settledUserAmount = thisYearSettled.sumOf { project ->
-                    project.subprojects.sumOf { it.userAmount }
-                }
-            }
-        } catch (_: Exception) {
-            // 静默处理
-        }
-
-        // 月均计算：总额 / 当前月份数（至少为1避免除零）
-        val monthDivisor = currentMonth.coerceAtLeast(1)
-        _settlementSummary.value = _settlementSummary.value.copy(
-            settledProjectCount = settledCount,
-            settledProjectTotalAmount = settledTotalAmount,
-            settledUserAmount = settledUserAmount,
-            monthlyAvgCount = settledCount.toDouble() / monthDivisor,
-            monthlyAvgAmount = settledUserAmount / monthDivisor
-        )
     }
 
     /** 加载结算历史 */
@@ -412,8 +383,8 @@ class StatisticsDashboardViewModel @Inject constructor(
      * 卡片与filterType对应关系：
      * - "待结算工程"卡片 → settling → 查询已完工且结算状态为settling的工程（个人维度）
      * - "预支金额"卡片 → advance → 切换到预支Tab（不加载工程列表）
-     * - "今年工量"卡片 → settled → 查询今年已结算工程（工程总额）
-     * - "月均工资"卡片 → settled → 查询今年已结算工程（与今年工量共用）
+     * - "今年工程量"卡片 → settled → 查询今年已结算工程（工程总额）
+     * - "月均工资"卡片 → settled → 查询今年已结算工程（与今年工程量共用）
      */
     fun loadStatsProjectList(filterType: String) {
         viewModelScope.launch {
@@ -689,14 +660,14 @@ class StatisticsDashboardViewModel @Inject constructor(
  * 结算统计摘要
  * 数据来源：
  * - 待结算工程/预支：/v1/salary-sheet/projects（个人维度）
- * - 今年工量：/v1/projects?settlementStatus=settled（工程总额）
+ * - 今年工程量：/v1/projects?settlementStatus=settled（工程总额）
  * - 月均工资：/v1/salary-sheet/settled-projects（个人分摊金额）
  */
 data class SettlementSummary(
-    // ===== 待结算工程（个人维度） =====
-    /** 待结算工程份数（settling状态） */
+    // ===== 待结算工程（份数工程级，金额个人级） =====
+    /** 待结算工程份数（settling状态，工程级） */
     val totalProjects: Int = 0,
-    /** 应收总额（个人分摊金额） */
+    /** 应收总额（个人分摊金额，个人级） */
     val grandTotal: Double = 0.0,
     // ===== 预支金额（个人维度） =====
     /** 未结算预支总额 */
@@ -706,12 +677,12 @@ data class SettlementSummary(
     // ===== 实付总额（个人维度，保留用于其他展示） =====
     /** 实付总额 */
     val finalTotal: Double = 0.0,
-    // ===== 今年工量（工程总额，非个人分摊） =====
-    /** 今年已结算工程份数 */
+    // ===== 今年工程量（所有状态，工程级总额） =====
+    /** 今年创建的所有工程份数（不限结算状态） */
     val settledProjectCount: Int = 0,
-    /** 今年已结算工程总额（工程原始总额，非个人分摊） */
+    /** 今年创建的所有工程总额（工程级 total_amount 合计） */
     val settledProjectTotalAmount: Double = 0.0,
-    // ===== 月均工资（个人维度） =====
+    // ===== 月均工资（份数工程级，金额个人级） =====
     /** 今年已结算工程个人分摊总额 */
     val settledUserAmount: Double = 0.0,
     /** 月均份数 */

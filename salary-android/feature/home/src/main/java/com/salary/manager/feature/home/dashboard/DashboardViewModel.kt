@@ -78,7 +78,9 @@ data class SubprojectUiModel(
     val quantity: Double,
     val amount: String,
     /** 计量单位 */
-    val unit: String = "area"
+    val unit: String = "area",
+    /** 计量单位的显示名称（预计算，避免在Composable中调用ViewModel） */
+    val unitDisplayName: String = "㎡"
 )
 
 /**
@@ -227,6 +229,9 @@ class DashboardViewModel @Inject constructor(
     /**
      * 加载初始数据：字典数据、用户信息、未读消息数、工程历史
      * 同时从缓存恢复地址映射和表单数据
+     *
+     * 优化：工程历史加载与字典数据并行执行，不等待字典加载完成
+     * （工程列表在施工方案加载完成后即可启动，无需等待全部字典数据）
      */
     private fun loadInitialData() {
         viewModelScope.launch {
@@ -234,19 +239,24 @@ class DashboardViewModel @Inject constructor(
 
             try {
                 coroutineScope {
-                    // 并行加载字典数据和用户信息
                     val spaceTypesDeferred = async { loadSpaceTypes() }
                     val plansDeferred = async { loadConstructionPlans() }
                     val constructorsDeferred = async { loadConstructors() }
                     val userInfoDeferred = async { loadUserInfo() }
                     val unreadDeferred = async { loadUnreadCount() }
 
-                    // 等待所有加载完成
-                    spaceTypesDeferred.await()
+                    // 等待施工方案加载完成（工程列表映射需要方案单位）
                     plansDeferred.await()
+
+                    // 施工方案就绪后立即并行加载工程历史，不等待其他字典数据
+                    val projectsDeferred = async { loadProjectsSuspend() }
+
+                    // 等待其余数据加载完成
+                    spaceTypesDeferred.await()
                     constructorsDeferred.await()
                     userInfoDeferred.await()
                     unreadDeferred.await()
+                    projectsDeferred.await()
                 }
 
                 // 从缓存恢复地址→施工人员映射（转为LinkedHashMap保持插入顺序）
@@ -260,9 +270,6 @@ class DashboardViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     isLoading = false
                 )
-
-                // 加载工程历史
-                loadProjects()
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -396,45 +403,50 @@ class DashboardViewModel @Inject constructor(
      * 列表接口已聚合返回 sub_projects，无需再发起N+1详情请求
      */
     fun loadProjects() {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoadingProjects = true)
+        viewModelScope.launch { loadProjectsSuspend() }
+    }
 
-            try {
-                val response = projectApi.getProjects(
-                    page = 1,
-                    size = 50,
-                    yearMonth = _uiState.value.selectedYearMonth
-                )
+    /**
+     * 加载工程历史列表的suspend实现（供并行调用）
+     */
+    private suspend fun loadProjectsSuspend() {
+        _uiState.value = _uiState.value.copy(isLoadingProjects = true)
 
-                if (response.code == 200) {
-                    val pageData = response.data
-                    if (pageData == null) {
-                        _uiState.value = _uiState.value.copy(
-                            projects = emptyList(),
-                            isLoadingProjects = false
-                        )
-                        return@launch
-                    }
-                    // 直接使用列表接口返回的数据（含subprojects），无需再发起N+1详情请求
-                    val projects = pageData.list.map { mapProjectDtoToUiModel(it) }
-                    _uiState.value = _uiState.value.copy(
-                        projects = projects,
-                        isLoadingProjects = false
-                    )
-                } else {
+        try {
+            val response = projectApi.getProjects(
+                page = 1,
+                size = 50,
+                yearMonth = _uiState.value.selectedYearMonth
+            )
+
+            if (response.code == 200) {
+                val pageData = response.data
+                if (pageData == null) {
                     _uiState.value = _uiState.value.copy(
                         projects = emptyList(),
-                        isLoadingProjects = false,
-                        errorMessage = NetworkErrorHandler.translateServerError(response.msg, "加载工程历史失败")
+                        isLoadingProjects = false
                     )
+                    return
                 }
-            } catch (e: Exception) {
+                // 直接使用列表接口返回的数据（含subprojects），无需再发起N+1详情请求
+                val projects = pageData.list.map { mapProjectDtoToUiModel(it) }
+                _uiState.value = _uiState.value.copy(
+                    projects = projects,
+                    isLoadingProjects = false
+                )
+            } else {
                 _uiState.value = _uiState.value.copy(
                     projects = emptyList(),
                     isLoadingProjects = false,
-                    errorMessage = NetworkErrorHandler.translate(e, "加载工程历史失败")
+                    errorMessage = NetworkErrorHandler.translateServerError(response.msg, "加载工程历史失败")
                 )
             }
+        } catch (e: Exception) {
+            _uiState.value = _uiState.value.copy(
+                projects = emptyList(),
+                isLoadingProjects = false,
+                errorMessage = NetworkErrorHandler.translate(e, "加载工程历史失败")
+            )
         }
     }
 
@@ -471,7 +483,8 @@ class DashboardViewModel @Inject constructor(
             width = dto.width ?: 0.0,
             quantity = dto.quantity ?: 0.0,
             amount = AmountFormatter.format(dto.amount),
-            unit = unit
+            unit = unit,
+            unitDisplayName = getUnitDisplayName(unit)
         )
     }
 

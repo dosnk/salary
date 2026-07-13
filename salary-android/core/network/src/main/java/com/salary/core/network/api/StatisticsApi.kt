@@ -1,6 +1,7 @@
 package com.salary.core.network.api
 
 import com.salary.core.network.dto.ApiResponse
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import retrofit2.http.GET
 import retrofit2.http.Query
@@ -30,7 +31,51 @@ interface StatisticsApi {
     /** 人员统计 */
     @GET("v1/statistics/workers")
     suspend fun getWorkerStatistics(): ApiResponse<WorkerStatsDto>
+
+    /**
+     * 仪表盘卡片统计（统计页顶部4个卡片）
+     * 所有计算由后端完成，前端直接展示。
+     */
+    @GET("v1/statistics/dashboard")
+    suspend fun getDashboard(): ApiResponse<DashboardStatsDto>
 }
+
+/**
+ * 仪表盘卡片统计数据DTO（后端返回snake_case，前端映射为camelCase）
+ *
+ * 对应4个卡片：
+ * - 待结算工程：unsettledProjectCount + unsettledAmount
+ * - 预支金额：advanceCount + advanceTotal
+ * - 今年工程量：yearProjectCount + yearProjectAmount
+ * - 月均工资：monthlyAvgCount + monthlyAvgAmount
+ */
+@Serializable
+data class DashboardStatsDto(
+    /** 卡片1：待结算工程份数（工程级，settling状态） */
+    @SerialName("unsettled_project_count")
+    val unsettledProjectCount: Int = 0,
+    /** 卡片1：个人应收总额（个人级，wage_distributions合计） */
+    @SerialName("unsettled_amount")
+    val unsettledAmount: Double = 0.0,
+    /** 卡片2：未结算预支条数 */
+    @SerialName("advance_count")
+    val advanceCount: Int = 0,
+    /** 卡片2：未结算预支总金额 */
+    @SerialName("advance_total")
+    val advanceTotal: Double = 0.0,
+    /** 卡片3：今年创建的所有工程份数（所有状态，工程级） */
+    @SerialName("year_project_count")
+    val yearProjectCount: Int = 0,
+    /** 卡片3：今年创建的所有工程总额（工程级 total_amount 合计） */
+    @SerialName("year_project_amount")
+    val yearProjectAmount: Double = 0.0,
+    /** 卡片4：月均份数（今年已结算工程数 / 当前月份，工程级） */
+    @SerialName("monthly_avg_count")
+    val monthlyAvgCount: Double = 0.0,
+    /** 卡片4：月均金额（今年个人已结算工资 / 当前月份，个人级） */
+    @SerialName("monthly_avg_amount")
+    val monthlyAvgAmount: Double = 0.0
+)
 
 @Serializable
 data class MonthlyStatsDto(
