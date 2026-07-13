@@ -742,7 +742,7 @@ module.exports = {
    *   - year_project_count: 今年创建的所有工程份数（不限结算状态，按project_id去重）
    *   - year_project_amount: 今年创建的所有工程总额（projects.total_amount之和，工程级）
    *
-   * 卡片4 - 月均工资：
+   * 卡片4 - 月均收入：
    *   - monthly_avg_count: 月均份数 = 今年已结算工程数 / 当前月份（工程级）
    *   - monthly_avg_amount: 月均金额 = 今年个人已结算工资 / 当前月份（个人级）
    *
@@ -869,8 +869,11 @@ module.exports = {
     // ========== 卡片4：月均收入 ==========
     // 份数（工程级）：今年结算的工程数 / 当前月份
     // 金额（个人级）：今年个人已结算工资合计 / 当前月份
-    // 关键：wage_distributions 仅在结算时生成，其 created_at 即为结算时间
-    //       "今年"按结算时间过滤，而非工程创建时间（避免去年工程今年结算被漏算）
+    // 关键：
+    //   1. wage_distributions 仅在结算时生成，其 created_at 即为结算时间
+    //   2. "今年"按结算时间过滤，而非工程创建时间（避免去年工程今年结算被漏算）
+    //   3. settlement_id IS NOT NULL 过滤：wage_distributions.settlement_id 是 ON DELETE SET NULL，
+    //      结算被删除后记录仍存在但 settlement_id 变 NULL，必须排除这些无效记录避免金额重复累加
 
     // 4.1 今年已结算工程数（工程级，按结算时间过滤）
     let yearSettledCountQuery = `
@@ -878,7 +881,9 @@ module.exports = {
       FROM wage_distributions wd
       INNER JOIN subprojects sp ON wd.subproject_id = sp.id
       INNER JOIN projects p ON sp.project_id = p.id
-      WHERE wd.user_id = $1 AND EXTRACT(YEAR FROM wd.created_at) = $2
+      WHERE wd.user_id = $1
+        AND wd.settlement_id IS NOT NULL
+        AND EXTRACT(YEAR FROM wd.created_at) = $2
     `;
     let yearSettledCountParams = [userId, currentYear];
 
@@ -900,7 +905,9 @@ module.exports = {
       FROM wage_distributions wd
       INNER JOIN subprojects sp ON wd.subproject_id = sp.id
       INNER JOIN projects p ON sp.project_id = p.id
-      WHERE wd.user_id = $1 AND EXTRACT(YEAR FROM wd.created_at) = $2
+      WHERE wd.user_id = $1
+        AND wd.settlement_id IS NOT NULL
+        AND EXTRACT(YEAR FROM wd.created_at) = $2
     `;
     let yearSettledUserParams = [userId, currentYear];
 
@@ -916,9 +923,11 @@ module.exports = {
     const yearSettledUserResult = await pool.query(yearSettledUserQuery, yearSettledUserParams);
     const yearSettledUserAmount = parseFloat(yearSettledUserResult.rows[0].year_settled_user_amount) || 0;
 
-    // 月均工资 = 今年个人已结算金额 / 当前月份（至少为1避免除零）
+    // 月均收入 = 今年个人已结算金额 / 当前月份（至少为1避免除零）
     const monthlyAvgCount = yearSettledCount / monthDivisor;
     const monthlyAvgAmount = yearSettledUserAmount / monthDivisor;
+
+    logger.info(`[getDashboard] 卡片4中间值: yearSettledCount=${yearSettledCount}, yearSettledUserAmount=${yearSettledUserAmount}, monthDivisor=${monthDivisor}, monthlyAvgCount=${monthlyAvgCount}, monthlyAvgAmount=${monthlyAvgAmount}`);
 
     const result = {
       // 卡片1：待结算工程
@@ -930,7 +939,7 @@ module.exports = {
       // 卡片3：今年工程量（所有状态）
       year_project_count: yearProjectCount,
       year_project_amount: Math.round(yearProjectAmount * 100) / 100,
-      // 卡片4：月均工资
+      // 卡片4：月均收入
       monthly_avg_count: Math.round(monthlyAvgCount * 10) / 10,
       monthly_avg_amount: Math.round(monthlyAvgAmount * 100) / 100
     };

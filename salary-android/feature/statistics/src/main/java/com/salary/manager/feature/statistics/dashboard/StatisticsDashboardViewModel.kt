@@ -247,7 +247,7 @@ class StatisticsDashboardViewModel @Inject constructor(
                     // 卡片3：今年工程量（所有状态，工程级总额）
                     settledProjectCount = d.yearProjectCount,
                     settledProjectTotalAmount = d.yearProjectAmount,
-                    // 卡片4：月均工资（份数工程级，金额个人级）
+                    // 卡片4：月均收入（份数工程级，金额个人级）
                     // settledUserAmount 存储今年个人总额，供其他地方使用
                     settledUserAmount = d.monthlyAvgAmount * java.time.LocalDate.now().monthValue.coerceAtLeast(1),
                     monthlyAvgCount = d.monthlyAvgCount,
@@ -661,7 +661,7 @@ class StatisticsDashboardViewModel @Inject constructor(
  * 数据来源：
  * - 待结算工程/预支：/v1/salary-sheet/projects（个人维度）
  * - 今年工程量：/v1/projects?settlementStatus=settled（工程总额）
- * - 月均工资：/v1/salary-sheet/settled-projects（个人分摊金额）
+ * - 月均收入：/v1/salary-sheet/settled-projects（个人分摊金额）
  */
 data class SettlementSummary(
     // ===== 待结算工程（份数工程级，金额个人级） =====

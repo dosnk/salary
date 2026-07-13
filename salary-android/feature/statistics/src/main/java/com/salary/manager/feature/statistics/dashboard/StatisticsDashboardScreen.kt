@@ -241,7 +241,7 @@ fun StatisticsDashboardScreen(
                                                     "待结算工程" -> "settling"
                                                     "预支金额" -> "advance"
                                                     "今年工程量" -> "settled"
-                                                    "月均工资" -> "settled"
+                                                    "月均收入" -> "settled"
                                                     else -> "settling"
                                                 }
                                                 if (statsFilterType == "advance") {
@@ -533,7 +533,7 @@ fun StatsGridSection(
             amountLabel = "总额："
         ),
         StatCardData(
-            title = "月均工资",
+            title = "月均收入",
             count = if (summary.monthlyAvgCount == summary.monthlyAvgCount.toInt().toDouble()) {
                 summary.monthlyAvgCount.toInt().toString()
             } else {

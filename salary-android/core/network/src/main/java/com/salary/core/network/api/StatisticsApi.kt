@@ -47,7 +47,7 @@ interface StatisticsApi {
  * - 待结算工程：unsettledProjectCount + unsettledAmount
  * - 预支金额：advanceCount + advanceTotal
  * - 今年工程量：yearProjectCount + yearProjectAmount
- * - 月均工资：monthlyAvgCount + monthlyAvgAmount
+ * - 月均收入：monthlyAvgCount + monthlyAvgAmount
  */
 @Serializable
 data class DashboardStatsDto(
