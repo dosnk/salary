@@ -176,7 +176,7 @@ class StatisticsDashboardViewModel @Inject constructor(
      * - 待结算工程：unsettledProjectCount + unsettledAmount（已完工未结算，份数工程级，金额个人级）
      * - 预支金额：advanceCount + advanceTotal（未结算预支）
      * - 今年工程量：yearProjectCount + yearProjectAmount（今年所有状态工程，工程级总额）
-     * - 月均工资：monthlyAvgCount + monthlyAvgAmount（份数工程级，金额个人级）
+     * - 月均收入：monthlyAvgCount + monthlyAvgAmount（份数工程级，金额个人级）
      */
     private suspend fun loadSalarySheetData() {
         try {
@@ -384,7 +384,7 @@ class StatisticsDashboardViewModel @Inject constructor(
      * - "待结算工程"卡片 → settling → 查询已完工且结算状态为settling的工程（个人维度）
      * - "预支金额"卡片 → advance → 切换到预支Tab（不加载工程列表）
      * - "今年工程量"卡片 → settled → 查询今年已结算工程（工程总额）
-     * - "月均工资"卡片 → settled → 查询今年已结算工程（与今年工程量共用）
+     * - "月均收入"卡片 → settled → 查询今年已结算工程（与今年工程量共用）
      */
     fun loadStatsProjectList(filterType: String) {
         viewModelScope.launch {
@@ -682,7 +682,7 @@ data class SettlementSummary(
     val settledProjectCount: Int = 0,
     /** 今年创建的所有工程总额（工程级 total_amount 合计） */
     val settledProjectTotalAmount: Double = 0.0,
-    // ===== 月均工资（份数工程级，金额个人级） =====
+    // ===== 月均收入（份数工程级，金额个人级） =====
     /** 今年已结算工程个人分摊总额 */
     val settledUserAmount: Double = 0.0,
     /** 月均份数 */

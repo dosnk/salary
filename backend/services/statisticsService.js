@@ -866,19 +866,19 @@ module.exports = {
     const yearProjectCount = parseInt(yearProjectResult.rows[0].year_project_count) || 0;
     const yearProjectAmount = parseFloat(yearProjectResult.rows[0].year_project_amount) || 0;
 
-    // ========== 卡片4：月均工资 ==========
-    // 份数（工程级）：今年已结算工程数 / 当前月份
+    // ========== 卡片4：月均收入 ==========
+    // 份数（工程级）：今年结算的工程数 / 当前月份
     // 金额（个人级）：今年个人已结算工资合计 / 当前月份
-    // 说明：wage_distributions 仅在结算时生成，天然限定为已结算数据
+    // 关键：wage_distributions 仅在结算时生成，其 created_at 即为结算时间
+    //       "今年"按结算时间过滤，而非工程创建时间（避免去年工程今年结算被漏算）
 
-    // 4.1 今年已结算工程数（工程级，用于月均份数）
-    // 注意：pus必须限制 user_id，否则多用户时同一工程多行导致计数重复
+    // 4.1 今年已结算工程数（工程级，按结算时间过滤）
     let yearSettledCountQuery = `
       SELECT COUNT(DISTINCT p.id) AS year_settled_count
-      FROM projects p
-      INNER JOIN v_project_user_settlement_status pus
-        ON p.id = pus.project_id AND pus.user_id = $1 AND pus.settlement_status = 'settled'
-      WHERE EXTRACT(YEAR FROM p.created_at) = $2
+      FROM wage_distributions wd
+      INNER JOIN subprojects sp ON wd.subproject_id = sp.id
+      INNER JOIN projects p ON sp.project_id = p.id
+      WHERE wd.user_id = $1 AND EXTRACT(YEAR FROM wd.created_at) = $2
     `;
     let yearSettledCountParams = [userId, currentYear];
 
@@ -894,16 +894,13 @@ module.exports = {
     const yearSettledCountResult = await pool.query(yearSettledCountQuery, yearSettledCountParams);
     const yearSettledCount = parseInt(yearSettledCountResult.rows[0].year_settled_count) || 0;
 
-    // 4.2 今年个人已结算工资合计（个人级，用于月均金额）
-    // 注意：pus必须限制 user_id，否则多用户时JOIN产生笛卡尔积导致 wd.amount 重复累加
+    // 4.2 今年个人已结算工资合计（个人级，按结算时间过滤）
     let yearSettledUserQuery = `
       SELECT COALESCE(SUM(wd.amount), 0) AS year_settled_user_amount
-      FROM projects p
-      INNER JOIN v_project_user_settlement_status pus
-        ON p.id = pus.project_id AND pus.user_id = $1 AND pus.settlement_status = 'settled'
-      INNER JOIN subprojects sp ON p.id = sp.project_id
-      INNER JOIN wage_distributions wd ON sp.id = wd.subproject_id AND wd.user_id = $1
-      WHERE EXTRACT(YEAR FROM p.created_at) = $2
+      FROM wage_distributions wd
+      INNER JOIN subprojects sp ON wd.subproject_id = sp.id
+      INNER JOIN projects p ON sp.project_id = p.id
+      WHERE wd.user_id = $1 AND EXTRACT(YEAR FROM wd.created_at) = $2
     `;
     let yearSettledUserParams = [userId, currentYear];
 
