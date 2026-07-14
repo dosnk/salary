@@ -75,12 +75,12 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 # 启动脚本（root启动→修复权限→降权到node运行应用）：
 # 1. 修复挂载卷目录权限（绑定挂载和命名卷默认root归属，node用户无法写入）
-# 2. 检查node_modules完整性，残缺则从种子副本恢复
+# 2. 检查node_modules完整性（需同时校验生产依赖dotenv和开发依赖nodemon），残缺则从种子副本恢复
 # 3. 通过su-exec降权到node用户运行nodemon，应用以非root身份运行
 # 安全性：仅在启动瞬间需要root权限修复目录，应用进程本身以node用户运行
 CMD ["sh", "-c", "\
   chown -R node:node /app/logs /app/temp /app/upload /app/node_modules 2>/dev/null || true; \
-  if [ ! -d /app/node_modules/dotenv ]; then \
+  if [ ! -d /app/node_modules/dotenv ] || [ ! -d /app/node_modules/nodemon ]; then \
     echo 'node_modules不完整，从种子副本恢复...'; \
     rm -rf /app/node_modules; \
     cp -r /opt/node_modules_seed /app/node_modules; \
