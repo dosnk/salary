@@ -389,8 +389,17 @@ node testfile/test/performance/statistics.bench.js
 # 结算操作性能（结算预览计算、分页查询、预支查询）
 node testfile/test/performance/settlement.bench.js
 
-# 一键运行全部基础测试
-bash testfile/test/performance/run-all.sh http://localhost:3000
+# 一键运行全部测试（基础+扩展，跨平台兼容）
+node testfile/test/performance/run-all.js http://localhost:3000
+
+# 跳过扩展压测（只跑基础性能测试）
+node testfile/test/performance/run-all.js --skip-stress
+
+# 只跑扩展压测
+node testfile/test/performance/run-all.js --stress-only
+
+# 启用GC采样（内存泄漏检测更精确）
+node --expose-gc testfile/test/performance/run-all.js --with-gc
 ```
 
 #### 9.3.2 扩展压测（深页翻页+并发结算+内存泄漏检测）
@@ -453,7 +462,7 @@ docker compose exec app node scripts/seed-test-data.js --yes --scale=large
 docker compose exec app node scripts/verify-data-consistency.js
 
 # 4. 启动服务后执行性能压测
-bash testfile/test/performance/run-all.sh http://localhost:3000
+docker compose exec app node testfile/test/performance/run-all.js http://localhost:3000
 
 # 5. 通过Android端执行结算操作后，再次校验一致性
 docker compose exec app node scripts/verify-data-consistency.js

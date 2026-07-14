@@ -128,7 +128,7 @@ docker compose exec app node scripts/seed-test-data.js --yes
 docker compose exec app node scripts/verify-data-consistency.js
 
 # 性能压测（基础+扩展，含深页翻页/并发结算/内存泄漏检测）
-bash testfile/test/performance/run-all.sh http://localhost:3000
+node testfile/test/performance/run-all.js http://localhost:3000
 
 # 扩展压测（独立运行，可自定义并发和轮数）
 CONCURRENT=20 ROUNDS=500 node testfile/test/performance/stress.bench.js
