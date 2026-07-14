@@ -895,13 +895,17 @@ fun SettlementTable(
                 )
 
                 // 展开的子项目明细行
+                // 注意：AnimatedVisibility 的 content lambda 要求单一根组件，
+                //       不能直接 forEach，否则只会渲染其中一个子项，需用 Column 包裹
                 AnimatedVisibility(visible = isExpanded) {
-                    project.subprojects.forEach { sub ->
-                        SubprojectRow(
-                            subproject = sub,
-                            constructionPlans = constructionPlans,
-                            getUnitName = getUnitName
-                        )
+                    Column {
+                        project.subprojects.forEach { sub ->
+                            SubprojectRow(
+                                subproject = sub,
+                                constructionPlans = constructionPlans,
+                                getUnitName = getUnitName
+                            )
+                        }
                     }
                 }
             }
@@ -1740,13 +1744,17 @@ fun SettlementHistoryTable(
                 )
 
                 // 展开的子项目明细
+                // 注意：AnimatedVisibility 的 content lambda 要求单一根组件，
+                //       不能直接 forEach，否则只会渲染其中一个子项，需用 Column 包裹
                 AnimatedVisibility(visible = isExpanded) {
-                    project.subprojects.forEach { sub ->
-                        HistorySubprojectRow(
-                            subproject = sub,
-                            constructionPlans = constructionPlans,
-                            getUnitName = getUnitName
-                        )
+                    Column {
+                        project.subprojects.forEach { sub ->
+                            HistorySubprojectRow(
+                                subproject = sub,
+                                constructionPlans = constructionPlans,
+                                getUnitName = getUnitName
+                            )
+                        }
                     }
                 }
             }
