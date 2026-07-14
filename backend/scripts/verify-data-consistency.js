@@ -34,6 +34,8 @@ const log = {
   info: (msg) => console.log(`[${new Date().toISOString()}] [INFO] ${msg}`),
   pass: (msg) => console.log(`[${new Date().toISOString()}] [✓ PASS] ${msg}`),
   fail: (msg) => console.error(`[${new Date().toISOString()}] [✗ FAIL] ${msg}`),
+  error: (msg) => console.error(`[${new Date().toISOString()}] [✗ ERROR] ${msg}`),
+  success: (msg) => console.log(`[${new Date().toISOString()}] [✓] ${msg}`),
   warn: (msg) => console.warn(`[${new Date().toISOString()}] [!] ${msg}`)
 };
 
@@ -640,35 +642,43 @@ const main = async () => {
 
   const startTime = Date.now();
 
-  try {
-    // 依次执行8项校验
-    await checkProjectTotalConsistency();
-    await checkSettlementTotalConsistency();
-    await checkSnapshotTotalConsistency();
-    await checkDashboardCard1Consistency();
-    await checkDashboardCard4Consistency();
-    await checkOrphanWageDistributions();
-    await checkSettlementStatusView();
-    await checkWorkdaysIntegrity();
+  // 每个校验独立 try/catch，单项失败不影响其他校验执行
+  const checks = [
+    { name: '校验1：工程总额一致性', fn: checkProjectTotalConsistency },
+    { name: '校验2：结算单总额一致性', fn: checkSettlementTotalConsistency },
+    { name: '校验3：结算快照总额一致性', fn: checkSnapshotTotalConsistency },
+    { name: '校验4：卡片1待结算工程一致性', fn: checkDashboardCard1Consistency },
+    { name: '校验5：卡片4月均收入一致性', fn: checkDashboardCard4Consistency },
+    { name: '校验6：工资分配无孤儿记录', fn: checkOrphanWageDistributions },
+    { name: '校验7：视图结算状态正确性', fn: checkSettlementStatusView },
+    { name: '校验8：工日数据完整性', fn: checkWorkdaysIntegrity }
+  ];
 
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    printSummary();
-    log.info(`校验总耗时: ${elapsed}s`);
-
-    // 退出码：有失败项返回1
-    if (results.failed > 0) {
-      log.fail(`存在 ${results.failed} 项不一致，请检查`);
-      process.exit(1);
-    } else {
-      log.success('全部校验通过');
-      process.exit(0);
+  for (const check of checks) {
+    try {
+      await check.fn();
+    } catch (error) {
+      log.error(`${check.name} 执行异常: ${error.message}`);
+      console.error(error.stack);
+      recordResult(check.name, false, `执行异常: ${error.message}`);
     }
-  } catch (error) {
-    log.error(`校验执行异常: ${error.message}`);
-    console.error(error.stack);
-    process.exit(2);
-  } finally {
+  }
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  printSummary();
+  log.info(`校验总耗时: ${elapsed}s`);
+
+  // 退出码：有失败项返回1，全部通过返回0
+  try {
     await pool.end();
+  } catch (e) { /* 忽略连接池关闭错误 */ }
+
+  if (results.failed > 0) {
+    log.fail(`存在 ${results.failed} 项不一致，请检查`);
+    process.exit(1);
+  } else {
+    log.success('全部校验通过');
+    process.exit(0);
   }
 };
 
