@@ -406,7 +406,10 @@ const createSettlementSnapshot = async (settlementId, currentUserId, client = nu
           };
         }
         planTotals[planIdStr].totalQuantity += userQuantity;
-        planTotals[planIdStr].totalAmount += userQuantity * wd.price;
+        // 修复金额差异Bug：改用 wd.amount 直接累加（NUMERIC(14,4) 高精度且已经是最终分摊金额）
+        // 原代码 userQuantity * wd.price 会因 wage_distributions.quantity 为 NUMERIC(10,2)
+        // 存储时被四舍五入丢失精度，累积后与工程管理页人均工费出现差异（如27.52元）
+        planTotals[planIdStr].totalAmount += parseFloat(wd.user_amount) || 0;
       }
     }
 

@@ -812,7 +812,8 @@ const getSettlementHistory = async (ctx) => {
             };
           }
           project.planQuantities[item.plan_id].total_quantity += item.user_quantity || 0;
-          project.planQuantities[item.plan_id].total_amount += (item.user_quantity || 0) * parseFloat(item.price || 0);
+          // 修复金额差异Bug：改用快照中已存储的 user_amount 直接累加，避免 quantity*price 反算精度损失
+          project.planQuantities[item.plan_id].total_amount += parseFloat(item.user_amount) || 0;
         }
       });
       
