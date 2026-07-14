@@ -69,9 +69,9 @@ data class DashboardStatsDto(
     /** 卡片3：今年创建的所有工程总额（工程级 total_amount 合计） */
     @SerialName("year_project_amount")
     val yearProjectAmount: Double = 0.0,
-    /** 卡片4：月均份数（今年已结算工程数 / 当前月份，工程级） */
+    /** 卡片4：月均份数（今年已结算工程总数，工程级整数） */
     @SerialName("monthly_avg_count")
-    val monthlyAvgCount: Double = 0.0,
+    val monthlyAvgCount: Int = 0,
     /** 卡片4：月均金额（今年个人已结算工资 / 当前月份，个人级） */
     @SerialName("monthly_avg_amount")
     val monthlyAvgAmount: Double = 0.0

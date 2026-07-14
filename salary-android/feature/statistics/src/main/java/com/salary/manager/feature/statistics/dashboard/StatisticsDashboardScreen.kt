@@ -534,11 +534,7 @@ fun StatsGridSection(
         ),
         StatCardData(
             title = "月均收入",
-            count = if (summary.monthlyAvgCount == summary.monthlyAvgCount.toInt().toDouble()) {
-                summary.monthlyAvgCount.toInt().toString()
-            } else {
-                String.format("%.1f", summary.monthlyAvgCount)
-            },
+            count = summary.monthlyAvgCount.toString(),
             amount = summary.monthlyAvgAmount,
             iconColor = Color(0xFF9333EA), // 紫色
             amountLabel = "月均："

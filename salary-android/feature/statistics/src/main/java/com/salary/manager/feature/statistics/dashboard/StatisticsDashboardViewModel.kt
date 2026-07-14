@@ -685,8 +685,8 @@ data class SettlementSummary(
     // ===== 月均收入（份数工程级，金额个人级） =====
     /** 今年已结算工程个人分摊总额 */
     val settledUserAmount: Double = 0.0,
-    /** 月均份数 */
-    val monthlyAvgCount: Double = 0.0,
-    /** 月均金额（个人分摊） */
+    /** 月均份数（工程级整数，今年已结算工程总数） */
+    val monthlyAvgCount: Int = 0,
+    /** 月均金额（个人级，今年个人已结算工资 / 当前月份） */
     val monthlyAvgAmount: Double = 0.0
 )

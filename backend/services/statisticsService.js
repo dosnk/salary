@@ -924,7 +924,9 @@ module.exports = {
     const yearSettledUserAmount = parseFloat(yearSettledUserResult.rows[0].year_settled_user_amount) || 0;
 
     // 月均收入 = 今年个人已结算金额 / 当前月份（至少为1避免除零）
-    const monthlyAvgCount = yearSettledCount / monthDivisor;
+    // 份数（工程级）：直接显示今年已结算工程总数（整数），不除以月份
+    // 金额（个人级）：今年个人已结算工资 / 当前月份
+    const monthlyAvgCount = yearSettledCount;
     const monthlyAvgAmount = yearSettledUserAmount / monthDivisor;
 
     logger.info(`[getDashboard] 卡片4中间值: yearSettledCount=${yearSettledCount}, yearSettledUserAmount=${yearSettledUserAmount}, monthDivisor=${monthDivisor}, monthlyAvgCount=${monthlyAvgCount}, monthlyAvgAmount=${monthlyAvgAmount}`);
@@ -939,8 +941,8 @@ module.exports = {
       // 卡片3：今年工程量（所有状态）
       year_project_count: yearProjectCount,
       year_project_amount: Math.round(yearProjectAmount * 100) / 100,
-      // 卡片4：月均收入
-      monthly_avg_count: Math.round(monthlyAvgCount * 10) / 10,
+      // 卡片4：月均收入（份数为工程总数整数，金额为月均）
+      monthly_avg_count: monthlyAvgCount,
       monthly_avg_amount: Math.round(monthlyAvgAmount * 100) / 100
     };
     logger.info(`[getDashboard] result for user ${userId}: ${JSON.stringify(result)}`);
