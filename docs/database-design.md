@@ -164,7 +164,131 @@ WHERE
 2. **增量更新**：在 `init-db.js` 的 `runIncrementalUpdates` 函数中处理
 3. **数据备份**：升级前务必备份数据
 
-## 7. 常见问题
+## 7. 数据库维护脚本
+
+项目提供多个维护脚本，位于 `backend/scripts/` 目录下。**所有脚本均应在后端容器内执行**：
+
+```bash
+# 进入容器执行（推荐）
+docker compose exec app node scripts/<脚本名>.js
+```
+
+### 7.1 数据库初始化（`init-db.js`）
+
+**用途**：首次部署或重建数据库时执行。增量迁移所有表结构，并插入默认用户和字典数据。
+
+```bash
+docker compose exec app node scripts/init-db.js
+```
+
+**说明**：
+- 通过 `db_versions` 表记录已应用的迁移版本，仅执行新增量
+- V1.7 版本已包含 AI 相关表（`material_categories`、`material_params`、`ai_chat_history`、`ai_knowledge_chunks`）的创建和默认材料分类数据
+- 执行后会插入 11 个默认用户（喜临门/莫量波/梁祖霞等）和默认字典数据
+- 默认密码为 `admin123`，登录后请及时修改
+
+### 7.2 清空业务数据（`clear-business-data.js`）⚠️ 推荐
+
+**用途**：彻底清空所有工程、子项目、结算、预支、消息、文件等业务数据，但**保留**用户账号、施工方案、空间类型、字典数据、AI 相关表。
+
+```bash
+# 容器内推荐用法（跳过3秒确认期）
+docker compose exec app node scripts/clear-business-data.js --yes
+
+# 如需同时清空 AI 对话历史和知识库分块
+docker compose exec app node scripts/clear-business-data.js --yes --clear-ai
+```
+
+**参数说明**：
+
+| 参数 | 说明 |
+|------|------|
+| `--yes` / `-y` | 跳过3秒确认期，立即执行（容器内推荐使用） |
+| `--clear-ai` | 额外清空 `ai_chat_history` 和 `ai_knowledge_chunks` 表 |
+
+**清空的表（12张，TRUNCATE + 重置自增ID）**：
+
+| 表名 | 说明 |
+|------|------|
+| `projects` | 工程主表 |
+| `subprojects` | 子项目 |
+| `project_workers` | 工程施工员关联 |
+| `project_history` | 工程操作历史 |
+| `wage_settlements` | 结算单主表 |
+| `wage_settlement_snapshots` | 结算快照（历史结算单） |
+| `wage_distributions` | 工资分配（结算生成的用户分摊明细） |
+| `wage_advances` | 预支记录 |
+| `project_user_status` | 用户在工程中的结算状态 |
+| `files` | 工程附件文件记录 |
+| `subproject_transfers` | 子项目转交记录 |
+| `messages` | 站内消息 |
+
+**保留的表**：
+
+| 表名 | 说明 |
+|------|------|
+| `users` | 用户账号（11个默认用户） |
+| `construction_plans` | 施工方案字典 |
+| `space_types` | 空间类型字典 |
+| `wage_distribution_types` | 工资分配类型字典 |
+| `action_types` | 动作类型字典 |
+| `material_categories` | 材料分类（含默认4个分类） |
+| `material_params` | 材料参数（保留用户手动添加的物料） |
+| `ai_chat_history` | AI对话历史（除非加 `--clear-ai`） |
+| `ai_knowledge_chunks` | 知识库分块（除非加 `--clear-ai`） |
+| `db_versions` | 迁移版本记录（保留以避免重复迁移） |
+
+**注意事项**：
+- ⚠️ 此操作**不可逆**，执行前建议先备份数据库：
+  ```bash
+  docker compose exec db pg_dump -U salary -d salary > backup.sql
+  ```
+- 数据库清空后，宿主机 `backend/upload/` 目录中的工程附件文件不会自动删除，如需彻底清理：
+  ```bash
+  # Linux NAS
+  rm -rf ./backend/upload/*
+  # Windows
+  Remove-Item -Path .\backend\upload\* -Recurse -Force
+  ```
+- 清空后无需重新初始化数据库，用户和字典数据完整保留，可立即重新录入工程数据
+
+### 7.3 完全清空数据库（`clear-db.js`）⚠️ 慎用
+
+**用途**：DROP 所有表和视图（包括用户和字典），返回到"空数据库"状态。执行后必须重新初始化。
+
+```bash
+# 1. 清空所有表
+docker compose exec app node scripts/clear-db.js
+
+# 2. 重新初始化（重建表 + 插入默认用户 + 字典数据 + AI表）
+docker compose exec app node scripts/init-db.js
+```
+
+**与 `clear-business-data.js` 的区别**：
+
+| 项目 | `clear-business-data.js`（方案二） | `clear-db.js`（完全清空） |
+|------|----------------------------------|------------------------|
+| 用户账号 | ✅ 保留 | ❌ 删除 |
+| 字典数据 | ✅ 保留 | ❌ 删除 |
+| AI 表 | ✅ 保留（可选清空） | ❌ 删除 |
+| 业务数据 | ❌ 清空 | ❌ 清空 |
+| 自增ID | 重置 | 重置 |
+| 是否需要重新初始化 | 否 | 是（必须执行 `init-db.js`） |
+| 推荐场景 | 日常清理业务数据 | 彻底重建数据库 |
+
+### 7.4 备份与恢复工程数据（`backup-projects.js` / `restore-projects.js`）
+
+**用途**：备份所有工程数据到 JSON 文件，或从备份文件恢复。
+
+```bash
+# 备份所有工程数据到 backend/temp/projects-backup-YYYYMMDD.json
+docker compose exec app node scripts/backup-projects.js
+
+# 从备份文件恢复工程数据
+docker compose exec app node scripts/restore-projects.js
+```
+
+## 8. 常见问题
 
 ### Q1: 为什么结算状态用视图而不是表？
 **A:** 避免数据冗余和不一致。视图动态计算，始终与实际数据同步。

@@ -96,6 +96,26 @@ npm start
 http://your-server:port/api-docs
 ```
 
+### 5. **数据库维护脚本**
+
+项目提供多个数据库维护脚本，位于 `backend/scripts/` 目录下，均通过 Docker 容器执行：
+
+```bash
+# 数据库初始化（首次部署或重建）
+docker compose exec app node scripts/init-db.js
+
+# 清空业务数据（保留用户和字典，推荐）⚠️
+docker compose exec app node scripts/clear-business-data.js --yes
+
+# 完全清空数据库（DROP所有表，需重新初始化）
+docker compose exec app node scripts/clear-db.js
+
+# 备份工程数据
+docker compose exec app node scripts/backup-projects.js
+```
+
+各脚本的详细说明、参数、清空范围和对比，请参阅 [docs/database-design.md](../docs/database-design.md) 第7节"数据库维护脚本"。
+
 ## 最佳实践
 
 ### 1. **开发环境**
