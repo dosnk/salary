@@ -63,9 +63,9 @@ const fmtMem = (mb) => `${mb.toFixed(1)}MB`;
  */
 async function login() {
   try {
-    // 管理员登录
+    // 管理员登录（admin角色的中文名）
     const adminRes = await axios.post(`${BASE_URL}/v1/auth/login`, {
-      username: process.env.TEST_USERNAME || 'admin',
+      username: process.env.TEST_USERNAME || '喜临门',
       password: process.env.TEST_PASSWORD || 'admin123'
     });
     if (adminRes.data.code === 200) {

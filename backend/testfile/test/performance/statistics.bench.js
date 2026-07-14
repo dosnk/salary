@@ -27,8 +27,8 @@ let authToken = '';
 async function login() {
   try {
     const res = await axios.post(`${BASE_URL}/v1/auth/login`, {
-      username: process.env.TEST_USERNAME || 'admin',
-      password: process.env.TEST_PASSWORD || 'Admin123456'
+      username: process.env.TEST_USERNAME || '喜临门',
+      password: process.env.TEST_PASSWORD || 'admin123'
     });
     if (res.data.code === 200) {
       authToken = res.data.data.token;

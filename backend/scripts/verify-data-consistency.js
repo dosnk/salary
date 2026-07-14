@@ -157,6 +157,8 @@ const checkProjectTotalConsistency = async () => {
 const checkSettlementTotalConsistency = async () => {
   log.info('\n--- 校验2：结算单总额 = 工资分配明细之和 ---');
 
+  // 注意：wage_settlements 是单用户的，wage_distributions 同一 settlement_id 下
+  // 可能关联了多个用户的记录，必须加 user_id 过滤
   const result = await pool.query(`
     SELECT
       ws.id AS settlement_id,
@@ -166,7 +168,7 @@ const checkSettlementTotalConsistency = async () => {
       COALESCE(SUM(wd.amount), 0) AS distribution_total,
       ws.total_amount - COALESCE(SUM(wd.amount), 0) AS diff
     FROM wage_settlements ws
-    LEFT JOIN wage_distributions wd ON wd.settlement_id = ws.id
+    LEFT JOIN wage_distributions wd ON wd.settlement_id = ws.id AND wd.user_id = ws.user_id
     GROUP BY ws.id, ws.settlement_no, ws.user_id, ws.total_amount
     HAVING ABS(ws.total_amount - COALESCE(SUM(wd.amount), 0)) > $1
     ORDER BY ABS(ws.total_amount - COALESCE(SUM(wd.amount), 0)) DESC
@@ -197,21 +199,24 @@ const checkSettlementTotalConsistency = async () => {
 const checkSnapshotTotalConsistency = async () => {
   log.info('\n--- 校验3：结算快照总额 = 工资分配明细之和 ---');
 
+  // 注意：wage_settlements 是单用户的，wage_distributions 同一 settlement_id 下
+  // 可能关联了多个用户的记录，必须加 user_id 过滤，否则会把其他用户的分配也累加
   const result = await pool.query(`
     SELECT
       snap.id AS snapshot_id,
       snap.settlement_id,
       snap.settlement_no,
+      snap.user_id,
       snap.total_amount AS snapshot_total,
       agg.distribution_total,
       snap.total_amount - agg.distribution_total AS diff
     FROM wage_settlement_snapshots snap
     INNER JOIN (
-      SELECT wd.settlement_id, SUM(wd.amount) AS distribution_total
+      SELECT wd.settlement_id, wd.user_id, SUM(wd.amount) AS distribution_total
       FROM wage_distributions wd
       WHERE wd.settlement_id IS NOT NULL
-      GROUP BY wd.settlement_id
-    ) agg ON agg.settlement_id = snap.settlement_id
+      GROUP BY wd.settlement_id, wd.user_id
+    ) agg ON agg.settlement_id = snap.settlement_id AND agg.user_id = snap.user_id
     WHERE ABS(snap.total_amount - agg.distribution_total) > $1
     ORDER BY ABS(snap.total_amount - agg.distribution_total) DESC
     LIMIT 50
