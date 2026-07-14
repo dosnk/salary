@@ -1090,6 +1090,7 @@ fun ProjectDataRow(
 
 /**
  * 子项目明细行
+ * 名称列允许多行显示，避免"空间类型 - 施工方案"较长时被省略号截断显示不完整
  */
 @Composable
 fun SubprojectRow(
@@ -1109,15 +1110,16 @@ fun SubprojectRow(
         Box(modifier = Modifier.width(48.dp))
         // 空序号
         Box(modifier = Modifier.width(36.dp))
-        // 子项目名称
+        // 子项目名称（允许多行显示，完整展示内容）
         Box(modifier = Modifier.width(100.dp), contentAlignment = Alignment.CenterStart) {
             Text(
                 "${subproject.spaceTypeName} - ${subproject.planName}",
                 fontSize = 10.sp,
                 color = Color(0xFF64748B),
                 modifier = Modifier.padding(start = 20.dp),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                maxLines = 3,
+                overflow = TextOverflow.Visible,
+                softWrap = true
             )
         }
         // 各施工方案列
@@ -1913,6 +1915,7 @@ fun HistoryProjectDataRow(
 /**
  * 历史子项目明细行（无选择列）
  * 前2列合并宽度 = 36 + 148 = 184dp，与 TotalRow/GrandTotalRow/PriceRow 对齐
+ * 名称列允许多行显示，避免"空间类型 - 施工方案"较长时被省略号截断显示不完整
  */
 @Composable
 fun HistorySubprojectRow(
@@ -1930,15 +1933,16 @@ fun HistorySubprojectRow(
     ) {
         // 空序号
         Box(modifier = Modifier.width(36.dp))
-        // 子项目名称（宽度148dp，与工程名称列对齐）
+        // 子项目名称（宽度148dp，与工程名称列对齐；允许多行显示，完整展示内容）
         Box(modifier = Modifier.width(148.dp), contentAlignment = Alignment.CenterStart) {
             Text(
                 "${subproject.spaceTypeName} - ${subproject.planName}",
                 fontSize = 10.sp,
                 color = Color(0xFF64748B),
                 modifier = Modifier.padding(start = 20.dp),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                maxLines = 3,
+                overflow = TextOverflow.Visible,
+                softWrap = true
             )
         }
         // 各施工方案列
