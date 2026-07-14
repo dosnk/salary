@@ -129,7 +129,7 @@ const checkProjectTotalConsistency = async () => {
     WHERE p.status != 'canceled'
     GROUP BY p.id, p.name, p.total_amount
     HAVING ABS(p.total_amount - COALESCE(SUM(sp.amount), 0)) > $1
-    ORDER BY ABS(diff) DESC
+    ORDER BY ABS(p.total_amount - COALESCE(SUM(sp.amount), 0)) DESC
     LIMIT 50
   `, [TOLERANCE]);
 
@@ -169,7 +169,7 @@ const checkSettlementTotalConsistency = async () => {
     LEFT JOIN wage_distributions wd ON wd.settlement_id = ws.id
     GROUP BY ws.id, ws.settlement_no, ws.user_id, ws.total_amount
     HAVING ABS(ws.total_amount - COALESCE(SUM(wd.amount), 0)) > $1
-    ORDER BY ABS(diff) DESC
+    ORDER BY ABS(ws.total_amount - COALESCE(SUM(wd.amount), 0)) DESC
     LIMIT 50
   `, [TOLERANCE]);
 
