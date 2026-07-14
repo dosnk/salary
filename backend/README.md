@@ -116,6 +116,26 @@ docker compose exec app node scripts/backup-projects.js
 
 各脚本的详细说明、参数、清空范围和对比，请参阅 [docs/database-design.md](../docs/database-design.md) 第7节"数据库维护脚本"。
 
+### 6. **测试与验证脚本**
+
+项目提供大数据量生成、数据一致性校验和性能压测工具，用于验证程序在大量数据下的稳定性和准确性。
+
+```bash
+# 生成大量测试数据（medium量级：300工程/2000子项目/100预支）
+docker compose exec app node scripts/seed-test-data.js --yes
+
+# 校验数据一致性（8项校验，只读不写，推荐常跑）
+docker compose exec app node scripts/verify-data-consistency.js
+
+# 性能压测（基础+扩展，含深页翻页/并发结算/内存泄漏检测）
+bash testfile/test/performance/run-all.sh http://localhost:3000
+
+# 扩展压测（独立运行，可自定义并发和轮数）
+CONCURRENT=20 ROUNDS=500 node testfile/test/performance/stress.bench.js
+```
+
+详细说明请参阅 [docs/database-design.md](../docs/database-design.md) 第9节"测试与验证脚本"。
+
 ## 最佳实践
 
 ### 1. **开发环境**

@@ -298,3 +298,166 @@ docker compose exec app node scripts/restore-projects.js
 
 ### Q3: 金额为什么要在后端计算？
 **A:** 确保数据一致性和安全性，避免前端篡改。
+
+## 9. 测试与验证脚本
+
+项目提供完整的测试数据生成、数据一致性校验和性能压测工具，用于验证程序在大量数据下的稳定性和准确性。
+
+### 9.1 大数据量生成（`seed-test-data.js`）
+
+**用途**：模拟 1~3 年的真实业务数据规模，生成工程、子项目、施工人员、历史、预支记录，用于压力测试和准确性验证。
+
+```bash
+# 默认中量级（300工程/2000子项目/100预支），跨2年
+docker compose exec app node scripts/seed-test-data.js --yes
+
+# 小量级（快速验证）
+docker compose exec app node scripts/seed-test-data.js --yes --scale=small
+
+# 大量级（深度压力测试，1000工程/8000子项目/500预支）
+docker compose exec app node scripts/seed-test-data.js --yes --scale=large
+
+# 中量级跨3年
+docker compose exec app node scripts/seed-test-data.js --yes --scale=medium --years=3
+```
+
+| 参数 | 说明 |
+|------|------|
+| `--scale <small\|medium\|large>` | 数据量级（默认 medium） |
+| `--years <1-5>` | 跨度年数（默认 2） |
+| `--yes` / `-y` | 跳过3秒确认期（容器内推荐） |
+
+**量级说明**：
+
+| 量级 | 工程数 | 子项目数 | 预支数 | 用途 |
+|------|:-----:|:-------:|:-----:|------|
+| small | 50 | ~250 | 10 | 快速验证 |
+| medium | 300 | ~2000 | 100 | 常规压测（推荐） |
+| large | 1000 | ~8000 | 500 | 深度压力测试 |
+
+**注意事项**：
+- 执行前确保已运行 `init-db.js`，字典数据已就绪
+- 建议先执行 `clear-business-data.js --yes` 清空旧业务数据
+- 生成的数据 `description` 字段含"自动生成"标识，便于区分
+- 不生成结算单（结算单需通过 HTTP 接口产生，保证业务流程完整）
+
+### 9.2 数据一致性校验（`verify-data-consistency.js`）⭐ 推荐
+
+**用途**：验证金额、统计、结算三个口径的一致性，自动化捕获金额计算误差。**只读不写**，可在任意时刻运行。
+
+```bash
+# 校验全部用户
+docker compose exec app node scripts/verify-data-consistency.js
+
+# 只校验指定用户
+docker compose exec app node scripts/verify-data-consistency.js --user=5
+
+# 自定义容差（默认0.01元）
+docker compose exec app node scripts/verify-data-consistency.js --tolerance=0.001
+```
+
+| 参数 | 说明 |
+|------|------|
+| `--user=<id>` | 只校验指定用户（默认全部） |
+| `--tolerance=<amount>` | 金额容差，默认 0.01 元 |
+
+**8项校验内容**：
+
+| 序号 | 校验项 | 说明 |
+|:---:|--------|------|
+| 1 | 工程总额一致性 | `projects.total_amount` = `SUM(subprojects.amount)` |
+| 2 | 结算单总额一致性 | `wage_settlements.total_amount` = `SUM(wage_distributions.amount)` |
+| 3 | 结算快照总额一致性 | 快照总额 = 工资分配明细之和（历史27.52元Bug根因） |
+| 4 | 卡片1待结算工程一致性 | SQL重算 vs 手动重算 `calculateUserWage` 逻辑 |
+| 5 | 卡片4月均收入一致性 | 按结算时间过滤重算 vs SQL重算 |
+| 6 | 工资分配无孤儿记录 | `settlement_id` 非空但结算单已删除的异常记录 |
+| 7 | 视图结算状态正确性 | `settled` 有结算单，`settling` 有完工子项目 |
+| 8 | 工日数据完整性 | `work_days` 模式下所有施工人员有有效工日 |
+
+**退出码**：`0` 全部通过 / `1` 存在不一致 / `2` 执行异常
+
+### 9.3 性能压测
+
+性能测试脚本位于 `backend/testfile/test/performance/`，通过 HTTP 接口黑盒压测。
+
+#### 9.3.1 基础性能测试
+
+```bash
+# 统计查询性能（月度统计、工程列表、结算历史、并发查询）
+node testfile/test/performance/statistics.bench.js
+
+# 结算操作性能（结算预览计算、分页查询、预支查询）
+node testfile/test/performance/settlement.bench.js
+
+# 一键运行全部基础测试
+bash testfile/test/performance/run-all.sh http://localhost:3000
+```
+
+#### 9.3.2 扩展压测（深页翻页+并发结算+内存泄漏检测）
+
+```bash
+# 默认配置（10并发，100轮连续请求）
+node testfile/test/performance/stress.bench.js
+
+# 自定义配置
+CONCURRENT=20 ROUNDS=500 node testfile/test/performance/stress.bench.js
+
+# 启用GC采样（需 --expose-gc 参数）
+node --expose-gc testfile/test/performance/stress.bench.js
+
+# 指定目标服务器
+BASE_URL=http://192.168.1.100:3000 node testfile/test/performance/stress.bench.js
+```
+
+| 环境变量 | 默认值 | 说明 |
+|---------|:-----:|------|
+| `BASE_URL` | `http://localhost:3000` | 目标服务器地址 |
+| `CONCURRENT` | 10 | 并发请求数 |
+| `ROUNDS` | 100 | 连续请求轮数 |
+| `TEST_USERNAME` | admin | 管理员账号 |
+| `TEST_PASSWORD` | admin123 | 管理员密码 |
+| `CTOR_USERNAME` | 杨耀贵 | 施工员账号（并发结算测试用） |
+| `CTOR_PASSWORD` | admin123 | 施工员密码 |
+
+**测试场景**：
+1. **深页翻页**：翻到第10/50/100页，验证深页查询性能
+2. **并发结算预览**：多请求同时预览，校验返回金额一致性（并发安全）
+3. **连续请求稳定性**：连续 ROUNDS 次请求，采样内存增长，检测内存泄漏
+4. **健康检查**：验证基础接口可用性
+
+**内存泄漏判定**：每1000次请求堆内存增长 > 50MB 视为疑似泄漏。
+
+#### 9.3.3 npm 脚本
+
+```bash
+# 基础性能测试
+npm run test:perf
+
+# 集成测试（需要测试库就绪）
+npm run test:integration
+
+# 全部jest测试
+npm test
+```
+
+### 9.4 推荐测试流程
+
+```bash
+# 1. 清空旧业务数据
+docker compose exec app node scripts/clear-business-data.js --yes
+
+# 2. 生成大量测试数据
+docker compose exec app node scripts/seed-test-data.js --yes --scale=large
+
+# 3. 校验生成数据的一致性
+docker compose exec app node scripts/verify-data-consistency.js
+
+# 4. 启动服务后执行性能压测
+bash testfile/test/performance/run-all.sh http://localhost:3000
+
+# 5. 通过Android端执行结算操作后，再次校验一致性
+docker compose exec app node scripts/verify-data-consistency.js
+
+# 6. 清理测试数据
+docker compose exec app node scripts/clear-business-data.js --yes
+```

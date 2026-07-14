@@ -17,8 +17,8 @@
     "init-db-dev": "node scripts/init-db-dev.js",
     "clear-db": "node scripts/clear-db.js",
     "test": "jest --forceExit --detectOpenHandles",
-    "test:integration": "jest tests/integration/ --forceExit --detectOpenHandles",
-    "test:perf": "node tests/performance/statistics.bench.js && node tests/performance/settlement.bench.js"
+    "test:integration": "jest testfile/test/integration/ --forceExit --detectOpenHandles",
+    "test:perf": "node testfile/test/performance/statistics.bench.js && node testfile/test/performance/settlement.bench.js"
   },
   "dependencies": {
     "axios": "^1.13.2",
@@ -67,7 +67,7 @@
     "testTimeout": 30000,
     "setupFilesAfterSetup": [],
     "testMatch": [
-      "**/tests/integration/**/*.test.js"
+      "**/testfile/test/integration/**/*.test.js"
     ]
   }
 }

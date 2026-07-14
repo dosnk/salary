@@ -62,20 +62,37 @@ async function initTestDatabase() {
 
 /**
  * 清理测试数据库
+ * 表名对照 backend/scripts/init-db.js 中的实际定义
+ * 清空顺序：先清子表（有外键依赖），再清主表
  */
 async function cleanupTestDatabase(pool) {
   if (!pool) return;
   try {
-    // 清空所有表数据但保留表结构
+    // 按外键依赖顺序清空（子表优先），使用 RESTART IDENTITY 重置自增ID
     const tables = [
-      'ai_chat_messages', 'ai_chat_sessions', 'material_params',
-      'wage_settlements', 'wage_advances', 'project_user_status',
-      'sub_projects', 'project_workers', 'projects',
-      'construction_plans', 'space_types', 'wage_distribution_types',
-      'messages', 'users'
+      'wage_distributions',           // 工资分配（依赖 subprojects/wage_settlements）
+      'wage_settlement_snapshots',    // 结算快照（依赖 wage_settlements）
+      'wage_settlements',             // 结算单（依赖 users/projects）
+      'wage_advances',                // 预支（依赖 users/wage_settlements）
+      'subproject_transfers',         // 子项目转交（依赖 subprojects）
+      'subprojects',                  // 子项目（依赖 projects/space_types/construction_plans）
+      'project_user_status',          // 用户工程结算状态（依赖 projects/users/wage_settlements）
+      'project_history',              // 工程历史（依赖 projects/users）
+      'project_workers',              // 施工人员关联（依赖 projects/users）
+      'files',                        // 附件（依赖 projects/users）
+      'messages',                     // 站内消息
+      'projects',                     // 工程（依赖 users）
+      'ai_chat_history',              // AI对话历史（依赖 users）
+      'ai_knowledge_chunks'           // 知识库分块
+      // 注意：users/space_types/construction_plans/wage_distribution_types/action_types
+      //       material_categories/material_params 由 init-db.js 初始化，测试后保留
     ];
     for (const table of tables) {
-      try { await pool.query(`TRUNCATE TABLE ${table} CASCADE`); } catch (e) { /* 表可能不存在 */ }
+      try {
+        await pool.query(`TRUNCATE TABLE ${table} RESTART IDENTITY CASCADE`);
+      } catch (e) {
+        /* 表可能不存在（首次初始化未完成），跳过 */
+      }
     }
   } catch (error) {
     console.warn('清理测试数据库失败:', error.message);
