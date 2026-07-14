@@ -110,31 +110,53 @@ const pool = new Pool({
 
 /**
  * 解析命令行参数
+ * 支持两种形式：--scale large 和 --scale=large
  */
 const parseArgs = () => {
   const args = process.argv.slice(2);
   const config = { scale: 'medium', years: 2 };
 
+  // 辅助函数：从参数中提取值（支持 --key value 和 --key=value 两种形式）
+  const getArgValue = (arg, nextArg, key) => {
+    const equalForm = `${key}=`;
+    if (arg.startsWith(equalForm)) {
+      return arg.slice(equalForm.length);
+    }
+    if (arg === key && nextArg !== undefined) {
+      return nextArg;
+    }
+    return null;
+  };
+
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--scale' && args[i + 1]) {
-      const scale = args[i + 1].toLowerCase();
+    const scaleVal = getArgValue(args[i], args[i + 1], '--scale');
+    if (scaleVal !== null) {
+      const scale = scaleVal.toLowerCase();
       if (SCALE_CONFIG[scale]) {
         config.scale = scale;
       } else {
         log.error(`无效的 scale 参数：${scale}，可选值：small/medium/large`);
         process.exit(1);
       }
-      i++;
-    } else if (args[i] === '--years' && args[i + 1]) {
-      const years = parseInt(args[i + 1], 10);
+      // 等号形式不需要跳过下一个参数
+      if (!args[i].startsWith('--scale=')) i++;
+      continue;
+    }
+
+    const yearsVal = getArgValue(args[i], args[i + 1], '--years');
+    if (yearsVal !== null) {
+      const years = parseInt(yearsVal, 10);
       if (years >= 1 && years <= 5) {
         config.years = years;
       } else {
         log.error(`无效的 years 参数：${years}，范围 1-5`);
         process.exit(1);
       }
-      i++;
-    } else if (args[i] === '--help' || args[i] === '-h') {
+      if (!args[i].startsWith('--years=')) i++;
+      continue;
+    }
+
+    if (args[i] === '--help' || args[i] === '-h') {
       console.log(`
 用法: node scripts/seed-test-data.js [选项]
 
@@ -343,6 +365,8 @@ const seedProjects = async (totalCount, yearsBack, spRange, batchSize = 20) => {
         totalHistory++;
 
         // completed 状态额外加一条完工历史
+        // 注意：action 字段有外键约束到 action_types(code)，且 code VARCHAR(20)
+        // 可用值：CREATE_PROJECT/UPDATE_PROJECT/DELETE_PROJECT/ADD_SUBPROJECT 等
         if (status === 'completed') {
           const completedAt = new Date(createdAt.getTime() + randomInt(7, 60) * 24 * 60 * 60 * 1000);
           await client.query(
@@ -350,7 +374,7 @@ const seedProjects = async (totalCount, yearsBack, spRange, batchSize = 20) => {
              VALUES ($1, $2, $3, $4, $5)`,
             [
               projectId,
-              'UPDATE_PROJECT_STATUS',
+              'UPDATE_PROJECT',
               `工程状态变更为：completed`,
               DOC_USER_ID,
               completedAt
