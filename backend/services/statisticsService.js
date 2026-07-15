@@ -61,12 +61,13 @@ const buildConstructorFilter = (userId, paramIndex) => {
  * Bug13修复：原实现使用 `${m}-31` 构造月末日期，2月会产生 '2025-02-31' 非法日期
  * PostgreSQL 会自动转换为 '2025-03-03'，导致月份越界统计错误
  * 改为：每个月份只传一个 'YYYY-MM-01' 参数，配合 date_trunc 按月比较
+ * 性能优化：改为每个月份传两个参数（月初和下月初），用范围查询替代 date_trunc
  *
  * @param {string[]} monthList - 月份列表，格式 'YYYY-MM'
- * @returns {string[]} 日期参数数组，每个月份产生一个 'YYYY-MM-01' 参数
+ * @returns {string[]} 日期参数数组，每个月份产生两个参数 [月初, 下月初]
  */
 const parseMonthDateParams = (monthList) => {
-  return monthList.map(m => `${m}-01`);
+  return monthListToDateParams(monthList);
 };
 
 /**
@@ -75,6 +76,7 @@ const parseMonthDateParams = (monthList) => {
  * OR date_trunc('month', sp.created_at::date) = $2::date
  *
  * Bug13修复：改用 date_trunc 按月比较，避免月末日期计算问题
+ * 性能优化：改用范围查询（>= 月初 AND < 下月初），可走 created_at 索引
  *
  * @param {string[]} monthList - 月份列表
  * @param {number} startIndex - 参数起始索引
@@ -82,9 +84,32 @@ const parseMonthDateParams = (monthList) => {
  * @returns {string} 参数化的日期条件 SQL
  */
 const buildMonthDateConditions = (monthList, startIndex, dateColumn) => {
-  return monthList
-    .map((_, i) => `date_trunc('month', ${dateColumn}::date) = $${startIndex + i}::date`)
-    .join(' OR ');
+  // 每个月份生成两个参数：月初和下月初，用范围查询替代 date_trunc
+  // monthList = ['2026-01', '2026-02'] → 参数为 ['2026-01-01', '2026-02-01', '2026-02-01', '2026-03-01']
+  const conditions = [];
+  monthList.forEach((_, i) => {
+    const baseIdx = startIndex + i * 2;
+    conditions.push(`(${dateColumn} >= $${baseIdx}::date AND ${dateColumn} < $${baseIdx + 1}::date)`);
+  });
+  return conditions.join(' OR ');
+};
+
+/**
+ * 将月份列表转换为范围查询参数（月初和下月初）
+ * @param {string[]} monthList - 月份列表，格式 ['YYYY-MM', ...]
+ * @returns {string[]} 日期参数列表，每两个月一组：[月初, 下月初, 月初, 下月初, ...]
+ */
+const monthListToDateParams = (monthList) => {
+  const params = [];
+  monthList.forEach(m => {
+    const [year, month] = m.split('-').map(Number);
+    const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
+    const nextMonth = month === 12 ? 1 : month + 1;
+    const nextYear = month === 12 ? year + 1 : year;
+    const nextMonthStart = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+    params.push(monthStart, nextMonthStart);
+  });
+  return params;
 };
 
 // ========== 导出方法 ==========
@@ -773,16 +798,16 @@ module.exports = {
         COALESCE(SUM(
           CASE
             WHEN p.salary_distribution = 'average' THEN
-              sp_agg.sp_total / GREATEST(COALESCE(wc.worker_count, 0), 1)
+              sp_agg.sp_total / GREATEST(COALESCE(pw_agg.worker_count, 0), 1)
             WHEN p.salary_distribution = 'work_days' THEN
               CASE
-                WHEN COALESCE(tw.total_workdays, 0) > 0 THEN
-                  sp_agg.sp_total * (COALESCE(uw.user_workdays, 0) / tw.total_workdays)
+                WHEN COALESCE(pw_agg.total_workdays, 0) > 0 THEN
+                  sp_agg.sp_total * (COALESCE(pw_agg.user_workdays, 0) / pw_agg.total_workdays)
                 ELSE
-                  sp_agg.sp_total / GREATEST(COALESCE(wc.worker_count, 0), 1)
+                  sp_agg.sp_total / GREATEST(COALESCE(pw_agg.worker_count, 0), 1)
               END
             ELSE
-              sp_agg.sp_total / GREATEST(COALESCE(wc.worker_count, 0), 1)
+              sp_agg.sp_total / GREATEST(COALESCE(pw_agg.worker_count, 0), 1)
           END
         ), 0) AS unsettled_amount
       FROM projects p
@@ -794,24 +819,15 @@ module.exports = {
         FROM subprojects sp
         WHERE sp.project_id = p.id
       ) sp_agg ON true
-      -- 施工人数（与 getProjects 保持一致，用 COUNT(DISTINCT user_id)）
+      -- 施工人员聚合（合并原3个LATERAL为1个，减少3次子查询）
       LEFT JOIN LATERAL (
-        SELECT COUNT(DISTINCT pw2.user_id) AS worker_count
+        SELECT
+          COUNT(DISTINCT pw2.user_id) AS worker_count,
+          COALESCE(SUM(pw2.workdays), 0) AS total_workdays,
+          COALESCE(MAX(CASE WHEN pw2.user_id = $1 THEN pw2.workdays END), 0) AS user_workdays
         FROM project_workers pw2
         WHERE pw2.project_id = p.id
-      ) wc ON true
-      -- 总工日
-      LEFT JOIN LATERAL (
-        SELECT COALESCE(SUM(pw3.workdays), 0) AS total_workdays
-        FROM project_workers pw3
-        WHERE pw3.project_id = p.id
-      ) tw ON true
-      -- 当前用户个人工日（admin/documenter 可能不在 project_workers 中，用 LEFT JOIN 保留工程）
-      LEFT JOIN LATERAL (
-        SELECT COALESCE(pw4.workdays, 0) AS user_workdays
-        FROM project_workers pw4
-        WHERE pw4.project_id = p.id AND pw4.user_id = $1
-      ) uw ON true
+      ) pw_agg ON true
       WHERE 1=1
     `;
     let settlingParams = [userId];
@@ -844,14 +860,17 @@ module.exports = {
     // ========== 卡片3：今年工程量（所有状态） ==========
     // 今年创建的所有工程（不限结算状态），份数按 project_id 去重，金额为工程级 total_amount 合计
     // 注意：不关联 pus 视图，直接查 projects 表，避免多用户视图产生重复行导致 total_amount 重复累加
+    // 性能优化：用范围查询替代 EXTRACT(YEAR FROM ...)，可走 idx_projects_created_at 索引
+    const yearStart = `${currentYear}-01-01`;
+    const nextYearStart = `${currentYear + 1}-01-01`;
     let yearProjectQuery = `
       SELECT
         COUNT(DISTINCT p.id) AS year_project_count,
         COALESCE(SUM(COALESCE(p.total_amount, 0)), 0) AS year_project_amount
       FROM projects p
-      WHERE EXTRACT(YEAR FROM p.created_at) = $2
+      WHERE p.created_at >= $2::date AND p.created_at < $3::date
     `;
-    let yearProjectParams = [userId, currentYear];
+    let yearProjectParams = [userId, yearStart, nextYearStart];
 
     if (isConstructorUser) {
       yearProjectQuery += `
@@ -874,21 +893,25 @@ module.exports = {
     //   2. "今年"按结算时间过滤，而非工程创建时间（避免去年工程今年结算被漏算）
     //   3. settlement_id IS NOT NULL 过滤：wage_distributions.settlement_id 是 ON DELETE SET NULL，
     //      结算被删除后记录仍存在但 settlement_id 变 NULL，必须排除这些无效记录避免金额重复累加
+    // 性能优化：
+    //   - 合并两个SQL为一次查询，减少1次ROUND TRIP
+    //   - 用范围查询替代 EXTRACT(YEAR FROM ...)，可走 idx_wage_distributions_user_settled_year 部分索引
 
-    // 4.1 今年已结算工程数（工程级，按结算时间过滤）
-    let yearSettledCountQuery = `
-      SELECT COUNT(DISTINCT p.id) AS year_settled_count
+    let yearSettledQuery = `
+      SELECT
+        COUNT(DISTINCT p.id) AS year_settled_count,
+        COALESCE(SUM(wd.amount), 0) AS year_settled_user_amount
       FROM wage_distributions wd
       INNER JOIN subprojects sp ON wd.subproject_id = sp.id
       INNER JOIN projects p ON sp.project_id = p.id
       WHERE wd.user_id = $1
         AND wd.settlement_id IS NOT NULL
-        AND EXTRACT(YEAR FROM wd.created_at) = $2
+        AND wd.created_at >= $2::date AND wd.created_at < $3::date
     `;
-    let yearSettledCountParams = [userId, currentYear];
+    let yearSettledParams = [userId, yearStart, nextYearStart];
 
     if (isConstructorUser) {
-      yearSettledCountQuery += `
+      yearSettledQuery += `
         AND EXISTS (
           SELECT 1 FROM project_workers pw
           WHERE pw.project_id = p.id AND pw.user_id = $1
@@ -896,32 +919,9 @@ module.exports = {
       `;
     }
 
-    const yearSettledCountResult = await pool.query(yearSettledCountQuery, yearSettledCountParams);
-    const yearSettledCount = parseInt(yearSettledCountResult.rows[0].year_settled_count) || 0;
-
-    // 4.2 今年个人已结算工资合计（个人级，按结算时间过滤）
-    let yearSettledUserQuery = `
-      SELECT COALESCE(SUM(wd.amount), 0) AS year_settled_user_amount
-      FROM wage_distributions wd
-      INNER JOIN subprojects sp ON wd.subproject_id = sp.id
-      INNER JOIN projects p ON sp.project_id = p.id
-      WHERE wd.user_id = $1
-        AND wd.settlement_id IS NOT NULL
-        AND EXTRACT(YEAR FROM wd.created_at) = $2
-    `;
-    let yearSettledUserParams = [userId, currentYear];
-
-    if (isConstructorUser) {
-      yearSettledUserQuery += `
-        AND EXISTS (
-          SELECT 1 FROM project_workers pw
-          WHERE pw.project_id = p.id AND pw.user_id = $1
-        )
-      `;
-    }
-
-    const yearSettledUserResult = await pool.query(yearSettledUserQuery, yearSettledUserParams);
-    const yearSettledUserAmount = parseFloat(yearSettledUserResult.rows[0].year_settled_user_amount) || 0;
+    const yearSettledResult = await pool.query(yearSettledQuery, yearSettledParams);
+    const yearSettledCount = parseInt(yearSettledResult.rows[0].year_settled_count) || 0;
+    const yearSettledUserAmount = parseFloat(yearSettledResult.rows[0].year_settled_user_amount) || 0;
 
     // 月均收入 = 今年个人已结算金额 / 当前月份（至少为1避免除零）
     // 份数（工程级）：直接显示今年已结算工程总数（整数），不除以月份

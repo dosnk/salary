@@ -16,6 +16,23 @@ const logger = require('../config/logger');
 const pool = require('../config/database');
 
 /**
+ * 异步刷新物化视图（不阻塞当前操作，失败只记录日志）
+ * 结算/确认操作后调用，确保结算状态数据在5分钟内（或立即）更新
+ */
+let refreshMvAsync;
+try {
+  const { refreshMaterializedView } = require('../scripts/refresh-mv');
+  refreshMvAsync = () => {
+    refreshMaterializedView().catch(err => {
+      logger.warn('结算后刷新物化视图失败', { error: err.message });
+    });
+  };
+} catch (e) {
+  // refresh-mv.js 不存在时降级为空函数
+  refreshMvAsync = () => {};
+}
+
+/**
  * 业务异常类
  * Controller 层捕获后调用 ctx.fail(error.code, error.message)
  */
@@ -704,6 +721,9 @@ module.exports = {
       // 12. 清除缓存（事务提交后执行）
       await invalidateCache(currentUserId);
 
+      // 13. 异步刷新物化视图（不等待完成，避免阻塞响应）
+      refreshMvAsync();
+
       logger.info('创建结算成功', { settlementId, settlementNo, totalAmount, currentUserId });
 
       return {
@@ -1004,7 +1024,10 @@ module.exports = {
 
       await client.query('COMMIT');
 
-      // 7. 创建结算历史快照（事务外执行，失败不影响主流程）
+      // 7. 异步刷新物化视图（不等待完成，避免阻塞响应）
+      refreshMvAsync();
+
+      // 8. 创建结算历史快照（事务外执行，失败不影响主流程）
       try {
         await createSettlementSnapshot(settlementId, currentUserId);
       } catch (snapshotError) {

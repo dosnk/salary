@@ -285,6 +285,25 @@ if (process.env.NODE_ENV !== 'test') {
   server = app.listen(port, '0.0.0.0', () => {
     console.log(`服务器运行在 http://0.0.0.0:${port}`);
     console.log(`Swagger文档（含导出功能）在 http://0.0.0.0:${port}/api-docs`);
+
+    // 启动物化视图定时刷新（每5分钟刷新一次，保持结算状态数据最新）
+    // 物化视图 mv_project_user_settlement_status 替代原普通视图，解决大数据量下性能问题
+    try {
+      const { refreshMaterializedView } = require('./scripts/refresh-mv');
+      // 启动时先刷新一次
+      refreshMaterializedView().catch(err => {
+        console.warn('[MV] 启动时刷新物化视图失败（可忽略，后续定时刷新会重试）:', err.message);
+      });
+      // 每5分钟刷新一次
+      setInterval(() => {
+        refreshMaterializedView().catch(err => {
+          console.warn('[MV] 定时刷新物化视图失败:', err.message);
+        });
+      }, 5 * 60 * 1000);
+      console.log('[MV] 物化视图定时刷新已启动（每5分钟）');
+    } catch (e) {
+      console.warn('[MV] 物化视图刷新模块加载失败（不影响服务启动）:', e.message);
+    }
   });
 }
 
