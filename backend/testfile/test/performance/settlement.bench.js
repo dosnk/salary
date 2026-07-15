@@ -27,7 +27,7 @@ async function login() {
       password: process.env.TEST_PASSWORD || 'admin123'
     });
     if (res.data.code === 200) {
-      authToken = res.data.data.token;
+      authToken = res.data.data.accessToken;
       return true;
     }
     return false;

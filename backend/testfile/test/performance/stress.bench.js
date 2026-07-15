@@ -69,7 +69,7 @@ async function login() {
       password: process.env.TEST_PASSWORD || 'admin123'
     });
     if (adminRes.data.code === 200) {
-      authToken = adminRes.data.data.token;
+      authToken = adminRes.data.data.accessToken;
     } else {
       log.fail(`管理员登录失败: ${adminRes.data.msg}`);
       return false;
@@ -82,7 +82,7 @@ async function login() {
         password: process.env.CTOR_PASSWORD || 'admin123'
       });
       if (ctorRes.data.code === 200) {
-        constructorToken = ctorRes.data.data.token;
+        constructorToken = ctorRes.data.data.accessToken;
         constructorUserId = ctorRes.data.data.user?.id;
       }
     } catch (e) {

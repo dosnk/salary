@@ -153,12 +153,14 @@ const checkProjectTotalConsistency = async () => {
 /**
  * 校验2：结算单总额 = 工资分配明细之和
  * 检测 wage_settlements.total_amount 与 SUM(wage_distributions.amount) 是否一致
+ *
+ * 重要：wage_settlements.total_amount 是所有施工人员的总额之和（settlementService.js:626 累加所有 worker），
+ * 不是单用户分摊额。因此校验时不能加 wd.user_id = ws.user_id 过滤，必须聚合该 settlement_id 下所有用户的分配记录。
  */
 const checkSettlementTotalConsistency = async () => {
   log.info('\n--- 校验2：结算单总额 = 工资分配明细之和 ---');
 
-  // 注意：wage_settlements 是单用户的，wage_distributions 同一 settlement_id 下
-  // 可能关联了多个用户的记录，必须加 user_id 过滤
+  // 不加 user_id 过滤：total_amount 是多用户总额，需聚合 settlement_id 下所有用户的分配记录
   const result = await pool.query(`
     SELECT
       ws.id AS settlement_id,
@@ -168,7 +170,7 @@ const checkSettlementTotalConsistency = async () => {
       COALESCE(SUM(wd.amount), 0) AS distribution_total,
       ws.total_amount - COALESCE(SUM(wd.amount), 0) AS diff
     FROM wage_settlements ws
-    LEFT JOIN wage_distributions wd ON wd.settlement_id = ws.id AND wd.user_id = ws.user_id
+    LEFT JOIN wage_distributions wd ON wd.settlement_id = ws.id
     GROUP BY ws.id, ws.settlement_no, ws.user_id, ws.total_amount
     HAVING ABS(ws.total_amount - COALESCE(SUM(wd.amount), 0)) > $1
     ORDER BY ABS(ws.total_amount - COALESCE(SUM(wd.amount), 0)) DESC
