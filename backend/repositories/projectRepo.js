@@ -185,38 +185,38 @@ const listWithFilters = async (filters) => {
       TO_CHAR(p.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at,
       pus.settlement_status AS settlement_status,
       pus.settlement_id AS settlement_id,
-      (SELECT COUNT(*) FROM files WHERE project_id = p.id) AS files_count,
-      COALESCE(
-        (SELECT JSON_AGG(JSON_BUILD_OBJECT('id', u.id, 'username', u.username, 'nickname', u.nickname, 'workdays', pw2.workdays))
-         FROM project_workers pw2
-         JOIN users u ON pw2.user_id = u.id
-         WHERE pw2.project_id = p.id),
-        '[]'
-      ) AS workers
-      -- constructors 与 workers 子查询完全相同，此处移除以避免重复执行
-      -- 在 service 层将 workers 同时作为 constructors 返回
-      ,
-      -- 子项目列表（聚合返回，避免前端发起N+1详情请求）
-      -- 字段与详情接口 getDetailById 保持一致：space_type_name、construction_plan_name 等
-      COALESCE(
-        (SELECT JSON_AGG(JSON_BUILD_OBJECT(
-            'id', sp.id,
-            'space_type_name', st.name,
-            'construction_plan_name', cp.name,
-            'length', sp.length,
-            'width', sp.width,
-            'quantity', sp.quantity,
-            'amount', sp.amount,
-            'status', sp.status
-          ) ORDER BY sp.created_at DESC)
-         FROM subprojects sp
-         LEFT JOIN space_types st ON sp.space_type_id = st.id
-         LEFT JOIN construction_plans cp ON sp.construction_plan_id = cp.id
-         WHERE sp.project_id = p.id),
-        '[]'
-      ) AS sub_projects
+      f.files_count,
+      COALESCE(w.workers, '[]') AS workers,
+      COALESCE(sp.sub_projects, '[]') AS sub_projects
     FROM projects p
-    LEFT JOIN v_project_user_settlement_status pus ON p.id = pus.project_id AND pus.user_id = $1`;
+    LEFT JOIN v_project_user_settlement_status pus ON p.id = pus.project_id AND pus.user_id = $1
+    -- 性能优化：3个相关子查询改为LATERAL JOIN，优化器可统一调度执行计划
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*) AS files_count
+      FROM files WHERE project_id = p.id
+    ) f ON true
+    LEFT JOIN LATERAL (
+      SELECT JSON_AGG(JSON_BUILD_OBJECT('id', u.id, 'username', u.username, 'nickname', u.nickname, 'workdays', pw2.workdays)) AS workers
+      FROM project_workers pw2
+      JOIN users u ON pw2.user_id = u.id
+      WHERE pw2.project_id = p.id
+    ) w ON true
+    LEFT JOIN LATERAL (
+      SELECT JSON_AGG(JSON_BUILD_OBJECT(
+          'id', sp.id,
+          'space_type_name', st.name,
+          'construction_plan_name', cp.name,
+          'length', sp.length,
+          'width', sp.width,
+          'quantity', sp.quantity,
+          'amount', sp.amount,
+          'status', sp.status
+        ) ORDER BY sp.created_at DESC) AS sub_projects
+      FROM subprojects sp
+      LEFT JOIN space_types st ON sp.space_type_id = st.id
+      LEFT JOIN construction_plans cp ON sp.construction_plan_id = cp.id
+      WHERE sp.project_id = p.id
+    ) sp ON true`;
 
   // 施工员角色：只能查看自己参与的工程
   if (isConstructorRole) {
@@ -325,24 +325,34 @@ const listWithFilters = async (filters) => {
   const result = await pool.query(query, params);
 
   // ---------- 构建总数查询 ----------
-  let countQuery = `
-    SELECT COUNT(*) FROM projects p
-    LEFT JOIN v_project_user_settlement_status pus ON p.id = pus.project_id AND pus.user_id = $1`;
-  const countParams = [userId];
-  let countParamIndex = 2;
+  // 性能优化：按需JOIN视图（仅 settlementStatus 传入时才JOIN，避免无条件展开物化视图）
+  // 创建人/施工员昵称搜索改用EXISTS子查询，避免INNER JOIN导致的行膨胀
+  const countConditions = [];
+  const countParams = [];
+  let countParamIndex = 1;
+  let countQuery;
 
-  // 施工员角色过滤
-  if (isConstructorRole) {
-    countQuery += ` JOIN project_workers pw ON p.id = pw.project_id WHERE pw.user_id = $${countParamIndex}`;
+  if (settlementStatus) {
+    // 需要视图过滤结算状态
+    countQuery = `SELECT COUNT(*) FROM projects p
+                  LEFT JOIN v_project_user_settlement_status pus ON p.id = pus.project_id AND pus.user_id = $${countParamIndex}`;
     countParams.push(userId);
     countParamIndex++;
   } else {
-    countQuery += ' WHERE 1=1';
+    // 无需视图，直接查projects表
+    countQuery = `SELECT COUNT(*) FROM projects p`;
+  }
+
+  // 施工员角色过滤（用EXISTS避免JOIN膨胀）
+  if (isConstructorRole) {
+    countConditions.push(`EXISTS (SELECT 1 FROM project_workers pw WHERE pw.project_id = p.id AND pw.user_id = $${countParamIndex})`);
+    countParams.push(userId);
+    countParamIndex++;
   }
 
   // 月份筛选
   if (month) {
-    countQuery += ` AND EXTRACT(MONTH FROM p.created_at) = $${countParamIndex}`;
+    countConditions.push(`EXTRACT(MONTH FROM p.created_at) = $${countParamIndex}`);
     countParams.push(parseInt(month, 10));
     countParamIndex++;
   }
@@ -350,11 +360,9 @@ const listWithFilters = async (filters) => {
   // 日期筛选（支持 YYYY-MM 和 YYYY-MM-DD 两种格式）
   if (yearMonth) {
     if (/^\d{4}-\d{2}$/.test(yearMonth)) {
-      // YYYY-MM 格式，按月份筛选（使用Asia/Shanghai时区，与前端一致）
-      countQuery += ` AND TO_CHAR(p.created_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM') = $${countParamIndex}`;
+      countConditions.push(`TO_CHAR(p.created_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM') = $${countParamIndex}`);
     } else {
-      // YYYY-MM-DD 格式，按日期筛选
-      countQuery += ` AND TO_CHAR(p.created_at, 'YYYY-MM-DD') = $${countParamIndex}`;
+      countConditions.push(`TO_CHAR(p.created_at, 'YYYY-MM-DD') = $${countParamIndex}`);
     }
     countParams.push(yearMonth);
     countParamIndex++;
@@ -362,49 +370,49 @@ const listWithFilters = async (filters) => {
 
   // 年份筛选
   if (year) {
-    countQuery += ` AND EXTRACT(YEAR FROM p.created_at) = $${countParamIndex}`;
+    countConditions.push(`EXTRACT(YEAR FROM p.created_at) = $${countParamIndex}`);
     countParams.push(parseInt(year, 10));
     countParamIndex++;
   }
 
   // 关键词搜索
   if (keyword) {
-    countQuery += ` AND (p.name ILIKE $${countParamIndex} OR p.description ILIKE $${countParamIndex})`;
+    countConditions.push(`(p.name ILIKE $${countParamIndex} OR p.description ILIKE $${countParamIndex})`);
     countParams.push(`%${keyword}%`);
     countParamIndex++;
   }
 
   // 状态筛选
   if (status) {
-    countQuery += ` AND p.status = $${countParamIndex}`;
+    countConditions.push(`p.status = $${countParamIndex}`);
     countParams.push(status);
     countParamIndex++;
   }
 
-  // 创建人昵称搜索
+  // 创建人昵称搜索（改用EXISTS，避免INNER JOIN膨胀）
   if (creatorNickname) {
-    countQuery += ` JOIN users cu ON p.created_by = cu.id AND cu.nickname ILIKE $${countParamIndex}`;
+    countConditions.push(`EXISTS (SELECT 1 FROM users cu WHERE cu.id = p.created_by AND cu.nickname ILIKE $${countParamIndex})`);
     countParams.push(`%${creatorNickname}%`);
     countParamIndex++;
   }
 
-  // 施工员昵称搜索
+  // 施工员昵称搜索（改用EXISTS，避免INNER JOIN膨胀）
   if (workerNickname) {
-    countQuery += ` JOIN project_workers pw2 ON p.id = pw2.project_id JOIN users wu ON pw2.user_id = wu.id AND wu.nickname ILIKE $${countParamIndex}`;
+    countConditions.push(`EXISTS (SELECT 1 FROM project_workers pw3 JOIN users wu ON pw3.user_id = wu.id WHERE pw3.project_id = p.id AND wu.nickname ILIKE $${countParamIndex})`);
     countParams.push(`%${workerNickname}%`);
     countParamIndex++;
   }
 
   // 开始日期
   if (startDate) {
-    countQuery += ` AND p.created_at >= $${countParamIndex}`;
+    countConditions.push(`p.created_at >= $${countParamIndex}::date`);
     countParams.push(startDate);
     countParamIndex++;
   }
 
   // 结束日期
   if (endDate) {
-    countQuery += ` AND p.created_at <= $${countParamIndex}`;
+    countConditions.push(`p.created_at <= $${countParamIndex}::date`);
     countParams.push(endDate);
     countParamIndex++;
   }
@@ -412,12 +420,16 @@ const listWithFilters = async (filters) => {
   // 结算状态筛选
   if (settlementStatus) {
     if (settlementStatus === 'settled') {
-      countQuery += ` AND pus.settlement_status = 'settled'`;
+      countConditions.push(`pus.settlement_status = 'settled'`);
     } else if (settlementStatus === 'unsettled') {
-      countQuery += ` AND (pus.settlement_status IS NULL OR pus.settlement_status = 'unsettled')`;
+      countConditions.push(`(pus.settlement_status IS NULL OR pus.settlement_status = 'unsettled')`);
     } else if (settlementStatus === 'settling') {
-      countQuery += ` AND pus.settlement_status = 'settling'`;
+      countConditions.push(`pus.settlement_status = 'settling'`);
     }
+  }
+
+  if (countConditions.length > 0) {
+    countQuery += ' WHERE ' + countConditions.join(' AND ');
   }
 
   const countResult = await pool.query(countQuery, countParams);
