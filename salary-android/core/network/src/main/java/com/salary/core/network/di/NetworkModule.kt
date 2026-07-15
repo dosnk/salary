@@ -11,6 +11,7 @@ import com.salary.core.network.api.SettlementApi
 import com.salary.core.network.api.AdvanceApi
 import com.salary.core.network.api.SalarySheetApi
 import com.salary.core.network.api.StatisticsApi
+import com.salary.core.network.api.SystemApi
 import com.salary.core.network.api.UploadApi
 import com.salary.core.network.api.UserApi
 import com.salary.core.network.interceptor.AuthInterceptor
@@ -151,4 +152,8 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideUploadApi(retrofit: Retrofit): UploadApi = retrofit.create(UploadApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideSystemApi(retrofit: Retrofit): SystemApi = retrofit.create(SystemApi::class.java)
 }

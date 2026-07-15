@@ -52,6 +52,7 @@ import com.salary.manager.feature.home.list.ProjectListScreen
 import com.salary.manager.feature.profile.AboutScreen
 import com.salary.manager.feature.profile.AiConfigScreen
 import com.salary.manager.feature.profile.ChangePasswordScreen
+import com.salary.manager.feature.profile.DataVerifyScreen
 import com.salary.manager.feature.profile.DictionaryScreen
 import com.salary.manager.feature.profile.ProfileScreen
 import com.salary.manager.feature.profile.UserManagementScreen
@@ -204,7 +205,7 @@ fun MainScaffold(
     // AI子页面导航: 0=对话, 1=排料输入, 2=排料预览, 3=知识库
     var aiSubPage by rememberSaveable { mutableIntStateOf(0) }
 
-    // 个人中心子页面导航: 0=主页, 1=修改密码, 2=字典管理, 3=用户管理, 4=关于, 5=消息, 6=AI配置
+    // 个人中心子页面导航: 0=主页, 1=修改密码, 2=字典管理, 3=用户管理, 4=关于, 5=消息, 6=AI配置, 7=数据一致性校验
     var profileSubPage by rememberSaveable { mutableIntStateOf(0) }
 
     // 记录点击消息图标时所在的Tab，用于消息页返回时恢复到原页面
@@ -444,6 +445,7 @@ fun MainScaffold(
                             onDictionaryManage = { profileSubPage = 2 },
                             onUserManage = { profileSubPage = 3 },
                             onAiConfig = { profileSubPage = 6 },
+                            onDataVerify = { profileSubPage = 7 },
                             onAbout = { profileSubPage = 4 },
                             onMessages = { profileSubPage = 5 },
                             onLogout = onLogout,
@@ -538,6 +540,14 @@ fun MainScaffold(
                             BackHandler { profileSubPage = 0 }
                             SwipeBackLayout(onBack = { profileSubPage = 0 }) {
                                 AiConfigScreen(
+                                    onBack = { profileSubPage = 0 }
+                                )
+                            }
+                        }
+                        7 -> {
+                            BackHandler { profileSubPage = 0 }
+                            SwipeBackLayout(onBack = { profileSubPage = 0 }) {
+                                DataVerifyScreen(
                                     onBack = { profileSubPage = 0 }
                                 )
                             }

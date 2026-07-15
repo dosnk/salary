@@ -32,6 +32,7 @@ fun ProfileScreen(
     onDictionaryManage: () -> Unit = {},
     onUserManage: () -> Unit = {},
     onAiConfig: () -> Unit = {},
+    onDataVerify: () -> Unit = {},
     onAbout: () -> Unit = {},
     onMessages: () -> Unit = {},
     onLogout: () -> Unit = {},
@@ -112,6 +113,7 @@ fun ProfileScreen(
                 add(MenuItemData(Icons.Default.Book, "字典管理", onDictionaryManage))
                 add(MenuItemData(Icons.Default.People, "用户管理", onUserManage))
                 add(MenuItemData(Icons.Default.SmartToy, "AI大模型配置", onAiConfig))
+                add(MenuItemData(Icons.Default.Verified, "数据一致性校验", onDataVerify))
             }
             add(MenuItemData(Icons.Default.Info, "关于", onAbout))
         }

@@ -23,6 +23,7 @@ const advancesRouter = require('./routes/advances');
 const messagesRouter = require('./routes/messages');
 const salarySheetRouter = require('./routes/salarySheet');
 const aiRouter = require('./routes/ai');
+const systemRouter = require('./routes/system');
 // 限流中间件：基于Redis的滑动窗口限流，按用户/IP控制请求频率
 const { globalLimiter, loginLimiter, sensitiveLimiter } = require('./middleware/rateLimiter');
 
@@ -196,6 +197,7 @@ app.use(advancesRouter.routes()).use(advancesRouter.allowedMethods());
 app.use(messagesRouter.routes()).use(messagesRouter.allowedMethods());
 app.use(salarySheetRouter.routes()).use(salarySheetRouter.allowedMethods());
 app.use(aiRouter.routes()).use(aiRouter.allowedMethods());
+app.use(systemRouter.routes()).use(systemRouter.allowedMethods());
 
 // 静态文件服务 - 用于访问上传的文件（放在路由之后，404处理之前）
 app.use(async (ctx, next) => {
