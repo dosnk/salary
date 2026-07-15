@@ -135,13 +135,13 @@ private fun CardHeader(project: ProjectUiModel) {
 }
 
 /**
- * 金额区 - 工费总额(左) + 人均/工日工费(右)
+ * 金额区 - 工费总额(左) + 人均/日均工费(右)
  * 布局参考HTML .salary-row：左右两栏，大字绿色(24sp Bold)
  * 无背景框，通过间距区分
  *
  * 右侧根据分配方式适配显示：
  * - 平均分配(average)：显示"人均工费"= 总额 / 人数
- * - 按工日分配(work_days)：显示"工日工费"= 总额 / 总工日，下方追加各人员工日工费明细和总工日
+ * - 按工日分配(work_days)：显示"日均工费"= 总额 / 总工日，下方追加各人员日均工费明细和总工日
  */
 @Composable
 private fun AmountSection(project: ProjectUiModel) {
@@ -159,14 +159,14 @@ private fun AmountSection(project: ProjectUiModel) {
             AmountFormatter.formatPlain(String.format("%.2f", amount / project.workerCount))
         } else "0.00"
     }
-    val label = if (isWorkDays) "工日工费" else "人均工费"
+    val label = if (isWorkDays) "日均工费" else "人均工费"
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 12.dp)
     ) {
-        // 顶部行：工费总额(左) + 人均/工日工费(右)
+        // 顶部行：工费总额(左) + 人均/日均工费(右)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -187,7 +187,7 @@ private fun AmountSection(project: ProjectUiModel) {
                     color = AppColors.Green400
                 )
             }
-            // 右侧：人均/工日工费（右对齐）
+            // 右侧：人均/日均工费（右对齐）
             Column(
                 modifier = Modifier.weight(1f),
                 horizontalAlignment = Alignment.End
@@ -207,7 +207,7 @@ private fun AmountSection(project: ProjectUiModel) {
             }
         }
 
-        // 按工日分配模式下追加显示：各施工人员独立工日工费 + 总工日
+        // 按工日分配模式下追加显示：各施工人员独立日均工费 + 总工日
         if (isWorkDays && project.workerWageDetails.isNotEmpty()) {
             Spacer(modifier = Modifier.height(10.dp))
             Surface(
@@ -237,7 +237,7 @@ private fun AmountSection(project: ProjectUiModel) {
                             color = AppColors.Green400
                         )
                     }
-                    // 各施工人员工日工费明细
+                    // 各施工人员日均工费明细
                     project.workerWageDetails.forEach { detail ->
                         if (detail.workdays > 0) {
                             Row(
@@ -294,7 +294,7 @@ private fun InfoSection(project: ProjectUiModel) {
             Text(text = "⚖️", fontSize = 15.sp)
             Spacer(modifier = Modifier.width(6.dp))
             // 后端字段值：average=平均分配，work_days=按工日分配
-            // 总工日和各人员工日工费明细在按工日分配时于金额区下方展示，此处不重复
+            // 总工日和各人员日均工费明细在按工日分配时于金额区下方展示，此处不重复
             val distributionText = when (project.salaryDistribution) {
                 "average" -> "平均分配"
                 "work_days" -> "按工日分配"

@@ -15,7 +15,7 @@ import javax.inject.Inject
 
 /**
  * 工程列表UI模型
- * totalWorkdays: 按工日分配模式下的总工日（用于计算工日工费）
+ * totalWorkdays: 按工日分配模式下的总工日（用于计算日均工费）
  * workerWageDetails: 按工日分配模式下的各施工人员工日及工费明细
  */
 data class ProjectUiModel(
@@ -35,7 +35,7 @@ data class ProjectUiModel(
 )
 
 /**
- * 施工人员工日工费明细（工程列表卡片按工日分配模式下显示）
+ * 施工人员日均工费明细（工程列表卡片按工日分配模式下显示）
  */
 data class WorkerWageDetail(
     val nickname: String,
@@ -145,9 +145,9 @@ class ProjectListViewModel @Inject constructor(
                         return@launch
                     }
                     val newItems = pageData.list.map { dto ->
-                        // 计算总工日（按工日分配模式下用于计算工日工费）
+                        // 计算总工日（按工日分配模式下用于计算日均工费）
                         val totalWorkdays = dto.workers.sumOf { it.workdays ?: 0.0 }
-                        // 按工日分配模式下计算每个施工人员的工日工费明细
+                        // 按工日分配模式下计算每个施工人员的日均工费明细
                         val totalAmount = dto.totalAmount
                         val workerWageDetails = if (dto.salaryDistribution == "work_days" && totalWorkdays > 0) {
                             dto.workers.map { worker ->
