@@ -91,6 +91,10 @@ class StatisticsDashboardViewModel @Inject constructor(
     private val _expandedHistoryProjects = MutableStateFlow<Set<String>>(emptySet())
     val expandedHistoryProjects: StateFlow<Set<String>> = _expandedHistoryProjects.asStateFlow()
 
+    /** 已展开的历史结算单（settlementId集合，默认全部折叠，点击标题栏才展开表格） */
+    private val _expandedHistorySettlements = MutableStateFlow<Set<Int>>(emptySet())
+    val expandedHistorySettlements: StateFlow<Set<Int>> = _expandedHistorySettlements.asStateFlow()
+
     /** 用户昵称（从UserStorage响应式获取） */
     val userNickname: StateFlow<String> = userStorage.nicknameFlow
 
@@ -122,19 +126,16 @@ class StatisticsDashboardViewModel @Inject constructor(
         loadAllData()
     }
 
-    /** 加载所有数据 */
+    /** 加载所有数据（渐进式：先加载结算单数据立即显示页面，历史数据异步加载不阻塞） */
     fun loadAllData() {
         viewModelScope.launch {
             _state.value = UiState.Loading
             try {
-                // 并行加载所有数据
-                kotlinx.coroutines.coroutineScope {
-                    val sheetJob = launch { loadSalarySheetData() }
-                    val historyJob = launch { loadSettlementHistory() }
-                    sheetJob.join()
-                    historyJob.join()
-                }
+                // 先加载结算单数据（施工方案+工程列表+仪表盘统计），加载完立即显示页面
+                loadSalarySheetData()
                 _state.value = UiState.Success(Unit)
+                // 异步加载结算历史（不阻塞页面显示，加载完自动刷新UI）
+                launch { loadSettlementHistory() }
             } catch (e: Exception) {
                 _state.value = UiState.Error(NetworkErrorHandler.translate(e, "加载统计数据失败"))
             }
@@ -148,16 +149,13 @@ class StatisticsDashboardViewModel @Inject constructor(
     fun silentRefresh() {
         viewModelScope.launch {
             try {
-                kotlinx.coroutines.coroutineScope {
-                    val sheetJob = launch { loadSalarySheetData() }
-                    val historyJob = launch { loadSettlementHistory() }
-                    sheetJob.join()
-                    historyJob.join()
-                }
-                // 静默刷新成功后，仅当之前是Error状态时才更新为Success
+                // 先刷新结算单数据
+                loadSalarySheetData()
                 if (_state.value is UiState.Error) {
                     _state.value = UiState.Success(Unit)
                 }
+                // 异步刷新历史数据
+                launch { loadSettlementHistory() }
             } catch (_: Exception) {
                 // 静默模式忽略错误，不覆盖已有状态
             }
@@ -364,6 +362,17 @@ class StatisticsDashboardViewModel @Inject constructor(
             current.add(key)
         }
         _expandedHistoryProjects.value = current
+    }
+
+    /** 切换历史结算单展开/折叠（点击标题栏切换表格显示） */
+    fun toggleHistorySettlementExpand(settlementId: Int) {
+        val current = _expandedHistorySettlements.value.toMutableSet()
+        if (current.contains(settlementId)) {
+            current.remove(settlementId)
+        } else {
+            current.add(settlementId)
+        }
+        _expandedHistorySettlements.value = current
     }
 
     /** 清除错误消息 */
