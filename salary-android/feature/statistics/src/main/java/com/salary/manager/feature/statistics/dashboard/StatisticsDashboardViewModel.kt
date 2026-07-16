@@ -91,10 +91,6 @@ class StatisticsDashboardViewModel @Inject constructor(
     private val _expandedHistoryProjects = MutableStateFlow<Set<String>>(emptySet())
     val expandedHistoryProjects: StateFlow<Set<String>> = _expandedHistoryProjects.asStateFlow()
 
-    /** 已展开的历史结算单（settlementId集合，默认全部折叠，点击标题栏才展开表格） */
-    private val _expandedHistorySettlements = MutableStateFlow<Set<Int>>(emptySet())
-    val expandedHistorySettlements: StateFlow<Set<Int>> = _expandedHistorySettlements.asStateFlow()
-
     /** 用户昵称（从UserStorage响应式获取） */
     val userNickname: StateFlow<String> = userStorage.nicknameFlow
 
@@ -362,17 +358,6 @@ class StatisticsDashboardViewModel @Inject constructor(
             current.add(key)
         }
         _expandedHistoryProjects.value = current
-    }
-
-    /** 切换历史结算单展开/折叠（点击标题栏切换表格显示） */
-    fun toggleHistorySettlementExpand(settlementId: Int) {
-        val current = _expandedHistorySettlements.value.toMutableSet()
-        if (current.contains(settlementId)) {
-            current.remove(settlementId)
-        } else {
-            current.add(settlementId)
-        }
-        _expandedHistorySettlements.value = current
     }
 
     /** 清除错误消息 */

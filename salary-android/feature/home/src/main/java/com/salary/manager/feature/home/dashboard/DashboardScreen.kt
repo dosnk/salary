@@ -69,13 +69,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -263,7 +263,22 @@ fun DashboardScreen(
             // ===== 可滚动内容区域（LazyColumn懒加载，仅组合可见项） =====
             // 外层水平padding设为4dp（原8dp），使工程历史卡片宽度约占屏幕98%
             // 表单Card单独补偿4dp水平padding，保持原有视觉边距
+            val listState = rememberLazyListState()
+
+            // 滚动到底部自动加载更多工程
+            LaunchedEffect(listState, uiState.hasMoreProjects) {
+                snapshotFlow {
+                    val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                    lastVisible >= listState.layoutInfo.totalItemsCount - 3
+                }.collect { isAtEnd ->
+                    if (isAtEnd && uiState.hasMoreProjects && !uiState.isLoadingMoreProjects) {
+                        viewModel.loadMoreProjects()
+                    }
+                }
+            }
+
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .weight(1f)
                     .background(AppColors.Background),
@@ -852,6 +867,38 @@ fun DashboardScreen(
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                     }
+
+                    // 加载更多指示器（滚动到底部时自动触发分页加载）
+                    if (uiState.isLoadingMoreProjects) {
+                        item(key = "loading_more") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(
+                                    color = AppColors.Green400,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                    } else if (uiState.hasMoreProjects) {
+                        item(key = "load_more_hint") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "上滑加载更多",
+                                    color = AppColors.TextTertiary,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
                 }
 
                 item {
@@ -941,8 +988,11 @@ private fun ProjectHistoryCard(
     onOpenAttachmentList: () -> Unit,
     onOpenFilePicker: () -> Unit
 ) {
-    // 子项目表格展开/折叠状态（默认折叠，减少初始渲染量）
-    var isSubprojectExpanded by remember { mutableStateOf(false) }
+    // 子项目表格展开/折叠状态
+    // 优化：子项目≤30个时默认展开（不影响性能），>30个时默认折叠（减少渲染量）
+    var isSubprojectExpanded by remember(project.id) {
+        mutableStateOf(project.subprojects.size <= 30)
+    }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         // 工程标题行：绿色背景 + 白色文字（名称+金额），建立标题栏权威感

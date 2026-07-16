@@ -120,7 +120,6 @@ fun StatisticsDashboardScreen(
     val settling by viewModel.settling.collectAsStateWithLifecycle()
     val expandedProjects by viewModel.expandedProjects.collectAsStateWithLifecycle()
     val expandedHistoryProjects by viewModel.expandedHistoryProjects.collectAsStateWithLifecycle()
-    val expandedHistorySettlements by viewModel.expandedHistorySettlements.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
     val successMessage by viewModel.successMessage.collectAsStateWithLifecycle()
     val statsProjectListState by viewModel.statsProjectListState.collectAsStateWithLifecycle()
@@ -174,7 +173,6 @@ fun StatisticsDashboardScreen(
     val onToggleProjectExpand: (Int) -> Unit = remember(viewModel) { { viewModel.toggleProjectExpand(it) } }
     val onExportCurrentImage: () -> Unit = remember(viewModel) { { viewModel.exportCurrentSettlementImage() } }
     val onToggleHistoryProjectExpand: (Int, Int) -> Unit = remember(viewModel) { { settlementId, projectId -> viewModel.toggleHistoryProjectExpand(settlementId, projectId) } }
-    val onToggleHistorySettlementExpand: (Int) -> Unit = remember(viewModel) { { settlementId -> viewModel.toggleHistorySettlementExpand(settlementId) } }
     val onExportSettlementExcel: (Int, String) -> Unit = remember(viewModel) { { settlementId, settlementNo -> viewModel.exportSettlementExcel(settlementId, settlementNo) } }
     val onExportSettlementImage: (SettlementHistoryDto) -> Unit = remember(viewModel) { { settlement -> viewModel.exportSettlementImage(settlement) } }
 
@@ -450,7 +448,7 @@ fun StatisticsDashboardScreen(
                                             Spacer(modifier = Modifier.height(16.dp))
                                         }
                                         // 每个历史结算单作为独立 item，支持懒加载
-                                        // 默认折叠（只渲染标题栏），点击标题栏才展开表格
+                                        // 子项目>30个默认折叠，≤30个默认展开
                                         items(
                                             items = settlementHistory,
                                             key = { settlement -> "history_${settlement.settlementId}" }
@@ -459,10 +457,8 @@ fun StatisticsDashboardScreen(
                                                 settlement = settlement,
                                                 constructionPlans = constructionPlans,
                                                 expandedHistoryProjects = expandedHistoryProjects,
-                                                isSettlementExpanded = expandedHistorySettlements.contains(settlement.settlementId),
                                                 greenGradient = greenGradient,
                                                 exportingId = exportingId,
-                                                onToggleSettlementExpand = { onToggleHistorySettlementExpand(settlement.settlementId) },
                                                 onToggleHistoryProjectExpand = onToggleHistoryProjectExpand,
                                                 onExportExcel = onExportSettlementExcel,
                                                 onExportImage = onExportSettlementImage,
@@ -927,141 +923,6 @@ fun SettlementSheetHeader(
 }
 
 /**
- * 结算单区域 - 绿色渐变标题栏 + 表格
- */
-@Composable
-fun SettlementSheetSection(
-    constructionPlans: List<ConstructionPlanDto>,
-    projectData: List<SalaryProjectDto>,
-    selectedProjectIds: List<Int>,
-    expandedProjects: Set<Int>,
-    calculationResult: com.salary.core.network.api.CalculateResultDto,
-    settling: Boolean,
-    greenGradient: Brush,
-    onToggleSelectAll: () -> Unit,
-    onToggleProjectSelection: (Int, Boolean) -> Unit,
-    onToggleProjectExpand: (Int) -> Unit,
-    onSettle: () -> Unit,
-    onExportImage: () -> Unit,
-    getUnitName: (String?) -> String,
-    formatNumber: (Double?) -> String
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp)
-    ) {
-        // 绿色渐变标题栏（标题+导出图片按钮+结算按钮）
-        SettlementTitleBar(
-            title = "📋 结算单",
-            greenGradient = greenGradient,
-            rightContent = {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    // 导出图片结算单按钮（在结算按钮左边）
-                    Button(
-                        onClick = onExportImage,
-                        enabled = selectedProjectIds.isNotEmpty() && !settling,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.White,
-                            contentColor = Color(0xFF65A30D),
-                            disabledContainerColor = Color(0xCCFFFFFF),
-                            disabledContentColor = Color(0xFF999999)
-                        ),
-                        shape = RoundedCornerShape(4.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = "导出",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1
-                        )
-                    }
-                    // 结算按钮
-                    Button(
-                        onClick = onSettle,
-                        enabled = selectedProjectIds.isNotEmpty() && !settling,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.White,
-                            contentColor = Color(0xFF65A30D),
-                            disabledContainerColor = Color(0xCCFFFFFF),
-                            disabledContentColor = Color(0xFF999999)
-                        ),
-                        shape = RoundedCornerShape(4.dp)
-                    ) {
-                        Text(
-                            text = if (settling) "结算中..." else
-                                if (selectedProjectIds.isNotEmpty()) "结算(${selectedProjectIds.size}个)" else "结算",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-            }
-        )
-
-        // 已选择工程数提示（在标题栏正下方，左对齐）
-        Text(
-            text = "已选择 ${selectedProjectIds.size} 个工程，确认后将生成结算单，结算后不可修改",
-            fontSize = 11.sp,
-            color = AppColors.TextSecondary,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 4.dp)
-        )
-
-        // 表格内容
-        if (projectData.isEmpty()) {
-            // 空数据提示
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color.White, RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
-                    .padding(24.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    "暂无统计工程，请先在工程管理中确认工程完工",
-                    fontSize = 13.sp,
-                    color = AppColors.TextTertiary,
-                    textAlign = TextAlign.Center
-                )
-            }
-        } else if (constructionPlans.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color.White, RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
-                    .padding(24.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    "暂无施工方案数据",
-                    fontSize = 13.sp,
-                    color = AppColors.TextTertiary,
-                    textAlign = TextAlign.Center
-                )
-            }
-        } else {
-            SettlementTable(
-                constructionPlans = constructionPlans,
-                projectData = projectData,
-                selectedProjectIds = selectedProjectIds,
-                expandedProjects = expandedProjects,
-                calculationResult = calculationResult,
-                onToggleSelectAll = onToggleSelectAll,
-                onToggleProjectSelection = onToggleProjectSelection,
-                onToggleProjectExpand = onToggleProjectExpand,
-                getUnitName = getUnitName,
-                formatNumber = formatNumber
-            )
-        }
-    }
-}
-
-/**
  * 结算单/历史标题栏 - 绿色渐变背景
  * 注意：左侧标题使用weight(1f)占满剩余空间并单行省略，
  *       右侧内容保持紧凑单行，避免内容过多时换行导致标题栏超高
@@ -1092,118 +953,6 @@ fun SettlementTitleBar(
         )
         // 右侧内容：不占weight，保持紧凑
         rightContent()
-    }
-}
-
-/**
- * 结算单表格 - 用LazyColumn实现（Android不适合HTML table）
- */
-@Composable
-fun SettlementTable(
-    constructionPlans: List<ConstructionPlanDto>,
-    projectData: List<SalaryProjectDto>,
-    selectedProjectIds: List<Int>,
-    expandedProjects: Set<Int>,
-    calculationResult: com.salary.core.network.api.CalculateResultDto,
-    onToggleSelectAll: () -> Unit,
-    onToggleProjectSelection: (Int, Boolean) -> Unit,
-    onToggleProjectExpand: (Int) -> Unit,
-    getUnitName: (String?) -> String,
-    formatNumber: (Double?) -> String
-) {
-    val scrollState = rememberScrollState()
-    val allSelected = selectedProjectIds.size == projectData.size && projectData.isNotEmpty()
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.White, RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
-    ) {
-        // 横向可滚动的表格
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(scrollState)
-        ) {
-            // 表头行
-            TableHeaderRow(
-                constructionPlans = constructionPlans,
-                allSelected = allSelected,
-                onToggleSelectAll = onToggleSelectAll
-            )
-
-            // 工程数据行
-            projectData.forEachIndexed { index, project ->
-                val isSelected = selectedProjectIds.contains(project.id)
-                val isExpanded = expandedProjects.contains(project.id)
-
-                // 工程主行
-                ProjectDataRow(
-                    index = index,
-                    project = project,
-                    constructionPlans = constructionPlans,
-                    isSelected = isSelected,
-                    isExpanded = isExpanded,
-                    onToggleSelection = { onToggleProjectSelection(project.id, it) },
-                    onToggleExpand = { onToggleProjectExpand(project.id) },
-                    getUnitName = getUnitName,
-                    formatNumber = formatNumber
-                )
-
-                // 展开的子项目明细行
-                // 注意：AnimatedVisibility 的 content lambda 要求单一根组件，
-                //       不能直接 forEach，否则只会渲染其中一个子项，需用 Column 包裹
-                AnimatedVisibility(visible = isExpanded) {
-                    Column {
-                        project.subprojects.forEach { sub ->
-                            SubprojectRow(
-                                subproject = sub,
-                                constructionPlans = constructionPlans,
-                                getUnitName = getUnitName
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 合计行（蓝色渐变背景）
-            TotalRow(
-                constructionPlans = constructionPlans,
-                planTotals = calculationResult.planTotals,
-                getUnitName = getUnitName,
-                formatNumber = formatNumber
-            )
-
-            // 单价行（灰色背景）
-            PriceRow(
-                constructionPlans = constructionPlans,
-                getUnitName = getUnitName
-            )
-
-            // 总计行（绿色渐变背景）
-            GrandTotalRow(
-                constructionPlans = constructionPlans,
-                planTotals = calculationResult.planTotals,
-                grandTotal = calculationResult.grandTotal,
-                formatNumber = formatNumber
-            )
-
-            // 预支行（黄色渐变背景）
-            calculationResult.advances.forEach { advance ->
-                AdvanceRow(
-                    advance = advance,
-                    planCount = constructionPlans.size,
-                    formatNumber = formatNumber
-                )
-            }
-
-            // 总额行（粉色渐变背景）
-            FinalTotalRow(
-                finalTotal = calculationResult.finalTotal,
-                planCount = constructionPlans.size,
-                formatNumber = formatNumber
-            )
-        }
     }
 }
 
@@ -1695,16 +1444,22 @@ fun SettlementHistoryItem(
     settlement: SettlementHistoryDto,
     constructionPlans: List<ConstructionPlanDto>,
     expandedHistoryProjects: Set<String>,
-    isSettlementExpanded: Boolean,
     greenGradient: Brush,
     exportingId: Int? = null,
-    onToggleSettlementExpand: () -> Unit = {},
     onToggleHistoryProjectExpand: (Int, Int) -> Unit,
     onExportExcel: (Int, String) -> Unit = { _, _ -> },
     onExportImage: (SettlementHistoryDto) -> Unit = {},
     getUnitName: (String?) -> String,
     formatNumber: (Double?) -> String
 ) {
+    // 展开/折叠状态：子项目总数≤30个默认展开，>30个默认折叠
+    val totalSubprojects = remember(settlement.settlementId) {
+        settlement.projects.sumOf { it.subprojects.size }
+    }
+    var isExpanded by remember(settlement.settlementId) {
+        mutableStateOf(totalSubprojects <= 30)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1714,19 +1469,19 @@ fun SettlementHistoryItem(
         Spacer(modifier = Modifier.height(8.dp))
 
         // 绿色标题栏：左侧两行（结算时间 + 结算时间段），右侧导出按钮
-        // 点击标题栏切换表格展开/折叠（默认折叠，减少初始渲染量）
+        // 点击标题栏切换表格展开/折叠
         SettlementHistoryTitleBar(
             settlement = settlement,
             greenGradient = greenGradient,
             exportingId = exportingId,
-            isExpanded = isSettlementExpanded,
-            onToggleExpand = onToggleSettlementExpand,
+            isExpanded = isExpanded,
+            onToggleExpand = { isExpanded = !isExpanded },
             onExportExcel = { onExportExcel(settlement.settlementId, settlement.settlementNo) },
             onExportImage = { onExportImage(settlement) }
         )
 
         // 历史表格（仅在展开时渲染，折叠时不渲染表格内容，大幅减少渲染量）
-        AnimatedVisibility(visible = isSettlementExpanded) {
+        AnimatedVisibility(visible = isExpanded) {
             SettlementHistoryTable(
                 settlement = settlement,
                 constructionPlans = constructionPlans,
@@ -1745,7 +1500,7 @@ fun SettlementHistoryItem(
  *   第一行 - 结算时间：YYYY-MM-DD
  *   第二行 - 结算时间段：YYYY-MM-DD 到 YYYY-MM-DD
  * 右侧：展开/折叠指示器 + 导出按钮（点击弹出选择：导出表格文件 / 导出图片结算单）
- * 点击标题栏左侧区域切换表格展开/折叠（默认折叠，减少初始渲染量）
+ * 点击标题栏左侧区域切换表格展开/折叠（子项目>30个默认折叠，≤30个默认展开）
  *
  * @param settlement 结算历史数据
  * @param greenGradient 绿色渐变背景

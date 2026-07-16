@@ -152,6 +152,10 @@ data class DashboardUiState(
     val selectedYearMonth: String = SimpleDateFormat("yyyy-MM", Locale.CHINA).format(Date()),
     /** 是否正在加载工程历史 */
     val isLoadingProjects: Boolean = false,
+    /** 是否还有更多工程可加载（分页加载） */
+    val hasMoreProjects: Boolean = false,
+    /** 是否正在加载更多工程 */
+    val isLoadingMoreProjects: Boolean = false,
 
     // ===== 用户信息 =====
     /** 用户昵称 */
@@ -221,6 +225,13 @@ class DashboardViewModel @Inject constructor(
 
     /** 防抖保存表单的Job */
     private var saveFormJob: kotlinx.coroutines.Job? = null
+
+    /** 工程列表分页：当前页码 */
+    private var projectsCurrentPage = 1
+    /** 工程列表分页：每页数量 */
+    private val projectsPageSize = 20
+    /** 工程列表分页：是否正在加载更多（防止重复触发） */
+    private var isLoadingMoreProjects = false
 
     init {
         loadInitialData()
@@ -399,7 +410,7 @@ class DashboardViewModel @Inject constructor(
     }
 
     /**
-     * 加载工程历史列表（按月筛选）
+     * 加载工程历史列表（按月筛选，第一页）
      * 列表接口已聚合返回 sub_projects，无需再发起N+1详情请求
      */
     fun loadProjects() {
@@ -407,15 +418,58 @@ class DashboardViewModel @Inject constructor(
     }
 
     /**
-     * 加载工程历史列表的suspend实现（供并行调用）
+     * 加载更多工程历史（分页加载，滚动到底部时触发）
+     */
+    fun loadMoreProjects() {
+        if (isLoadingMoreProjects || !_uiState.value.hasMoreProjects) return
+        viewModelScope.launch {
+            isLoadingMoreProjects = true
+            _uiState.value = _uiState.value.copy(isLoadingMoreProjects = true)
+            try {
+                val nextPage = projectsCurrentPage + 1
+                val response = projectApi.getProjects(
+                    page = nextPage,
+                    size = projectsPageSize,
+                    yearMonth = _uiState.value.selectedYearMonth
+                )
+                if (response.code == 200) {
+                    val pageData = response.data
+                    if (pageData != null && pageData.list.isNotEmpty()) {
+                        val newProjects = pageData.list.map { mapProjectDtoToUiModel(it) }
+                        projectsCurrentPage = nextPage
+                        _uiState.value = _uiState.value.copy(
+                            projects = _uiState.value.projects + newProjects,
+                            hasMoreProjects = pageData.list.size >= projectsPageSize,
+                            isLoadingMoreProjects = false
+                        )
+                    } else {
+                        _uiState.value = _uiState.value.copy(
+                            hasMoreProjects = false,
+                            isLoadingMoreProjects = false
+                        )
+                    }
+                } else {
+                    _uiState.value = _uiState.value.copy(isLoadingMoreProjects = false)
+                }
+            } catch (_: Exception) {
+                _uiState.value = _uiState.value.copy(isLoadingMoreProjects = false)
+            } finally {
+                isLoadingMoreProjects = false
+            }
+        }
+    }
+
+    /**
+     * 加载工程历史列表的suspend实现（供并行调用，加载第一页）
      */
     private suspend fun loadProjectsSuspend() {
         _uiState.value = _uiState.value.copy(isLoadingProjects = true)
+        projectsCurrentPage = 1
 
         try {
             val response = projectApi.getProjects(
                 page = 1,
-                size = 50,
+                size = projectsPageSize,
                 yearMonth = _uiState.value.selectedYearMonth
             )
 
@@ -424,7 +478,8 @@ class DashboardViewModel @Inject constructor(
                 if (pageData == null) {
                     _uiState.value = _uiState.value.copy(
                         projects = emptyList(),
-                        isLoadingProjects = false
+                        isLoadingProjects = false,
+                        hasMoreProjects = false
                     )
                     return
                 }
@@ -432,12 +487,14 @@ class DashboardViewModel @Inject constructor(
                 val projects = pageData.list.map { mapProjectDtoToUiModel(it) }
                 _uiState.value = _uiState.value.copy(
                     projects = projects,
-                    isLoadingProjects = false
+                    isLoadingProjects = false,
+                    hasMoreProjects = pageData.list.size >= projectsPageSize
                 )
             } else {
                 _uiState.value = _uiState.value.copy(
                     projects = emptyList(),
                     isLoadingProjects = false,
+                    hasMoreProjects = false,
                     errorMessage = NetworkErrorHandler.translateServerError(response.msg, "加载工程历史失败")
                 )
             }
@@ -445,6 +502,7 @@ class DashboardViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 projects = emptyList(),
                 isLoadingProjects = false,
+                hasMoreProjects = false,
                 errorMessage = NetworkErrorHandler.translate(e, "加载工程历史失败")
             )
         }
