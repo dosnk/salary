@@ -56,6 +56,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -113,20 +115,33 @@ fun ProjectDetailScreen(
     viewModel: ProjectDetailViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
+    // 收集成功/错误消息状态，用于响应消息变化触发对应副作用
+    val successMessage by viewModel.successMessage.collectAsState()
+    val errorMessage by viewModel.errorMessage.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(projectId) {
         viewModel.loadProject(projectId)
     }
 
     // 监听成功消息：保存成功时通知上层刷新列表
-    LaunchedEffect(viewModel.successMessage) {
-        viewModel.successMessage?.let {
+    LaunchedEffect(successMessage) {
+        successMessage?.let {
             onDataChanged()
+        }
+    }
+
+    // 监听错误消息：操作失败时通过Snackbar提示用户
+    LaunchedEffect(errorMessage) {
+        errorMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearErrorMessage()
         }
     }
 
     Scaffold(
         containerColor = AppColors.Background,
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             // 自定义绿色渐变顶部栏，与状态栏融合
             // 原TopAppBar设置containerColor=Transparent导致状态栏区域为白色，与内容区绿色渐变不融合
@@ -340,9 +355,24 @@ fun ProjectDetailContent(
 
     // 子项目编辑弹窗
     editingSubproject?.let { sub ->
+        // 监听保存状态：saving从true变false时表示保存完成，成功则关闭弹窗
+        val savingSubproject by viewModel.savingSubproject.collectAsState()
+        // 记录上一次的saving状态，用于检测"从保存中变为非保存中"的边沿
+        var prevSaving by remember { mutableStateOf(false) }
+        LaunchedEffect(savingSubproject) {
+            // 保存完成（saving从true变false）且之前正在保存，说明本次保存已结束
+            if (prevSaving && !savingSubproject) {
+                // 成功消息非空表示保存成功，关闭弹窗；失败时errorMessage已由Snackbar展示，弹窗保持打开
+                if (viewModel.successMessage.value != null) {
+                    editingSubproject = null
+                }
+            }
+            prevSaving = savingSubproject
+        }
+
         SubprojectEditDialog(
             subproject = sub,
-            saving = viewModel.savingSubproject.collectAsState().value,
+            saving = savingSubproject,
             onDismiss = { editingSubproject = null },
             onConfirm = { lengthMeter, widthMeter, remark ->
                 viewModel.updateSubproject(
@@ -352,7 +382,7 @@ fun ProjectDetailContent(
                     widthMeter = widthMeter,
                     remark = remark
                 )
-                editingSubproject = null
+                // 不在此处关闭弹窗，等待保存成功后由LaunchedEffect自动关闭
             }
         )
     }
@@ -369,10 +399,23 @@ fun ProjectDetailContent(
 
     // 编辑工程弹窗
     if (showEditProjectDialog) {
+        // 监听保存状态：saving从true变false时表示保存完成，成功则关闭弹窗
+        val savingProject by viewModel.savingProject.collectAsState()
+        var prevSavingProject by remember { mutableStateOf(false) }
+        LaunchedEffect(savingProject) {
+            if (prevSavingProject && !savingProject) {
+                // 成功消息非空表示保存成功，关闭弹窗；失败时errorMessage已由Snackbar展示，弹窗保持打开
+                if (viewModel.successMessage.value != null) {
+                    showEditProjectDialog = false
+                }
+            }
+            prevSavingProject = savingProject
+        }
+
         EditProjectDialog(
             detail = detail,
             constructors = viewModel.constructors.collectAsState().value,
-            saving = viewModel.savingProject.collectAsState().value,
+            saving = savingProject,
             onDismiss = { showEditProjectDialog = false },
             onConfirm = { name, remark, status, salaryDistribution, constructorIds, workerWorkdays ->
                 viewModel.updateProject(
@@ -384,6 +427,7 @@ fun ProjectDetailContent(
                     constructorIds = constructorIds,
                     workerWorkdays = workerWorkdays
                 )
+                // 不在此处关闭弹窗，等待保存成功后由LaunchedEffect自动关闭
             }
         )
     }
@@ -1234,60 +1278,7 @@ fun AttachmentItemRow(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        // ===== 顶部行：文件信息（左）+ 删除按钮（右），保留horizontal padding =====
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // 文件类型图标
-            Icon(
-                imageVector = if (isImageType(file.type)) {
-                    Icons.Default.Image
-                } else if (isVideo) {
-                    Icons.Default.PlayCircle
-                } else {
-                    Icons.Default.Description
-                },
-                contentDescription = null,
-                tint = AppColors.Green400,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            // 文件名 + 大小/时间
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = file.fileName,
-                    fontSize = 13.sp,
-                    color = AppColors.TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    text = "大小：${formatFileSize(file.fileSize)}  上传：${DateFormatter.formatDate(file.uploadedAt)}",
-                    fontSize = 11.sp,
-                    color = AppColors.TextTertiary
-                )
-            }
-            // 删除按钮（红色垃圾桶图标，仅施工员可见）
-            if (canDelete) {
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "删除附件",
-                        tint = Color(0xFFE53935),
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-        }
-
-        // ===== 媒体预览区（仅媒体文件显示，宽度占满弹窗） =====
+        // ===== 顶部：媒体预览区（仅媒体文件显示，宽度占满弹窗）=====
         if (isMedia) {
             Box(
                 modifier = Modifier
@@ -1336,6 +1327,59 @@ fun AttachmentItemRow(
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
+                }
+            }
+        }
+
+        // ===== 底部行：文件信息（左）+ 删除按钮（右），保留horizontal padding =====
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 文件类型图标
+            Icon(
+                imageVector = if (isImageType(file.type)) {
+                    Icons.Default.Image
+                } else if (isVideo) {
+                    Icons.Default.PlayCircle
+                } else {
+                    Icons.Default.Description
+                },
+                contentDescription = null,
+                tint = AppColors.Green400,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            // 文件名 + 大小/时间
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = file.fileName,
+                    fontSize = 13.sp,
+                    color = AppColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "大小：${formatFileSize(file.fileSize)}  上传：${DateFormatter.formatDate(file.uploadedAt)}",
+                    fontSize = 11.sp,
+                    color = AppColors.TextTertiary
+                )
+            }
+            // 删除按钮（红色垃圾桶图标，仅施工员可见）
+            if (canDelete) {
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "删除附件",
+                        tint = Color(0xFFE53935),
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
         }
@@ -1433,11 +1477,10 @@ fun EditProjectDialog(
         }
     }
 
-    // 工程状态选项
+    // 工程状态选项（不含"已完工"，该状态需通过"确认完工"独立流程触发）
     val statusOptions = listOf(
         "preparing" to "备料中",
         "constructing" to "施工中",
-        "completed" to "已完工",
         "canceled" to "已取消"
     )
     // 工资分配方式选项
@@ -1876,7 +1919,7 @@ fun HistoryItem(item: HistoryUiModel) {
                     color = AppColors.TextPrimary
                 )
                 Text(
-                    text = DateFormatter.formatDateTime(item.createdAt),
+                    text = DateFormatter.formatDate(item.createdAt),
                     fontSize = 11.sp,
                     color = AppColors.TextTertiary
                 )
