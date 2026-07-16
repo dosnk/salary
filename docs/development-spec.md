@@ -101,9 +101,11 @@ pg 原生SQL → Knex.js               (Query Builder，防注入)
 |------|------|------|
 | 管理员 | admin | 只读监管 + 系统配置，**不干预业务操作** |
 | 施工员 | constructor | 对自己参与的工程有完全操作权 |
-| 资料员 | documenter | 查看全部工程(只读) + 新建工程 |
+| 资料员 | documenter | 查看全部工程(只读) + 新建工程 + 查看全部预支/统计 |
 
-### 2.2 权限矩阵（最终版）
+### 2.2 权限矩阵（最终版 - V2.0 重新界定资料员权限）
+
+> **V2.0 重新界定（2026-07-16）**：资料员权限从"仅查看工程"扩展为"查看全部工程 + 查看全部预支(按人员筛选) + 查看全部统计(只读)"，但不能删除、修改、结算、创建预支。详见 2.5 节。
 
 | 权限 | admin | constructor | documenter |
 |------|:-----:|:-----------:|:----------:|
@@ -113,12 +115,16 @@ pg 原生SQL → Knex.js               (Query Builder，防注入)
 | 工程修改 | ✗ | 自己参与的 | ✗ |
 | 工程删除 | ✗ | 自己参与的 | ✗ |
 | 子项目管理(增删改) | ✗ | 自己参与的 | ✗ |
+| 附件上传/删除 | ✗ | 自己参与的 | ✗ |
 | 结算操作 | ✗ | 工程施工人员(自确认) | ✗ |
-| 预支管理(增删改) | ✗(只能查看) | 自己 | ✗ |
-| 统计查看 | ✓ | ✓(自己的) | ✗ |
+| 预支创建/删除 | ✗(只能查看) | 自己 | ✗(只能查看) |
+| 预支查看 | 全部 | 自己 | 全部(按人员筛选) |
+| 统计查看 | ✓ | ✓(自己的) | ✓(全部只读) |
 | 字典管理 | ✓ | ✗ | ✗ |
 | 数据迁移 | ✓ | ✗ | ✗ |
-| AI助手 | ✓(全部数据) | ✓(自己数据) | ✓(查看数据) |
+| AI助手 | ✓(全部数据) | ✓(自己数据) | ✓(查看全部数据) |
+| AI配置/知识管理 | ✓ | ✗ | ✗ |
+| 数据一致性校验 | ✓ | ✗ | ✗ |
 
 ### 2.3 施工员权限判断逻辑
 
@@ -140,6 +146,49 @@ WHERE project_id IN (
 - 新建 `middleware/rbac.js` 统一权限入口
 - 将controller中的 `isAdmin()` / `isConstructor()` / `canModifyProject()` 检查收敛到中间件
 - 新增资源级数据过滤：施工员自动只查自己参与的工程数据
+- 关键中间件：
+  - `requireProjectView()` - 工程查看：admin/documenter可查全部，constructor限自己参与
+  - `requireProjectModify()` - 工程修改：仅constructor（admin/documenter禁止）
+  - `requireFileModify()` - 附件上传/删除：仅constructor（admin/documenter禁止）
+  - `requireSettlementAccess()` - 结算操作：仅constructor
+  - `requireAdvanceCreate()` - 预支创建：仅constructor
+  - `requireAdvanceDelete()` - 预支删除：仅constructor
+  - `requireStatisticsAccess()` - 统计访问：三角色均可（数据范围由service层过滤）
+
+### 2.5 资料员权限重新界定（V2.0 - 2026-07-16）
+
+**背景**：原设计资料员仅能查看工程，不能查看统计和预支。实际业务中资料员需要查看所有施工人员的工程、预支和结算统计用于资料归档，但不能修改、删除、结算。
+
+**权限调整明细**：
+
+| 权限项 | 原设计 | 重新界定后 |
+|--------|--------|-----------|
+| 统计查看 | ✗ | ✓(全部只读) |
+| 预支查看 | ✗ | 全部(按人员筛选) |
+| AI助手 | ✓(查看数据) | ✓(查看全部数据) |
+
+**前端展示规则**：
+
+| 页面 | 资料员可见 | 资料员不可见 |
+|------|-----------|-------------|
+| 主页 | 所有工程、子项目、附件列表 | 上传附件按钮 |
+| 工程管理页 | 所有工程、搜索筛选 | 确认完工按钮（显示只读"施工中"） |
+| 统计页 | 统计卡片、结算单表格、结算历史 | 结算按钮、Checkbox选择列 |
+| 预支页 | 所有预支记录、按人员筛选、预支人姓名 | 创建预支FAB按钮 |
+| AI页面 | AI对话、材料库查看 | 知识文档管理、材料库增删改 |
+| 我的页面 | 关于、个人资料 | AI配置、数据一致性校验、字典管理、用户管理 |
+
+**统计页表格列宽动态调整**：
+- 施工员（canSettle=true）：选择列48dp + 序号36dp + 工程名100dp + 方案72*n + 总额64dp
+- 资料员/管理员（canSettle=false）：序号36dp + 工程名100dp + 方案72*n + 总额64dp
+- 汇总行（合计/单价/总计/预支/总额）合并列宽度：施工员184dp，资料员/管理员136dp
+
+**后端数据范围过滤**：
+- `getAdvances` controller：admin/documenter可查全部或按userId筛选，constructor只能查自己
+- `getAdvanceTotal` controller：admin/documenter可查指定用户总额，constructor只能查自己
+- `getSettlements` service：admin/documenter可查全部，constructor只能查自己
+- AI工具`queryStatistics`/`queryAdvances`：documenter可查全部（从拒绝改为放行）
+- AI工具调用统一通过`toolRoleWhitelist` + `wrapWithRoleCheck`包装器按角色校验
 
 ---
 

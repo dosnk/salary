@@ -829,7 +829,7 @@ router.get('/:id', auth.authenticate, settlementController.getSettlementDetail);
  *                   data: null
  *                   msg: '数据库异常'
  */
-router.post('/:id/confirm', auth.authenticate, validation(settlementController.confirmSettlementSchema), settlementController.confirmSettlement);
+router.post('/:id/confirm', auth.authenticate, requireSettlementAccess(), validation(settlementController.confirmSettlementSchema), settlementController.confirmSettlement);
 
 /**
  * @swagger

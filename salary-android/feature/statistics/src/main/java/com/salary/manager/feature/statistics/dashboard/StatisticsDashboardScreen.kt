@@ -254,7 +254,7 @@ fun StatisticsDashboardScreen(
                                 // 计算表格固定总宽度（资料员/管理员无选择列：序号36 + 工程名100 + 方案72*n + 总额64）
                                 // 施工员有选择列：选择48 + 序号36 + 工程名100 + 方案72*n + 总额64
                                 val tableWidth = remember(constructionPlans.size, canSettle) {
-                    (if (canSettle) 48 else 0 + 36 + 100 + 72 * constructionPlans.size + 64).dp
+                    ((if (canSettle) 48 else 0) + 36 + 100 + 72 * constructionPlans.size + 64).dp
                 }
 
                                 LazyColumn(
@@ -390,6 +390,7 @@ fun StatisticsDashboardScreen(
                                                                 SubprojectRow(
                                                                     subproject = sub,
                                                                     constructionPlans = constructionPlans,
+                                                                    canSettle = canSettle,
                                                                     getUnitName = getUnitName
                                                                 )
                                                             }
@@ -411,29 +412,34 @@ fun StatisticsDashboardScreen(
                                                     TotalRow(
                                                         constructionPlans = constructionPlans,
                                                         planTotals = calculationResult.planTotals,
+                                                        canSettle = canSettle,
                                                         getUnitName = getUnitName,
                                                         formatNumber = formatNumber
                                                     )
                                                     PriceRow(
                                                         constructionPlans = constructionPlans,
+                                                        canSettle = canSettle,
                                                         getUnitName = getUnitName
                                                     )
                                                     GrandTotalRow(
                                                         constructionPlans = constructionPlans,
                                                         planTotals = calculationResult.planTotals,
                                                         grandTotal = calculationResult.grandTotal,
+                                                        canSettle = canSettle,
                                                         formatNumber = formatNumber
                                                     )
                                                     calculationResult.advances.forEach { advance ->
                                                         AdvanceRow(
                                                             advance = advance,
                                                             planCount = constructionPlans.size,
+                                                            canSettle = canSettle,
                                                             formatNumber = formatNumber
                                                         )
                                                     }
                                                     FinalTotalRow(
                                                         finalTotal = calculationResult.finalTotal,
                                                         planCount = constructionPlans.size,
+                                                        canSettle = canSettle,
                                                         formatNumber = formatNumber
                                                     )
                                                 }
@@ -1126,11 +1132,13 @@ fun ProjectDataRow(
 /**
  * 子项目明细行
  * 名称列允许多行显示，避免"空间类型 - 施工方案"较长时被省略号截断显示不完整
+ * @param canSettle 是否可结算（施工员才有选择列，资料员/管理员无选择列需动态调整列宽对齐）
  */
 @Composable
 fun SubprojectRow(
     subproject: SubprojectDto,
     constructionPlans: List<ConstructionPlanDto>,
+    canSettle: Boolean = true,
     getUnitName: (String?) -> String
 ) {
     Row(
@@ -1141,8 +1149,10 @@ fun SubprojectRow(
             .padding(vertical = 4.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 空选择列
-        Box(modifier = Modifier.width(48.dp))
+        // 空选择列 —— 资料员/管理员不可结算时无此列
+        if (canSettle) {
+            Box(modifier = Modifier.width(48.dp))
+        }
         // 空序号
         Box(modifier = Modifier.width(36.dp))
         // 子项目名称（允许多行显示，完整展示内容）
@@ -1181,10 +1191,12 @@ fun SubprojectRow(
 
 /**
  * 单价行 - 灰色背景
+ * @param canSettle 是否可结算（控制合并列宽度：施工员含选择列184dp，资料员/管理员无选择列136dp）
  */
 @Composable
 fun PriceRow(
     constructionPlans: List<ConstructionPlanDto>,
+    canSettle: Boolean = true,
     getUnitName: (String?) -> String
 ) {
     Row(
@@ -1195,8 +1207,8 @@ fun PriceRow(
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 合并前3列
-        Box(modifier = Modifier.width(184.dp), contentAlignment = Alignment.CenterStart) {
+        // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
+        Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
             Text("单价", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color(0xFF666666))
         }
         // 各方案单价
@@ -1220,11 +1232,13 @@ fun PriceRow(
 
 /**
  * 合计行 - 蓝色渐变背景
+ * @param canSettle 是否可结算（控制合并列宽度：施工员含选择列184dp，资料员/管理员无选择列136dp）
  */
 @Composable
 fun TotalRow(
     constructionPlans: List<ConstructionPlanDto>,
     planTotals: Map<String, PlanTotalDto>,
+    canSettle: Boolean = true,
     getUnitName: (String?) -> String,
     formatNumber: (Double?) -> String
 ) {
@@ -1239,8 +1253,8 @@ fun TotalRow(
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 合并前3列
-        Box(modifier = Modifier.width(184.dp), contentAlignment = Alignment.CenterStart) {
+        // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
+        Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
             Text("合计", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF))
         }
         // 各方案合计
@@ -1269,12 +1283,14 @@ fun TotalRow(
 
 /**
  * 总计行 - 绿色渐变背景
+ * @param canSettle 是否可结算（控制合并列宽度：施工员含选择列184dp，资料员/管理员无选择列136dp）
  */
 @Composable
 fun GrandTotalRow(
     constructionPlans: List<ConstructionPlanDto>,
     planTotals: Map<String, PlanTotalDto>,
     grandTotal: Double,
+    canSettle: Boolean = true,
     formatNumber: (Double?) -> String
 ) {
     val greenGradientRow = Brush.horizontalGradient(
@@ -1288,8 +1304,8 @@ fun GrandTotalRow(
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 合并前3列
-        Box(modifier = Modifier.width(184.dp), contentAlignment = Alignment.CenterStart) {
+        // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
+        Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
             Text("总计", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF))
         }
         // 各方案总计金额
@@ -1323,11 +1339,13 @@ fun GrandTotalRow(
 
 /**
  * 预支行 - 黄色渐变背景
+ * @param canSettle 是否可结算（控制合并列宽度：施工员含选择列184dp，资料员/管理员无选择列136dp）
  */
 @Composable
 fun AdvanceRow(
     advance: AdvanceDataDto,
     planCount: Int,
+    canSettle: Boolean = true,
     formatNumber: (Double?) -> String
 ) {
     val yellowGradient = Brush.horizontalGradient(
@@ -1342,7 +1360,8 @@ fun AdvanceRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 日期+预支标签（格式：2026.06.22预支）
-        Box(modifier = Modifier.width(184.dp), contentAlignment = Alignment.CenterStart) {
+        // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
+        Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
             Text(
                 "${formatAdvanceDate(advance.advanceDate)}预支",
                 fontSize = 11.sp,
@@ -1370,11 +1389,13 @@ fun AdvanceRow(
 
 /**
  * 总额行 - 粉色渐变背景
+ * @param canSettle 是否可结算（控制合并列宽度：施工员含选择列184dp，资料员/管理员无选择列136dp）
  */
 @Composable
 fun FinalTotalRow(
     finalTotal: Double,
     planCount: Int,
+    canSettle: Boolean = true,
     formatNumber: (Double?) -> String
 ) {
     val pinkGradient = Brush.horizontalGradient(
@@ -1388,8 +1409,8 @@ fun FinalTotalRow(
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 总额标签
-        Box(modifier = Modifier.width(184.dp), contentAlignment = Alignment.CenterStart) {
+        // 总额标签（合并前3列：施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
+        Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
             Text("总额", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF))
         }
         // 各方案列（显示-）
@@ -1851,6 +1872,7 @@ fun SettlementHistoryTable(
             TotalRow(
                 constructionPlans = constructionPlans,
                 planTotals = settlement.planTotals,
+                canSettle = false,
                 getUnitName = getUnitName,
                 formatNumber = formatNumber
             )
@@ -1858,6 +1880,7 @@ fun SettlementHistoryTable(
             // 单价行
             PriceRow(
                 constructionPlans = constructionPlans,
+                canSettle = false,
                 getUnitName = getUnitName
             )
 
@@ -1866,6 +1889,7 @@ fun SettlementHistoryTable(
                 constructionPlans = constructionPlans,
                 planTotals = settlement.planTotals,
                 grandTotal = settlement.grandTotal,
+                canSettle = false,
                 formatNumber = formatNumber
             )
 
@@ -1874,6 +1898,7 @@ fun SettlementHistoryTable(
                 AdvanceRow(
                     advance = advance,
                     planCount = constructionPlans.size,
+                    canSettle = false,
                     formatNumber = formatNumber
                 )
             }
@@ -1882,6 +1907,7 @@ fun SettlementHistoryTable(
             FinalTotalRow(
                 finalTotal = settlement.finalTotal,
                 planCount = constructionPlans.size,
+                canSettle = false,
                 formatNumber = formatNumber
             )
         }
