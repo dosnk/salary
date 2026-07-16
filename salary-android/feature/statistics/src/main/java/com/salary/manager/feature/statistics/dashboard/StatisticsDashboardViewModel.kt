@@ -504,7 +504,13 @@ class StatisticsDashboardViewModel @Inject constructor(
      */
     fun exportSettlementImage(settlement: SettlementHistoryDto) {
         viewModelScope.launch {
+            // 防重复点击：已有导出任务进行中时拒绝新请求
+            if (_exportingId.value != null) {
+                _errorMessage.value = "正在导出中，请稍后再试"
+                return@launch
+            }
             _exportingId.value = settlement.settlementId
+            val bitmaps = mutableListOf<Bitmap>()
             try {
                 // 获取用户名（优先使用昵称）
                 val userName = userStorage.nicknameFlow.value.ifBlank {
@@ -514,8 +520,8 @@ class StatisticsDashboardViewModel @Inject constructor(
                 // 获取施工方案列表（从已加载的数据中）
                 val plans = _constructionPlans.value
 
-                // 在IO线程生成图片
-                val bitmap = withContext(Dispatchers.IO) {
+                // 在IO线程生成图片（自动分页，返回多页Bitmap列表）
+                val pageBitmaps = withContext(Dispatchers.IO) {
                     SettlementImageGenerator.generate(
                         settlement = settlement,
                         constructionPlans = plans,
@@ -524,18 +530,34 @@ class StatisticsDashboardViewModel @Inject constructor(
                         formatNumber = { num -> formatNumber(num) }
                     )
                 }
+                bitmaps.addAll(pageBitmaps)
 
                 // 通过MediaStore保存到图库（相册可见）
-                val fileName = "${settlement.settlementNo}.png"
-                val savedUri = withContext(Dispatchers.IO) {
-                    saveBitmapToGallery(bitmap, fileName)
+                // 多页时文件名追加 _1、_2 等后缀
+                val totalPages = bitmaps.size
+                val savedFiles = mutableListOf<String>()
+                bitmaps.forEachIndexed { index, bmp ->
+                    val fileName = if (totalPages > 1) {
+                        "${settlement.settlementNo}_${index + 1}.png"
+                    } else {
+                        "${settlement.settlementNo}.png"
+                    }
+                    withContext(Dispatchers.IO) {
+                        saveBitmapToGallery(bmp, fileName)
+                    }
+                    savedFiles.add(fileName)
                 }
-                bitmap.recycle()
 
-                _successMessage.value = "图片已保存到图库：$fileName"
+                _successMessage.value = if (totalPages > 1) {
+                    "图片已保存到图库（共${totalPages}页）：${savedFiles.first()} 等"
+                } else {
+                    "图片已保存到图库：${savedFiles.first()}"
+                }
             } catch (e: Exception) {
                 _errorMessage.value = "导出失败：${e.message}"
             } finally {
+                // 确保所有 Bitmap 在任何情况下都被回收，避免 native 内存泄漏
+                bitmaps.forEach { it.recycle() }
                 _exportingId.value = null
             }
         }
@@ -547,6 +569,11 @@ class StatisticsDashboardViewModel @Inject constructor(
      */
     fun exportCurrentSettlementImage() {
         viewModelScope.launch {
+            // 防重复点击：已有导出任务进行中时拒绝新请求
+            if (_exportingId.value != null) {
+                _errorMessage.value = "正在导出中，请稍后再试"
+                return@launch
+            }
             val selectedIds = _selectedProjectIds.value
             if (selectedIds.isEmpty()) {
                 _errorMessage.value = "请先选择要导出的工程"
@@ -556,6 +583,7 @@ class StatisticsDashboardViewModel @Inject constructor(
             // 使用一个特殊的ID标记当前结算单导出中（避免与历史结算单ID冲突）
             val currentExportId = -1
             _exportingId.value = currentExportId
+            val bitmaps = mutableListOf<Bitmap>()
             try {
                 val userName = userStorage.nicknameFlow.value.ifBlank {
                     userStorage.getNickname() ?: "未知用户"
@@ -591,8 +619,8 @@ class StatisticsDashboardViewModel @Inject constructor(
                     finalTotal = calcResult.finalTotal
                 )
 
-                // 在IO线程生成图片
-                val bitmap = withContext(Dispatchers.IO) {
+                // 在IO线程生成图片（自动分页，返回多页Bitmap列表）
+                val pageBitmaps = withContext(Dispatchers.IO) {
                     SettlementImageGenerator.generate(
                         settlement = currentSettlement,
                         constructionPlans = plans,
@@ -601,18 +629,34 @@ class StatisticsDashboardViewModel @Inject constructor(
                         formatNumber = { num -> formatNumber(num) }
                     )
                 }
+                bitmaps.addAll(pageBitmaps)
 
                 // 通过MediaStore保存到图库
-                val fileName = "${currentSettlement.settlementNo}.png"
-                val savedUri = withContext(Dispatchers.IO) {
-                    saveBitmapToGallery(bitmap, fileName)
+                // 多页时文件名追加 _1、_2 等后缀
+                val totalPages = bitmaps.size
+                val savedFiles = mutableListOf<String>()
+                bitmaps.forEachIndexed { index, bmp ->
+                    val fileName = if (totalPages > 1) {
+                        "${currentSettlement.settlementNo}_${index + 1}.png"
+                    } else {
+                        "${currentSettlement.settlementNo}.png"
+                    }
+                    withContext(Dispatchers.IO) {
+                        saveBitmapToGallery(bmp, fileName)
+                    }
+                    savedFiles.add(fileName)
                 }
-                bitmap.recycle()
 
-                _successMessage.value = "图片已保存到图库：$fileName"
+                _successMessage.value = if (totalPages > 1) {
+                    "图片已保存到图库（共${totalPages}页）：${savedFiles.first()} 等"
+                } else {
+                    "图片已保存到图库：${savedFiles.first()}"
+                }
             } catch (e: Exception) {
                 _errorMessage.value = "导出失败：${e.message}"
             } finally {
+                // 确保所有 Bitmap 在任何情况下都被回收，避免 native 内存泄漏
+                bitmaps.forEach { it.recycle() }
                 _exportingId.value = null
             }
         }
