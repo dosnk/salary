@@ -869,9 +869,11 @@ module.exports = {
       throw new BusinessError(3001, '工程不存在');
     }
 
-    // 2. 权限校验：工程创建者、施工员或管理员可上传
-    if (userId !== project.created_by && !isAdmin(user) && !isConstructor(user)) {
-      throw new BusinessError(4002, '无操作权限');
+    // 2. 权限校验：路由层 requireFileModify 中间件已拦截 admin/documenter
+    //    此处补充参与者校验：constructor 只能上传自己参与工程的附件
+    const isParticipant = await projectRepo.isParticipant(projectId, userId);
+    if (!isParticipant) {
+      throw new BusinessError(4002, '您未参与此工程，无权上传附件');
     }
 
     const uploadedFiles = [];
@@ -950,9 +952,11 @@ module.exports = {
       throw new BusinessError(3001, '工程不存在');
     }
 
-    // 2. 权限校验：仅工程创建者、施工人员或管理员可删除
-    if (userId !== project.created_by && !isAdmin(user) && !isConstructor(user)) {
-      throw new BusinessError(4002, '无操作权限');
+    // 2. 权限校验：路由层 requireFileModify 中间件已拦截 admin/documenter
+    //    此处补充参与者校验：constructor 只能删除自己参与工程的附件
+    const isParticipant = await projectRepo.isParticipant(projectId, userId);
+    if (!isParticipant) {
+      throw new BusinessError(4002, '您未参与此工程，无权删除附件');
     }
 
     // 3. 查询文件记录，确认归属并获取物理路径

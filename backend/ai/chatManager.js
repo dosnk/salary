@@ -19,6 +19,16 @@ const logger = require('../config/logger');
 // FunctionCall工具执行器映射
 const toolExecutors = {};
 
+// 工具角色白名单（V2.0 重新界定：constructor和documenter可用AI除设置外）
+// documenter 无权访问统计功能，其余工具三角色均可使用
+const toolRoleWhitelist = {
+  calculate_layout: ['admin', 'constructor', 'documenter'],
+  query_projects: ['admin', 'constructor', 'documenter'],
+  query_statistics: ['admin', 'constructor'], // documenter 无权访问统计
+  query_settlements: ['admin', 'constructor', 'documenter'],
+  query_advances: ['admin', 'constructor', 'documenter'],
+};
+
 // 注册所有工具执行器
 const queryProjectsTool = require('./tools/queryProjects');
 const queryStatisticsTool = require('./tools/queryStatistics');
@@ -26,17 +36,35 @@ const querySettlementsTool = require('./tools/querySettlements');
 const queryAdvancesTool = require('./tools/queryAdvances');
 const { calculateLayout } = require('./engine');
 
-toolExecutors['query_projects'] = queryProjectsTool.execute;
-toolExecutors['query_statistics'] = queryStatisticsTool.execute;
-toolExecutors['query_settlements'] = querySettlementsTool.execute;
-toolExecutors['query_advances'] = queryAdvancesTool.execute;
-toolExecutors['calculate_layout'] = async (args, user) => {
+/**
+ * 包装工具执行器，注入角色白名单校验
+ * @param {string} toolName - 工具名称
+ * @param {function} executor - 原始执行函数 async (args, user) => result
+ * @returns {function} 包装后的执行函数，执行前校验角色权限
+ */
+const wrapWithRoleCheck = (toolName, executor) => {
+  return async (args, user) => {
+    const allowedRoles = toolRoleWhitelist[toolName];
+    if (allowedRoles && user && !allowedRoles.includes(user.role)) {
+      const roleNames = { admin: '管理员', constructor: '施工员', documenter: '资料员' };
+      const roleName = roleNames[user.role] || user.role;
+      return { error: `${roleName}无权使用此功能` };
+    }
+    return await executor(args, user);
+  };
+};
+
+toolExecutors['query_projects'] = wrapWithRoleCheck('query_projects', queryProjectsTool.execute);
+toolExecutors['query_statistics'] = wrapWithRoleCheck('query_statistics', queryStatisticsTool.execute);
+toolExecutors['query_settlements'] = wrapWithRoleCheck('query_settlements', querySettlementsTool.execute);
+toolExecutors['query_advances'] = wrapWithRoleCheck('query_advances', queryAdvancesTool.execute);
+toolExecutors['calculate_layout'] = wrapWithRoleCheck('calculate_layout', async (args, user) => {
   return await calculateLayout({
     roomLength: args.length,
     roomWidth: args.width,
     materialOptions: args.materialId ? { panelId: args.materialId } : {},
   });
-};
+});
 
 /**
  * 注册工具执行器

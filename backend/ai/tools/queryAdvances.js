@@ -2,6 +2,11 @@
  * FunctionCall工具 - 预支查询
  * 带权限过滤
  *
+ * 权限规则（V2.0 重新界定）：
+ * - admin: 可查看全部预支记录
+ * - documenter: 可查看全部预支记录（按人员筛选查看）
+ * - constructor: 只能查看自己的预支记录
+ *
  * 修复说明：
  * 原SQL引用了不存在的字段 wa.amount 和 wa.status，
  * 实际数据库字段为 wa.advance_amount（金额）和 wa.settled（boolean，是否已结算）。
@@ -30,6 +35,7 @@ const execute = async (args, user) => {
   let paramIndex = 1;
 
   // 权限过滤：施工员仅能查看自己的预支记录
+  // admin 和 documenter 可查看全部预支记录
   if (role === 'constructor') {
     query += ` AND wa.user_id = $${paramIndex}`;
     params.push(userId);

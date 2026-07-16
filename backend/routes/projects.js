@@ -3,7 +3,7 @@ const projectController = require('../controllers/projects');
 const auth = require('../middleware/auth');
 const validation = require('../middleware/validation');
 const { deduplicate } = require('../middleware/deduplicate');
-const { requireProjectModify, requireProjectDelete, requireSubprojectManage } = require('../middleware/rbac');
+const { requireProjectView, requireProjectModify, requireProjectDelete, requireSubprojectManage, requireFileModify } = require('../middleware/rbac');
 const pool = require('../config/database');
 const logger = require('../config/logger');
 
@@ -468,7 +468,7 @@ router.get('/', auth.authenticate, validation(projectController.getProjectsSchem
  *                   data: null
  *                   msg: '数据库异常'
  */
-router.get('/:id', auth.authenticate, validation(projectController.getProjectDetailSchema, { includeParams: true }), projectController.getProjectDetail);
+router.get('/:id', auth.authenticate, requireProjectView(), validation(projectController.getProjectDetailSchema, { includeParams: true }), projectController.getProjectDetail);
 
 /**
  * @swagger
@@ -825,7 +825,7 @@ router.delete('/:id', auth.authenticate, requireProjectDelete(), validation(proj
  *                   data: null
  *                   msg: '数据库异常'
  */
-router.get('/:id/history', auth.authenticate, validation(projectController.getProjectHistorySchema, { includeParams: true }), projectController.getProjectHistory);
+router.get('/:id/history', auth.authenticate, requireProjectView(), validation(projectController.getProjectHistorySchema, { includeParams: true }), projectController.getProjectHistory);
 
 /**
  * @swagger
@@ -1106,11 +1106,12 @@ router.post('/:id/subprojects/:subprojectId/transfer', auth.authenticate, requir
  */
 router.put('/:id/subprojects/:subprojectId/status', auth.authenticate, requireSubprojectManage(), validation(projectController.updateSubprojectStatusSchema), projectController.updateSubprojectStatus);
 
-router.post('/:id/files', auth.authenticate, projectController.uploadFile);
+// 上传工程附件（仅constructor可操作，admin/documenter不能上传）
+router.post('/:id/files', auth.authenticate, requireFileModify(), projectController.uploadFile);
 
-// 删除工程附件（物理文件+数据库记录）
-router.delete('/:id/files/:fileId', auth.authenticate, projectController.deleteFile);
+// 删除工程附件（仅constructor可操作，admin/documenter不能删除）
+router.delete('/:id/files/:fileId', auth.authenticate, requireFileModify(), projectController.deleteFile);
 
-router.get('/:id/workers', auth.authenticate, projectController.getProjectWorkers);
+router.get('/:id/workers', auth.authenticate, requireProjectView(), projectController.getProjectWorkers);
 
 module.exports = router;

@@ -132,9 +132,12 @@ const advancesController = {
       let query = '';
       let params = [];
 
-      // 权限检查：只有管理员可以查询所有记录或指定用户的记录
-      if (!isAdmin(user)) {
-        // 普通用户只能查询自己的记录
+      // 权限检查（V2.0 重新界定）：
+      // - admin: 可查看所有预支记录，可按userId筛选
+      // - documenter: 可查看所有预支记录，可按userId筛选（按人员筛选查看）
+      // - constructor: 只能查看自己的预支记录
+      if (isConstructor(user)) {
+        // 施工员只能查询自己的记录
         query = `
           SELECT wa.*, u.nickname as user_name, c.nickname as creator_name
           FROM wage_advances wa
@@ -146,7 +149,7 @@ const advancesController = {
         `;
         params = [currentUserId, size, offset];
       } else {
-        // 管理员可以查询所有记录或指定用户的记录
+        // admin 和 documenter 可以查询所有记录或指定用户的记录
         if (userId) {
           query = `
             SELECT wa.*, u.nickname as user_name, c.nickname as creator_name
@@ -176,7 +179,7 @@ const advancesController = {
       // 获取总数
       let countQuery = '';
       let countParams = [];
-      if (!isAdmin(user)) {
+      if (isConstructor(user)) {
         countQuery = 'SELECT COUNT(*) as total FROM wage_advances WHERE user_id = $1';
         countParams = [currentUserId];
       } else {
@@ -217,8 +220,10 @@ const advancesController = {
       let query = '';
       let params = [];
 
-      // 权限检查：只有管理员可以查询指定用户的总额，普通用户只能查询自己的总额
-      if (!isAdmin(user)) {
+      // 权限检查（V2.0 重新界定）：
+      // - admin/documenter: 可查询指定用户的总额
+      // - constructor: 只能查询自己的总额
+      if (isConstructor(user)) {
         query = `
           SELECT COALESCE(SUM(advance_amount), 0) as total
           FROM wage_advances
@@ -226,6 +231,7 @@ const advancesController = {
         `;
         params = [currentUserId];
       } else {
+        // admin 和 documenter 可以查询指定用户的总额
         if (userId) {
           query = `
             SELECT COALESCE(SUM(advance_amount), 0) as total
@@ -251,8 +257,10 @@ const advancesController = {
 
   deleteAdvance: async (ctx) => {
     const { id } = ctx.params;
+    const currentUserId = ctx.state.user.id;
 
-    // V2.0: 权限由路由层requireAdvanceDelete中间件控制
+    // V2.0: 权限由路由层requireAdvanceDelete中间件控制（仅constructor可调用）
+    // 控制器层补充归属校验：只能删除自己的预支记录
 
     try {
       // 检查预支记录是否存在且未结算
@@ -267,6 +275,12 @@ const advancesController = {
       }
 
       const advance = advanceResult.rows[0];
+
+      // 归属校验：只能删除自己的预支记录
+      if (advance.user_id !== currentUserId) {
+        ctx.fail(4002, '无权删除他人的预支记录');
+        return;
+      }
 
       // 如果已结算，不允许删除
       if (advance.settled) {

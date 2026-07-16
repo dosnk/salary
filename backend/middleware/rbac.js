@@ -108,6 +108,40 @@ const requireAuth = () => requireRole([ROLES.ADMIN, ROLES.CONSTRUCTOR, ROLES.DOC
 // ========== 工程操作权限中间件 ==========
 
 /**
+ * 工程查看权限检查（V2.0: admin和documenter可查全部，constructor只能查自己参与的）
+ * 路由层中间件：constructor 需进一步校验是否参与该工程
+ * documenter 权限已重新界定：可查看所有工程（包括子项目、附件、施工人员）
+ */
+const requireProjectView = () => {
+  return async (ctx, next) => {
+    const user = ctx.state.user;
+    if (!user) {
+      ctx.fail(4001, '用户未登录');
+      return;
+    }
+    // admin 和 documenter 可查看全部工程
+    if (isAdmin(user) || isDocumenter(user)) {
+      await next();
+      return;
+    }
+    // constructor 只能查看自己参与的工程
+    if (isConstructor(user)) {
+      const projectId = parseInt(ctx.params.id, 10);
+      if (!projectId) {
+        ctx.fail(1001, '工程ID无效');
+        return;
+      }
+      const isParticipant = await isProjectParticipant(user.id, projectId);
+      if (!isParticipant) {
+        ctx.fail(4002, '您未参与此工程，无权查看');
+        return;
+      }
+    }
+    await next();
+  };
+};
+
+/**
  * 工程修改权限检查（V2.0: admin不能修改工程）
  * 路由层中间件：阻止admin和documenter，constructor在controller层进一步检查是否参与
  */
@@ -139,6 +173,13 @@ const requireProjectDelete = () => requireProjectModify(); // 与修改权限一
  * 子项目管理权限检查（V2.0: admin不能管理子项目）
  */
 const requireSubprojectManage = () => requireProjectModify(); // 与修改权限一致
+
+/**
+ * 工程附件操作权限检查（V2.0: 仅constructor可上传/删除附件）
+ * admin不能修改工程（含附件），documenter只能查看附件不能上传/删除
+ * constructor 在 controller 层进一步检查是否参与该工程
+ */
+const requireFileModify = () => requireProjectModify(); // 与工程修改权限一致
 
 // ========== 结算权限中间件 ==========
 
@@ -225,7 +266,8 @@ const requireStatisticsAccess = () => {
 // ========== 数据级权限辅助 ==========
 
 /**
- * 检查施工员是否参与了指定工程
+ * 检查用户是否参与了指定工程
+ * "自己参与" = 工程创建者是自己(projects.created_by) OR 自己是工程施工人员(project_workers.user_id)
  * @param {number} userId - 用户ID
  * @param {number} projectId - 工程ID
  * @returns {Promise<boolean>}
@@ -233,7 +275,10 @@ const requireStatisticsAccess = () => {
 const isProjectParticipant = async (userId, projectId) => {
   try {
     const result = await pool.query(
-      'SELECT 1 FROM project_workers WHERE project_id = $1 AND user_id = $2',
+      `SELECT 1 FROM projects p
+       LEFT JOIN project_workers pw ON p.id = pw.project_id
+       WHERE p.id = $1 AND (p.created_by = $2 OR pw.user_id = $2)
+       LIMIT 1`,
       [projectId, userId]
     );
     return result.rows.length > 0;
@@ -269,9 +314,11 @@ module.exports = {
   requireAdmin,
   requireAdminOrConstructor,
   requireAuth,
+  requireProjectView,
   requireProjectModify,
   requireProjectDelete,
   requireSubprojectManage,
+  requireFileModify,
   requireSettlementAccess,
   requireAdvanceCreate,
   requireAdvanceDelete,

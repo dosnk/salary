@@ -146,7 +146,7 @@ const softDelete = async (id) => {
 const listWithFilters = async (filters) => {
   const {
     userId,
-    role,
+    userRole,
     page = 1,
     size = 10,
     month,
@@ -165,7 +165,8 @@ const listWithFilters = async (filters) => {
   const sizeNum = parseInt(size, 10) || 10;
 
   // 判断是否为施工员角色，施工员只能看到自己参与的工程
-  const isConstructorRole = role === 'constructor';
+  // "自己参与" = 工程创建者是自己(projects.created_by) OR 自己是工程施工人员(project_workers.user_id)
+  const isConstructorRole = userRole === 'constructor';
 
   // ---------- 构建数据查询 ----------
   const conditions = [];
@@ -218,9 +219,9 @@ const listWithFilters = async (filters) => {
       WHERE sp.project_id = p.id
     ) sp ON true`;
 
-  // 施工员角色：只能查看自己参与的工程
+  // 施工员角色：只能查看自己参与的工程（创建者 OR 施工人员）
   if (isConstructorRole) {
-    query += ` JOIN project_workers pw ON p.id = pw.project_id WHERE pw.user_id = $${paramIndex}`;
+    query += ` WHERE (p.created_by = $${paramIndex} OR EXISTS (SELECT 1 FROM project_workers pw WHERE pw.project_id = p.id AND pw.user_id = $${paramIndex}))`;
     params.push(userId);
     paramIndex++;
   } else {
@@ -637,8 +638,12 @@ const updateWorkerWorkdays = async (projectId, userId, workdays, client) => {
  */
 const isParticipant = async (projectId, userId, client) => {
   const executor = client || pool;
+  // "自己参与" = 工程创建者是自己(projects.created_by) OR 自己是工程施工人员(project_workers.user_id)
   const result = await executor.query(
-    'SELECT 1 FROM project_workers WHERE project_id = $1 AND user_id = $2',
+    `SELECT 1 FROM projects p
+     LEFT JOIN project_workers pw ON p.id = pw.project_id
+     WHERE p.id = $1 AND (p.created_by = $2 OR pw.user_id = $2)
+     LIMIT 1`,
     [projectId, userId]
   );
   return result.rows.length > 0;
