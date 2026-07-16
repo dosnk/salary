@@ -33,8 +33,8 @@ import com.salary.core.network.api.SubprojectDto
  * - 字号：标题32px | 表头26px | 数据24px
  * - 颜色：标题绿渐变 | 表头淡蓝#E3F2FD | 工程行淡绿#E8F5E9 | 数据行淡灰#F5F5F5
  *
- * 自动分页：当数据行数超过单页容量时自动拆分为多页，每页都包含标题和表头，
- * 最后一页包含合计/单价/总计/预支/总额行。工程汇总行与子项目明细行尽量保持完整不拆分。
+ * 自动分页：按工程数量分页，每页最多30份工程，工程汇总行与其所有子项目明细行视为一个整体绝不拆分。
+ * 每页都包含标题和表头，最后一页包含合计/单价/总计/预支/总额行。
  *
  * 高清输出：基于物理像素直接绘制，避免模糊
  */
@@ -74,6 +74,11 @@ object SettlementImageGenerator {
     private const val MAX_BITMAP_DIMENSION = 5000
     // Bitmap 预估内存阈值（字节），超过此值直接报错
     private const val MAX_BITMAP_BYTES = 40L * 1024 * 1024 // 40MB
+
+    // ========== 分页规则 ==========
+    // 每页最多工程数量：以"工程数量"为分页依据，避免同一工程的子项目被截断到不同页
+    // 用户要求：30份工程后才分页，工程汇总行与其所有子项目明细行视为一个整体绝不拆分
+    private const val MAX_PROJECTS_PER_PAGE = 30
 
     /**
      * 行数据类型（密封类）
@@ -120,20 +125,15 @@ object SettlementImageGenerator {
         // 1. 收集所有数据行
         val allRows = collectAllRows(settlement)
 
-        // 2. 计算单页可容纳的最大数据行数
-        // 每页固定占用：标题(80) + 空行(30) + 表头(56) = 166px
-        val pageFixedHeight = TITLE_HEIGHT + EMPTY_ROW_HEIGHT + ROW_HEIGHT
-        val pageMaxDataRows = ((MAX_PAGE_HEIGHT - pageFixedHeight) / ROW_HEIGHT).toInt()
-            .coerceAtLeast(1) // 至少1行
+        // 2. 按工程数量分页：每页最多 MAX_PROJECTS_PER_PAGE（30）份工程
+        //    以"工程数量"为分页依据，工程汇总行与其所有子项目明细行视为整体绝不拆分
+        val pages = paginateRows(allRows)
 
-        // 3. 贪心分页：尽量保持工程完整性
-        val pages = paginateRows(allRows, pageMaxDataRows)
-
-        // 4. 计算图片宽度
+        // 3. 计算图片宽度
         val planCount = constructionPlans.size
         val bitmapWidth = (COL_INDEX + COL_PROJECT + COL_PLAN * planCount + COL_TOTAL).toInt()
 
-        // 5. 宽度预检
+        // 4. 宽度预检
         if (bitmapWidth > MAX_BITMAP_DIMENSION) {
             throw IllegalStateException(
                 "结算单图片宽度过大（${bitmapWidth}px），超过最大限制 $MAX_BITMAP_DIMENSION 像素。" +
@@ -141,7 +141,7 @@ object SettlementImageGenerator {
             )
         }
 
-        // 6. 逐页生成 Bitmap
+        // 5. 逐页生成 Bitmap
         val totalPages = pages.size
         return pages.mapIndexed { pageIndex, rows ->
             drawPage(
@@ -184,17 +184,25 @@ object SettlementImageGenerator {
     }
 
     /**
-     * 贪心分页：尽量保持工程完整性
+     * 按工程数量分页：每页最多 MAX_PROJECTS_PER_PAGE（30）份工程
      *
      * 规则：
-     * 1. 工程汇总行 + 子项目行视为一个整体，尽量不拆分到不同页
-     * 2. 如果当前页剩余空间放不下下一个工程，换页
-     * 3. 如果单个工程超过单页容量，强制按行拆分（表头会在每页重复显示）
-     * 4. 汇总行（合计/单价/总计/预支/总额）逐行处理，放不下就换页
+     * 1. 以"工程数量"为分页依据，不关心子项目数量，避免同一工程的子项目被截断到不同页
+     * 2. 每页最多 MAX_PROJECTS_PER_PAGE 份工程，超过则换页
+     * 3. 工程汇总行 + 其所有子项目明细行视为一个整体，绝不拆分到不同页
+     * 4. 兜底保护：若单个工程组本身超过单页最大可用高度，且当前页已有工程，
+     *    则先换页让超大工程独占一页（此为极端情况，正常场景不会触发）
+     * 5. 汇总行（合计/单价/总计/预支/总额）跟随最后一页的工程组
      */
-    private fun paginateRows(allRows: List<RowData>, pageMaxRows: Int): List<List<RowData>> {
+    private fun paginateRows(allRows: List<RowData>): List<List<RowData>> {
+        // 每页固定占用：标题(80) + 空行(30) + 表头(56) = 166px
+        val pageFixedHeight = TITLE_HEIGHT + EMPTY_ROW_HEIGHT + ROW_HEIGHT
+        // 单页可用于数据行的高度（兜底保护用）
+        val pageAvailableHeight = MAX_PAGE_HEIGHT - pageFixedHeight
+
         val pages = mutableListOf<MutableList<RowData>>()
         var currentPage = mutableListOf<RowData>()
+        var projectCountInCurrentPage = 0
 
         var i = 0
         while (i < allRows.size) {
@@ -208,27 +216,27 @@ object SettlementImageGenerator {
                 }
                 val groupSize = j - i
 
-                // 如果当前页放不下这个工程组，且当前页不空，换页
-                if (currentPage.size + groupSize > pageMaxRows && currentPage.isNotEmpty()) {
+                // 判断是否需要换页：
+                // 1. 当前页工程数已达上限 MAX_PROJECTS_PER_PAGE（30份）
+                // 2. 兜底保护：单个工程组高度超过单页可用高度，且当前页已有工程，换页让大工程独占一页
+                val groupExceedsPage = groupSize * ROW_HEIGHT > pageAvailableHeight
+                val shouldBreak = (projectCountInCurrentPage >= MAX_PROJECTS_PER_PAGE) ||
+                    (groupExceedsPage && projectCountInCurrentPage > 0)
+
+                if (shouldBreak && currentPage.isNotEmpty()) {
                     pages.add(currentPage)
                     currentPage = mutableListOf()
+                    projectCountInCurrentPage = 0
                 }
 
-                // 逐行添加工程组（如果工程组超过单页容量，会自动跨页）
+                // 添加整个工程组（保持完整性，绝不拆分到不同页）
                 for (k in i until j) {
-                    if (currentPage.size >= pageMaxRows) {
-                        pages.add(currentPage)
-                        currentPage = mutableListOf()
-                    }
                     currentPage.add(allRows[k])
                 }
+                projectCountInCurrentPage++
                 i = j
             } else {
-                // 汇总行（Total/Price/GrandTotal/AdvanceRow/Final）：逐行处理
-                if (currentPage.size >= pageMaxRows && currentPage.isNotEmpty()) {
-                    pages.add(currentPage)
-                    currentPage = mutableListOf()
-                }
+                // 汇总行（Total/Price/GrandTotal/AdvanceRow/Final）：跟随最后一页工程组，逐行处理
                 currentPage.add(row)
                 i++
             }
