@@ -865,7 +865,8 @@ fun DashboardScreen(
                     items(uiState.projects, key = { it.id }) { project ->
                         ProjectHistoryCard(
                             project = project,
-                            canUploadFile = userRole != "documenter",
+                            // 仅施工员可上传附件（admin/documenter 只读）
+                            canUploadFile = userRole == "constructor",
                             onOpenAttachmentList = { viewModel.openAttachmentList(project.id) },
                             onOpenFilePicker = { viewModel.openFilePickerForProject(project.id) }
                         )

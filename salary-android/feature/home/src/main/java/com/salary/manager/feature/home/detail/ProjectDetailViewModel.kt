@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.salary.core.common.util.NetworkErrorHandler
 import com.salary.core.data.local.ServerConfig
+import com.salary.core.data.local.UserStorage
 import com.salary.core.network.api.ProjectApi
 import com.salary.core.network.api.UpdateSubprojectRequest
 import com.salary.core.network.api.UserApi
@@ -101,11 +102,16 @@ class ProjectDetailViewModel @Inject constructor(
     /** 用于拼接附件完整访问URL（后端path字段为相对路径） */
     private val serverConfig: ServerConfig,
     /** 用于加载施工人员列表（编辑工程弹窗中使用） */
-    private val userApi: UserApi
+    private val userApi: UserApi,
+    /** 用于获取当前用户角色（控制编辑/删除等操作按钮的显示） */
+    private val userStorage: UserStorage
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<UiState<ProjectDetailUiModel>>(UiState.Loading)
     val state: StateFlow<UiState<ProjectDetailUiModel>> = _state.asStateFlow()
+
+    /** 当前用户角色（用于UI层按角色控制编辑/删除等操作按钮的显示） */
+    val userRole: StateFlow<String> = userStorage.roleFlow
 
     /** 错误消息（一次性事件） */
     private val _errorMessage = MutableStateFlow<String?>(null)

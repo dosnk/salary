@@ -232,6 +232,10 @@ fun ProjectDetailContent(
     // 修改历史展开/收起状态
     var historyExpanded by remember { mutableStateOf(false) }
 
+    // 当前用户角色（仅施工员可编辑工程/子项目/删除附件，admin/documenter 只读）
+    val userRole by viewModel.userRole.collectAsState()
+    val canEdit = userRole == "constructor"
+
     // 打开编辑工程弹窗时加载施工人员列表
     LaunchedEffect(showEditProjectDialog) {
         if (showEditProjectDialog) {
@@ -269,7 +273,8 @@ fun ProjectDetailContent(
                 projectId = projectId,
                 onEdit = { showEditProjectDialog = true },
                 fileCount = detail.files.size,
-                onViewAttachment = { showAttachmentDialog = true }
+                onViewAttachment = { showAttachmentDialog = true },
+                canEdit = canEdit
             )
         }
 
@@ -285,7 +290,8 @@ fun ProjectDetailContent(
             item {
                 SubprojectTable(
                     subprojects = detail.subprojects,
-                    onEdit = { sub -> editingSubproject = sub }
+                    onEdit = { sub -> editingSubproject = sub },
+                    canEdit = canEdit
                 )
             }
         }
@@ -356,6 +362,7 @@ fun ProjectDetailContent(
         AttachmentViewDialog(
             files = detail.files,
             onDelete = { fileId -> viewModel.deleteFile(projectId, fileId) },
+            canDelete = canEdit,
             onDismiss = { showAttachmentDialog = false }
         )
     }
@@ -684,13 +691,15 @@ private fun WorkdaysSummaryRow(workers: List<WorkerUiModel>) {
 
 /**
  * 操作区 - 编辑工程按钮 + 查看附件按钮，水平排列（操作左，附件右）
+ * @param canEdit 是否可编辑工程（仅施工员可编辑，admin/documenter 隐藏编辑按钮）
  */
 @Composable
 fun ActionSection(
     projectId: Int,
     onEdit: (Int) -> Unit,
     fileCount: Int,
-    onViewAttachment: () -> Unit
+    onViewAttachment: () -> Unit,
+    canEdit: Boolean = true
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -705,19 +714,21 @@ fun ActionSection(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 左侧：编辑工程按钮
-            Button(
-                onClick = { onEdit(projectId) },
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = AppColors.Green400,
-                    contentColor = Color.White
-                ),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Text("编辑工程", fontSize = 14.sp)
+            // 左侧：编辑工程按钮（仅施工员可见）
+            if (canEdit) {
+                Button(
+                    onClick = { onEdit(projectId) },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = AppColors.Green400,
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("编辑工程", fontSize = 14.sp)
+                }
             }
-            // 右侧：查看附件按钮
+            // 右侧：查看附件按钮（所有角色可查看）
             OutlinedButton(
                 onClick = onViewAttachment,
                 modifier = Modifier.weight(1f),
@@ -741,15 +752,17 @@ fun ActionSection(
  *
  * @param subprojects 子项目列表
  * @param onEdit 点击编辑按钮回调，参数为子项目UI模型
+ * @param canEdit 是否可编辑子项目（仅施工员可编辑，admin/documenter 隐藏操作列）
  */
 @Composable
 fun SubprojectTable(
     subprojects: List<SubprojectUiModel>,
-    onEdit: (SubprojectUiModel) -> Unit
+    onEdit: (SubprojectUiModel) -> Unit,
+    canEdit: Boolean = true
 ) {
     val scrollState = rememberScrollState()
-    // 固定总宽度，超过容器宽度时启用水平滚动
-    val tableWidth = 548.dp
+    // 固定总宽度，超过容器宽度时启用水平滚动（可编辑时含操作列48dp，否则不含）
+    val tableWidth = if (canEdit) 548.dp else 500.dp
 
     Column(
         modifier = Modifier
@@ -786,7 +799,10 @@ fun SubprojectTable(
             SubprojectHeaderCell("尺寸(米)", 110.dp)
             SubprojectHeaderCell("数量", 80.dp)
             SubprojectHeaderCell("金额", 90.dp)
-            SubprojectHeaderCell("操作", 48.dp)
+            // 操作列表头（仅施工员可见）
+            if (canEdit) {
+                SubprojectHeaderCell("操作", 48.dp)
+            }
         }
 
         // ===== 表体（与表头对齐，相同列宽） =====
@@ -817,21 +833,23 @@ fun SubprojectTable(
                 )
                 SubprojectCell(formatNumber(sub.quantity), 80.dp)
                 SubprojectCell(AmountFormatter.format(sub.amount), 90.dp, color = AppColors.Green400)
-                // 操作列：编辑图标按钮（紧凑高度）
-                Box(
-                    modifier = Modifier.width(48.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    IconButton(
-                        onClick = { onEdit(sub) },
-                        modifier = Modifier.size(32.dp)
+                // 操作列：编辑图标按钮（仅施工员可见）
+                if (canEdit) {
+                    Box(
+                        modifier = Modifier.width(48.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = "编辑子项目",
-                            tint = AppColors.Green400,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        IconButton(
+                            onClick = { onEdit(sub) },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "编辑子项目",
+                                tint = AppColors.Green400,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -1035,12 +1053,14 @@ private fun isMediaFile(type: String?): Boolean =
  *
  * @param files 附件列表（fileUrl已为完整URL）
  * @param onDelete 删除附件回调，参数为文件ID（由调用方闭包捕获projectId）
+ * @param canDelete 是否可删除附件（仅施工员可删除，admin/documenter 隐藏删除按钮）
  * @param onDismiss 关闭弹窗回调
  */
 @Composable
 fun AttachmentViewDialog(
     files: List<FileUiModel>,
     onDelete: (Int) -> Unit,
+    canDelete: Boolean = true,
     onDismiss: () -> Unit
 ) {
     // 待全屏预览的媒体文件（null表示不预览）
@@ -1118,7 +1138,8 @@ fun AttachmentViewDialog(
                                         previewFile = file
                                     }
                                 },
-                                onDelete = { deletingFile = file }
+                                onDelete = { deletingFile = file },
+                                canDelete = canDelete
                             )
                         }
                     }
@@ -1196,12 +1217,14 @@ fun AttachmentViewDialog(
  * @param file 附件UI模型
  * @param onClick 点击附件内容区域回调（媒体文件用于打开全屏预览）
  * @param onDelete 点击删除按钮回调
+ * @param canDelete 是否可删除附件（仅施工员可删除，admin/documenter 隐藏删除按钮）
  */
 @Composable
 fun AttachmentItemRow(
     file: FileUiModel,
     onClick: () -> Unit = {},
-    onDelete: () -> Unit = {}
+    onDelete: () -> Unit = {},
+    canDelete: Boolean = true
 ) {
     val context = LocalContext.current
     val isMedia = isMediaFile(file.type)
@@ -1248,17 +1271,19 @@ fun AttachmentItemRow(
                     color = AppColors.TextTertiary
                 )
             }
-            // 删除按钮（红色垃圾桶图标）
-            IconButton(
-                onClick = onDelete,
-                modifier = Modifier.size(32.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "删除附件",
-                    tint = Color(0xFFE53935),
-                    modifier = Modifier.size(20.dp)
-                )
+            // 删除按钮（红色垃圾桶图标，仅施工员可见）
+            if (canDelete) {
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "删除附件",
+                        tint = Color(0xFFE53935),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
 

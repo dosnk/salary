@@ -188,7 +188,8 @@ fun ProjectListScreen(
                     ProjectList(
                         projects = items,
                         hasMore = hasMore,
-                        canConfirmComplete = userRole != "documenter",
+                        // 仅施工员可确认完工（admin/documenter 只读）
+                        canConfirmComplete = userRole == "constructor",
                         onLoadMore = { viewModel.loadMore() },
                         onRefresh = { viewModel.refresh() },
                         onNavigateToProject = onNavigateToProject,
