@@ -941,12 +941,21 @@ private fun ProjectHistoryCard(
     onOpenAttachmentList: () -> Unit,
     onOpenFilePicker: () -> Unit
 ) {
+    // 子项目表格展开/折叠状态（默认折叠，减少初始渲染量）
+    var isSubprojectExpanded by remember { mutableStateOf(false) }
+
     Column(modifier = Modifier.fillMaxWidth()) {
         // 工程标题行：绿色背景 + 白色文字（名称+金额），建立标题栏权威感
+        // 点击标题栏切换子项目表格展开/折叠
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(AppColors.Green400, RoundedCornerShape(8.dp))
+                .clickable {
+                    if (project.subprojects.isNotEmpty()) {
+                        isSubprojectExpanded = !isSubprojectExpanded
+                    }
+                }
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
@@ -968,6 +977,16 @@ private fun ProjectHistoryCard(
                 fontWeight = FontWeight.Bold,
                 color = Color.White
             )
+            // 展开/折叠指示箭头（仅有子项目时显示）
+            if (project.subprojects.isNotEmpty()) {
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = if (isSubprojectExpanded) "▼" else "▶",
+                    fontSize = 11.sp,
+                    color = Color.White,
+                    textAlign = TextAlign.Center
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -1030,8 +1049,8 @@ private fun ProjectHistoryCard(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // 子项目表格（无背景化，融入卡片）
-        if (project.subprojects.isNotEmpty()) {
+        // 子项目表格（默认折叠，点击标题栏展开后才渲染，减少初始渲染量）
+        if (project.subprojects.isNotEmpty() && isSubprojectExpanded) {
             SubprojectTable(
                 subprojects = project.subprojects
             )
