@@ -20,11 +20,11 @@ const logger = require('../config/logger');
 const toolExecutors = {};
 
 // 工具角色白名单（V2.0 重新界定：constructor和documenter可用AI除设置外）
-// documenter 无权访问统计功能，其余工具三角色均可使用
+// 三角色均可使用所有查询工具（documenter 可查看统计）
 const toolRoleWhitelist = {
   calculate_layout: ['admin', 'constructor', 'documenter'],
   query_projects: ['admin', 'constructor', 'documenter'],
-  query_statistics: ['admin', 'constructor'], // documenter 无权访问统计
+  query_statistics: ['admin', 'constructor', 'documenter'],
   query_settlements: ['admin', 'constructor', 'documenter'],
   query_advances: ['admin', 'constructor', 'documenter'],
 };

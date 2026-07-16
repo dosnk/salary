@@ -6,6 +6,8 @@ import com.salary.core.common.util.NetworkErrorHandler
 import com.salary.core.data.local.UserStorage
 import com.salary.core.network.api.AdvanceApi
 import com.salary.core.network.api.CreateAdvanceRequest
+import com.salary.core.network.api.UserApi
+import com.salary.core.network.api.UserDto
 import com.salary.core.ui.state.ListUiState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,13 +20,13 @@ import javax.inject.Inject
  * 预支管理ViewModel - 调用后端预支接口管理预支记录列表
  *
  * 对接接口：
- * - GET /v1/advances（AdvanceApi.getAdvances）获取预支列表
+ * - GET /v1/advances（AdvanceApi.getAdvances）获取预支列表，支持按userId筛选
  * - POST /v1/advances（AdvanceApi.createAdvance）创建预支记录
  *
- * 权限规则（对齐后端requireAdvanceCreate中间件）：
- * - admin：不能创建预支（只能查看）
- * - constructor（施工员）：可以为自己创建预支
- * - documenter（资料员）：不能创建预支
+ * 权限规则（V2.0 重新界定）：
+ * - admin：不能创建预支（可查看全部预支，可按人员筛选）
+ * - constructor（施工员）：可以为自己创建预支（只能查看自己的预支）
+ * - documenter（资料员）：不能创建预支（可查看全部预支，可按人员筛选）
  *
  * 创建预支必填字段（对齐后端createAdvanceSchema的Joi校验）：
  * - userId：用户ID（施工员为自己创建时取当前登录用户ID）
@@ -35,6 +37,7 @@ import javax.inject.Inject
 @HiltViewModel
 class AdvanceViewModel @Inject constructor(
     private val advanceApi: AdvanceApi,
+    private val userApi: UserApi,
     private val userStorage: UserStorage
 ) : ViewModel() {
 
@@ -53,9 +56,19 @@ class AdvanceViewModel @Inject constructor(
     private val _currentUserRole = MutableStateFlow("")
     val currentUserRole: StateFlow<String> = _currentUserRole.asStateFlow()
 
+    /** 施工人员列表（用于资料员/管理员按人员筛选预支记录） */
+    private val _constructors = MutableStateFlow<List<UserDto>>(emptyList())
+    val constructors: StateFlow<List<UserDto>> = _constructors.asStateFlow()
+
+    /** 当前选中的筛选人员ID（null表示不筛选，显示全部） */
+    private val _selectedUserId = MutableStateFlow<Int?>(null)
+    val selectedUserId: StateFlow<Int?> = _selectedUserId.asStateFlow()
+
     init {
         loadUserRole()
         loadAdvances()
+        // 资料员/管理员可按人员筛选，加载施工人员列表
+        loadConstructorsIfNeeded()
     }
 
     /** 加载当前用户角色，用于UI层控制创建按钮显示 */
@@ -68,6 +81,30 @@ class AdvanceViewModel @Inject constructor(
     /** 当前用户是否可以创建预支（仅施工员constructor可以） */
     fun canCreateAdvance(): Boolean = _currentUserRole.value == "constructor"
 
+    /** 当前用户是否可以按人员筛选预支（资料员和管理员可以） */
+    fun canFilterByUser(): Boolean = _currentUserRole.value == "admin" || _currentUserRole.value == "documenter"
+
+    /** 加载施工人员列表（仅资料员/管理员需要，用于按人员筛选） */
+    private fun loadConstructorsIfNeeded() {
+        viewModelScope.launch {
+            if (!canFilterByUser()) return@launch
+            try {
+                val response = userApi.getConstructors()
+                if (response.code == 200 && response.data != null) {
+                    _constructors.value = response.data!!
+                }
+            } catch (_: Exception) {
+                // 静默处理，不影响主流程
+            }
+        }
+    }
+
+    /** 设置筛选人员ID（null表示显示全部） */
+    fun setSelectedUserId(userId: Int?) {
+        _selectedUserId.value = userId
+        loadAdvances()
+    }
+
     /**
      * 加载预支记录列表
      * 调用后端预支列表接口，将 AdvanceDto 映射为 AdvanceItem
@@ -77,7 +114,7 @@ class AdvanceViewModel @Inject constructor(
         viewModelScope.launch {
             _state.value = ListUiState.Loading
             try {
-                val response = advanceApi.getAdvances(1, 20)
+                val response = advanceApi.getAdvances(1, 20, _selectedUserId.value)
                 if (response.code == 200 && response.data != null) {
                     val data = response.data!!
                     _state.value = ListUiState.Success(
@@ -89,6 +126,7 @@ class AdvanceViewModel @Inject constructor(
                                 date = it.advanceDate ?: "",
                                 createdAt = it.createdAt ?: "",
                                 settled = it.settled,
+                                userName = it.userName,
                                 creatorName = it.creatorName
                             )
                         },

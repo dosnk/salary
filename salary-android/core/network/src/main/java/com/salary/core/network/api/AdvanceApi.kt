@@ -19,7 +19,8 @@ interface AdvanceApi {
     @GET("v1/advances")
     suspend fun getAdvances(
         @Query("page") page: Int = 1,
-        @Query("size") size: Int = 20
+        @Query("size") size: Int = 20,
+        @Query("userId") userId: Int? = null
     ): ApiResponse<AdvanceListResponse>
 
     /** 创建预支 */

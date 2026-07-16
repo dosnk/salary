@@ -48,6 +48,7 @@ import com.salary.core.design.theme.AppColors
 @Composable
 fun ProjectCard(
     project: ProjectUiModel,
+    canConfirmComplete: Boolean = true,
     onNavigateToProject: () -> Unit,
     onConfirmComplete: () -> Unit = {},
     onSettlingClick: () -> Unit = {},
@@ -77,6 +78,7 @@ fun ProjectCard(
             // 按钮区：状态按钮 + 查看详情（并排两按钮）
             ButtonSection(
                 project = project,
+                canConfirmComplete = canConfirmComplete,
                 onViewDetail = onNavigateToProject,
                 onConfirmComplete = onConfirmComplete,
                 onSettlingClick = onSettlingClick,
@@ -308,6 +310,7 @@ private fun InfoSection(project: ProjectUiModel) {
 @Composable
 private fun ButtonSection(
     project: ProjectUiModel,
+    canConfirmComplete: Boolean,
     onViewDetail: () -> Unit,
     onConfirmComplete: () -> Unit,
     onSettlingClick: () -> Unit,
@@ -320,8 +323,8 @@ private fun ButtonSection(
     ) {
         // 左侧：状态操作按钮
         when {
-            project.status == "constructing" -> {
-                // 施工中 → 确认完工（实心绿色按钮）
+            project.status == "constructing" && canConfirmComplete -> {
+                // 施工中 → 确认完工（实心绿色按钮）—— 资料员不可操作，走只读分支
                 Button(
                     onClick = onConfirmComplete,
                     modifier = Modifier.weight(1f),
@@ -332,6 +335,20 @@ private fun ButtonSection(
                     )
                 ) {
                     Text("确认完工", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+            project.status == "constructing" && !canConfirmComplete -> {
+                // 资料员查看施工中工程：显示只读"施工中"状态按钮（禁用，不可操作）
+                OutlinedButton(
+                    onClick = { },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(8.dp),
+                    enabled = false,
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = AppColors.TextTertiary
+                    )
+                ) {
+                    Text("施工中", fontSize = 15.sp, fontWeight = FontWeight.Medium)
                 }
             }
             project.status == "completed" && project.settlementStatus == "settling" -> {

@@ -246,7 +246,10 @@ const requireAdvanceDelete = () => {
 // ========== 统计权限中间件 ==========
 
 /**
- * 统计查看权限检查（V2.0: admin和constructor可以，documenter不能）
+ * 统计访问权限检查（V2.0 重新界定：documenter 可查看统计）
+ * - admin: 可查看全部统计
+ * - constructor: 可查看自己参与工程的统计（service 层过滤）
+ * - documenter: 可查看所有施工人员的工程和结算统计（只读）
  */
 const requireStatisticsAccess = () => {
   return async (ctx, next) => {
@@ -255,10 +258,7 @@ const requireStatisticsAccess = () => {
       ctx.fail(4001, '用户未登录');
       return;
     }
-    if (isDocumenter(user)) {
-      ctx.fail(4002, '资料员无权访问统计功能');
-      return;
-    }
+    // 三种角色均可访问统计，数据范围由 service 层按角色过滤
     await next();
   };
 };

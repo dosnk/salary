@@ -126,6 +126,11 @@ fun StatisticsDashboardScreen(
     val statsPopupTitle by viewModel.statsPopupTitle.collectAsStateWithLifecycle()
     val exportingId by viewModel.exportingId.collectAsStateWithLifecycle()
 
+    // 当前用户角色（资料员/管理员隐藏结算按钮和Checkbox，仅constructor可结算）
+    val userRole by viewModel.userRole.collectAsStateWithLifecycle()
+    // 是否可结算（仅施工员可操作结算）
+    val canSettle = userRole == "constructor"
+
     // 预支ViewModel状态
     val advanceState by advanceViewModel.state.collectAsStateWithLifecycle()
 
@@ -246,9 +251,10 @@ fun StatisticsDashboardScreen(
                                 // 统计内容区域
                                 // 创建共享的横向滚动状态（结算单表格所有行共享，确保列对齐）
                                 val tableScrollState = rememberScrollState()
-                                // 计算表格固定总宽度（选择48 + 序号36 + 工程名100 + 方案72*n + 总额64）
-                                val tableWidth = remember(constructionPlans.size) {
-                    (48 + 36 + 100 + 72 * constructionPlans.size + 64).dp
+                                // 计算表格固定总宽度（资料员/管理员无选择列：序号36 + 工程名100 + 方案72*n + 总额64）
+                                // 施工员有选择列：选择48 + 序号36 + 工程名100 + 方案72*n + 总额64
+                                val tableWidth = remember(constructionPlans.size, canSettle) {
+                    (if (canSettle) 48 else 0 + 36 + 100 + 72 * constructionPlans.size + 64).dp
                 }
 
                                 LazyColumn(
@@ -286,6 +292,7 @@ fun StatisticsDashboardScreen(
                                             greenGradient = greenGradient,
                                             selectedProjectIds = selectedProjectIds,
                                             settling = settling,
+                                            canSettle = canSettle,
                                             onSettle = { showSettleConfirm = true },
                                             onExportImage = onExportCurrentImage
                                         )
@@ -343,6 +350,7 @@ fun StatisticsDashboardScreen(
                                                     TableHeaderRow(
                                                         constructionPlans = constructionPlans,
                                                         allSelected = allSelected,
+                                                        canSettle = canSettle,
                                                         onToggleSelectAll = onToggleSelectAll
                                                     )
                                                 }
@@ -369,6 +377,7 @@ fun StatisticsDashboardScreen(
                                                         constructionPlans = constructionPlans,
                                                         isSelected = isSelected,
                                                         isExpanded = isExpanded,
+                                                        canSettle = canSettle,
                                                         onToggleSelection = { onToggleProjectSelection(project.id, it) },
                                                         onToggleExpand = { onToggleProjectExpand(project.id) },
                                                         getUnitName = getUnitName,
@@ -481,9 +490,15 @@ fun StatisticsDashboardScreen(
                             1 -> {
                                 // 预支内容区域（左右滑动切到的第二页）
                                 Box(modifier = Modifier.fillMaxSize()) {
+                                    val constructors by advanceViewModel.constructors.collectAsStateWithLifecycle()
+                                    val selectedAdvanceUserId by advanceViewModel.selectedUserId.collectAsStateWithLifecycle()
                                     AdvanceContent(
                                         state = advanceState,
-                                        onRetry = { advanceViewModel.loadAdvances() }
+                                        onRetry = { advanceViewModel.loadAdvances() },
+                                        showFilter = advanceViewModel.canFilterByUser(),
+                                        constructors = constructors,
+                                        selectedUserId = selectedAdvanceUserId,
+                                        onSelectUser = { advanceViewModel.setSelectedUserId(it) }
                                     )
                                     // 预支相关状态
                                     var showCreateAdvanceDialog by remember { mutableStateOf(false) }
@@ -851,6 +866,7 @@ fun SettlementSheetHeader(
     greenGradient: Brush,
     selectedProjectIds: List<Int>,
     settling: Boolean,
+    canSettle: Boolean,
     onSettle: () -> Unit,
     onExportImage: () -> Unit
 ) {
@@ -888,37 +904,41 @@ fun SettlementSheetHeader(
                             maxLines = 1
                         )
                     }
-                    // 结算按钮
-                    Button(
-                        onClick = onSettle,
-                        enabled = selectedProjectIds.isNotEmpty() && !settling,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.White,
-                            contentColor = Color(0xFF65A30D),
-                            disabledContainerColor = Color(0xCCFFFFFF),
-                            disabledContentColor = Color(0xFF999999)
-                        ),
-                        shape = RoundedCornerShape(4.dp)
-                    ) {
-                        Text(
-                            text = if (settling) "结算中..." else
-                                if (selectedProjectIds.isNotEmpty()) "结算(${selectedProjectIds.size}个)" else "结算",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
+                    // 结算按钮 —— 资料员/管理员不可结算，隐藏按钮
+                    if (canSettle) {
+                        Button(
+                            onClick = onSettle,
+                            enabled = selectedProjectIds.isNotEmpty() && !settling,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.White,
+                                contentColor = Color(0xFF65A30D),
+                                disabledContainerColor = Color(0xCCFFFFFF),
+                                disabledContentColor = Color(0xFF999999)
+                            ),
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
+                            Text(
+                                text = if (settling) "结算中..." else
+                                    if (selectedProjectIds.isNotEmpty()) "结算(${selectedProjectIds.size}个)" else "结算",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                     }
                 }
             }
         )
 
-        // 已选择工程数提示（在标题栏正下方，左对齐）
-        Text(
-            text = "已选择 ${selectedProjectIds.size} 个工程，确认后将生成结算单，结算后不可修改",
-            fontSize = 11.sp,
-            color = AppColors.TextSecondary,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 4.dp)
-        )
+        // 已选择工程数提示 —— 资料员/管理员不可结算时隐藏提示
+        if (canSettle) {
+            Text(
+                text = "已选择 ${selectedProjectIds.size} 个工程，确认后将生成结算单，结算后不可修改",
+                fontSize = 11.sp,
+                color = AppColors.TextSecondary,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 4.dp)
+            )
+        }
     }
 }
 
@@ -963,6 +983,7 @@ fun SettlementTitleBar(
 fun TableHeaderRow(
     constructionPlans: List<ConstructionPlanDto>,
     allSelected: Boolean,
+    canSettle: Boolean,
     onToggleSelectAll: () -> Unit
 ) {
     val headerGradient = Brush.horizontalGradient(
@@ -976,14 +997,16 @@ fun TableHeaderRow(
             .padding(vertical = 8.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 选择列
-        Box(modifier = Modifier.width(48.dp), contentAlignment = Alignment.Center) {
-            Checkbox(
-                checked = allSelected,
-                onCheckedChange = { onToggleSelectAll() },
-                colors = CheckboxDefaults.colors(checkedColor = AppColors.Green400),
-                modifier = Modifier.size(24.dp)
-            )
+        // 选择列 —— 资料员/管理员不可结算时隐藏 Checkbox
+        if (canSettle) {
+            Box(modifier = Modifier.width(48.dp), contentAlignment = Alignment.Center) {
+                Checkbox(
+                    checked = allSelected,
+                    onCheckedChange = { onToggleSelectAll() },
+                    colors = CheckboxDefaults.colors(checkedColor = AppColors.Green400),
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
         // 序号
         Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {
@@ -1024,6 +1047,7 @@ fun ProjectDataRow(
     constructionPlans: List<ConstructionPlanDto>,
     isSelected: Boolean,
     isExpanded: Boolean,
+    canSettle: Boolean,
     onToggleSelection: (Boolean) -> Unit,
     onToggleExpand: () -> Unit,
     getUnitName: (String?) -> String,
@@ -1038,14 +1062,16 @@ fun ProjectDataRow(
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 选择列
-        Box(modifier = Modifier.width(48.dp), contentAlignment = Alignment.Center) {
-            Checkbox(
-                checked = isSelected,
-                onCheckedChange = onToggleSelection,
-                colors = CheckboxDefaults.colors(checkedColor = AppColors.Green400),
-                modifier = Modifier.size(24.dp)
-            )
+        // 选择列 —— 资料员/管理员不可结算时隐藏 Checkbox
+        if (canSettle) {
+            Box(modifier = Modifier.width(48.dp), contentAlignment = Alignment.Center) {
+                Checkbox(
+                    checked = isSelected,
+                    onCheckedChange = onToggleSelection,
+                    colors = CheckboxDefaults.colors(checkedColor = AppColors.Green400),
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
         // 序号
         Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {

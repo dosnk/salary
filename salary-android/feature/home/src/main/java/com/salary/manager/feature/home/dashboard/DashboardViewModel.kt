@@ -209,6 +209,9 @@ class DashboardViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
 
+    /** 当前用户角色（用于UI层按角色控制元素显示） */
+    val userRole: StateFlow<String> = userStorage.roleFlow
+
     private companion object {
         const val TAG = "DashboardViewModel"
     }

@@ -94,6 +94,9 @@ class StatisticsDashboardViewModel @Inject constructor(
     /** 用户昵称（从UserStorage响应式获取） */
     val userNickname: StateFlow<String> = userStorage.nicknameFlow
 
+    /** 当前用户角色（用于UI层按角色控制元素显示，如资料员/管理员隐藏结算按钮和Checkbox） */
+    val userRole: StateFlow<String> = userStorage.roleFlow
+
     /** 错误消息 */
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()

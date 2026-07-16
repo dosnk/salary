@@ -98,6 +98,9 @@ class ProjectListViewModel @Inject constructor(
     /** 用户昵称（从UserStorage响应式获取） */
     val userNickname: StateFlow<String> = userStorage.nicknameFlow
 
+    /** 当前用户角色（用于UI层按角色控制元素显示，如资料员隐藏确认完工按钮） */
+    val userRole: StateFlow<String> = userStorage.roleFlow
+
     /** 成功消息 */
     private val _successMessage = MutableStateFlow<String?>(null)
     val successMessage: StateFlow<String?> = _successMessage.asStateFlow()

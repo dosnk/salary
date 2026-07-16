@@ -94,6 +94,8 @@ fun ProjectListScreen(
     val advancedFilter by viewModel.advancedFilter.collectAsStateWithLifecycle()
     val successMessage by viewModel.successMessage.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
+    // 当前用户角色（资料员隐藏确认完工按钮）
+    val userRole by viewModel.userRole.collectAsStateWithLifecycle()
     var searchKeyword by remember { mutableStateOf("") }
     var showAdvancedFilter by remember { mutableStateOf(false) }
     var confirmProject by remember { mutableStateOf<ProjectUiModel?>(null) }
@@ -186,6 +188,7 @@ fun ProjectListScreen(
                     ProjectList(
                         projects = items,
                         hasMore = hasMore,
+                        canConfirmComplete = userRole != "documenter",
                         onLoadMore = { viewModel.loadMore() },
                         onRefresh = { viewModel.refresh() },
                         onNavigateToProject = onNavigateToProject,
@@ -847,6 +850,7 @@ private fun StatusPickerSheet(
 private fun ProjectList(
     projects: List<ProjectUiModel>,
     hasMore: Boolean,
+    canConfirmComplete: Boolean,
     onLoadMore: () -> Unit,
     onRefresh: () -> Unit,
     onNavigateToProject: (Int) -> Unit,
@@ -886,6 +890,7 @@ private fun ProjectList(
             items(monthProjects, key = { it.id }, contentType = { "projectCard" }) { project ->
                 ProjectCard(
                     project = project,
+                    canConfirmComplete = canConfirmComplete,
                     onNavigateToProject = { onNavigateToProject(project.id) },
                     onConfirmComplete = { onConfirmComplete(project) },
                     onSettlingClick = onSettlingClick,

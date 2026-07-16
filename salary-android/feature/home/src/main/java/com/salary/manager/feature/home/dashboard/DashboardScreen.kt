@@ -123,6 +123,9 @@ fun DashboardScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
+    // 当前用户角色（用于按角色控制UI元素显示，如资料员隐藏上传附件按钮）
+    val userRole by viewModel.userRole.collectAsStateWithLifecycle()
+
     // 服务器在线状态和时延已下沉到 ServerStatusText 组件内部订阅，避免整页重组
 
     // 弹窗状态
@@ -862,6 +865,7 @@ fun DashboardScreen(
                     items(uiState.projects, key = { it.id }) { project ->
                         ProjectHistoryCard(
                             project = project,
+                            canUploadFile = userRole != "documenter",
                             onOpenAttachmentList = { viewModel.openAttachmentList(project.id) },
                             onOpenFilePicker = { viewModel.openFilePickerForProject(project.id) }
                         )
@@ -985,6 +989,7 @@ fun DashboardScreen(
 @Composable
 private fun ProjectHistoryCard(
     project: ProjectHistoryUiModel,
+    canUploadFile: Boolean,
     onOpenAttachmentList: () -> Unit,
     onOpenFilePicker: () -> Unit
 ) {
@@ -1071,28 +1076,30 @@ private fun ProjectHistoryCard(
                     )
                 }
             }
-            // 右：上传附件（浅绿背景）
-            Surface(
-                onClick = onOpenFilePicker,
-                shape = RoundedCornerShape(8.dp),
-                color = AppColors.Green50
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+            // 右：上传附件（浅绿背景）—— 资料员不可上传，隐藏按钮
+            if (canUploadFile) {
+                Surface(
+                    onClick = onOpenFilePicker,
+                    shape = RoundedCornerShape(8.dp),
+                    color = AppColors.Green50
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Upload,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp),
-                        tint = AppColors.Green400
-                    )
-                    Spacer(modifier = Modifier.width(2.dp))
-                    Text(
-                        text = "上传附件",
-                        fontSize = 12.sp,
-                        color = AppColors.Green400
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Upload,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = AppColors.Green400
+                        )
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text(
+                            text = "上传附件",
+                            fontSize = 12.sp,
+                            color = AppColors.Green400
+                        )
+                    }
                 }
             }
         }

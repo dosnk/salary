@@ -41,12 +41,18 @@ fun AdvanceScreen(
     val state by viewModel.state.collectAsState()
     val createError by viewModel.createErrorMessage.collectAsState()
     val isCreating by viewModel.isCreating.collectAsState()
+    val constructors by viewModel.constructors.collectAsState()
+    val selectedUserId by viewModel.selectedUserId.collectAsState()
     var showCreateDialog by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         AdvanceContent(
             state = state,
-            onRetry = { viewModel.loadAdvances() }
+            onRetry = { viewModel.loadAdvances() },
+            showFilter = viewModel.canFilterByUser(),
+            constructors = constructors,
+            selectedUserId = selectedUserId,
+            onSelectUser = { viewModel.setSelectedUserId(it) }
         )
 
         // 仅施工员可创建预支，其他角色不显示FAB按钮
@@ -78,14 +84,22 @@ fun AdvanceScreen(
 
 /**
  * 预支内容区域 - 可嵌入统计页面的HorizontalPager中
- * 包含：三态UI（Loading/Success/Error）、预支总额卡片、预支记录列表
+ * 包含：三态UI（Loading/Success/Error）、人员筛选栏（资料员/管理员）、预支总额卡片、预支记录列表
  * @param state 预支列表UI状态
  * @param onRetry 错误重试回调
+ * @param showFilter 是否显示人员筛选栏（资料员/管理员可按人员筛选）
+ * @param constructors 施工人员列表（筛选用）
+ * @param selectedUserId 当前选中的筛选人员ID（null表示显示全部）
+ * @param onSelectUser 设置筛选人员回调
  */
 @Composable
 fun AdvanceContent(
     state: ListUiState<AdvanceItem>,
-    onRetry: () -> Unit = {}
+    onRetry: () -> Unit = {},
+    showFilter: Boolean = false,
+    constructors: List<com.salary.core.network.api.UserDto> = emptyList(),
+    selectedUserId: Int? = null,
+    onSelectUser: (Int?) -> Unit = {}
 ) {
     when (state) {
         is ListUiState.Loading -> {
@@ -98,19 +112,28 @@ fun AdvanceContent(
         }
         is ListUiState.Success -> {
             val items = state.items
-            if (items.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("暂无预支记录", color = AppColors.TextTertiary)
+            Column(modifier = Modifier.fillMaxSize()) {
+                // 人员筛选栏（资料员/管理员可按人员筛选）
+                if (showFilter) {
+                    UserFilterBar(
+                        constructors = constructors,
+                        selectedUserId = selectedUserId,
+                        onSelectUser = onSelectUser
+                    )
                 }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
+                if (items.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("暂无预支记录", color = AppColors.TextTertiary)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
                     // 预支总额卡片
                     item {
                         Card(
@@ -139,6 +162,7 @@ fun AdvanceContent(
                     item {
                         Spacer(modifier = Modifier.height(80.dp))
                     }
+                }
                 }
             }
         }
@@ -190,6 +214,11 @@ fun AdvanceCard(item: AdvanceItem) {
                 item.remark?.let {
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(it, fontSize = 13.sp, color = AppColors.TextSecondary)
+                }
+                // 预支所属人员（资料员/管理员查看全部预支时显示，便于识别归属）
+                item.userName?.let {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text("预支人：$it", fontSize = 12.sp, color = AppColors.TextTertiary)
                 }
                 // 创建人（管理员代建时显示）
                 item.creatorName?.let {
@@ -353,6 +382,82 @@ fun CreateAdvanceDialog(
 }
 
 /**
+ * 人员筛选栏 - 资料员/管理员按施工人员筛选预支记录
+ * @param constructors 施工人员列表
+ * @param selectedUserId 当前选中的筛选人员ID（null表示显示全部）
+ * @param onSelectUser 设置筛选人员回调
+ */
+@Composable
+fun UserFilterBar(
+    constructors: List<com.salary.core.network.api.UserDto>,
+    selectedUserId: Int?,
+    onSelectUser: (Int?) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    // 当前选中人员的昵称（null=全部人员）
+    val selectedName = constructors.find { it.id == selectedUserId }?.nickname ?: "全部人员"
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "筛选：",
+            fontSize = 13.sp,
+            color = AppColors.TextSecondary
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Box {
+            Surface(
+                onClick = { expanded = true },
+                shape = RoundedCornerShape(8.dp),
+                color = AppColors.Green50,
+                modifier = Modifier.padding(2.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = selectedName,
+                        fontSize = 13.sp,
+                        color = AppColors.Green400,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("▾", fontSize = 12.sp, color = AppColors.Green400)
+                }
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                // 全部人员选项
+                DropdownMenuItem(
+                    text = { Text("全部人员") },
+                    onClick = {
+                        onSelectUser(null)
+                        expanded = false
+                    }
+                )
+                // 各施工人员选项
+                constructors.forEach { user ->
+                    DropdownMenuItem(
+                        text = { Text(user.nickname ?: "用户${user.id}") },
+                        onClick = {
+                            onSelectUser(user.id)
+                            expanded = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
  * 预支记录数据项
  * 对齐后端wage_advances表实际字段：advance_amount、advance_date、settled、remark、created_by
  */
@@ -368,6 +473,8 @@ data class AdvanceItem(
     val createdAt: String,
     /** 是否已结算 */
     val settled: Boolean,
+    /** 预支所属人员昵称（资料员/管理员查看全部预支时显示，便于识别归属） */
+    val userName: String? = null,
     /** 创建人昵称（管理员代建时显示） */
     val creatorName: String? = null
 )
