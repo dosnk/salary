@@ -2,6 +2,7 @@ package com.salary.manager.feature.home.list
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.salary.core.common.util.AmountFormatter
 import com.salary.core.common.util.NetworkErrorHandler
 import com.salary.core.data.local.UserStorage
 import com.salary.core.network.api.ProjectApi
@@ -31,7 +32,15 @@ data class ProjectUiModel(
     /** 总工日（按工日分配模式下使用） */
     val totalWorkdays: Double = 0.0,
     /** 各施工人员的工日及工费明细（仅按工日分配模式下使用） */
-    val workerWageDetails: List<WorkerWageDetail> = emptyList()
+    val workerWageDetails: List<WorkerWageDetail> = emptyList(),
+    /** 预计算的人均/日均工费文本（已在ViewModel计算，避免Composable重组时重复计算） */
+    val perAmountText: String = "0.00",
+    /** 预格式化的人员名称文本（如"张三、李四"或"待填写"） */
+    val workerNamesText: String = "待填写",
+    /** 预格式化的总工日文本（如"15 天"） */
+    val totalWorkdaysText: String = "0 天",
+    /** 预格式化的工费总额文本（如"¥12,345.00"） */
+    val totalAmountText: String = "¥0.00"
 )
 
 /**
@@ -42,7 +51,11 @@ data class WorkerWageDetail(
     /** 工日数 */
     val workdays: Double,
     /** 按工日比例分摊的工费 */
-    val wage: Double
+    val wage: Double,
+    /** 预格式化的显示文本（如"张三 (8工日)"） */
+    val displayText: String = "",
+    /** 预格式化的工费文本（如"¥1,200.00"） */
+    val wageText: String = "¥0.00"
 )
 
 /**
@@ -157,22 +170,44 @@ class ProjectListViewModel @Inject constructor(
                                 WorkerWageDetail(
                                     nickname = worker.nickname,
                                     workdays = days,
-                                    wage = wage
+                                    wage = wage,
+                                    // 预格式化显示文本，避免Composable重组时重复计算
+                                    displayText = "${worker.nickname} (${days.toInt()}工日)",
+                                    wageText = AmountFormatter.format(wage)
                                 )
                             }
                         } else emptyList()
+                        // 预计算所有展示用文本，避免Composable内部重复计算
+                        val totalAmountStr = String.format("%.2f", totalAmount)
+                        val isWorkDays = dto.salaryDistribution == "work_days"
+                        val perAmountText = if (isWorkDays) {
+                            if (totalWorkdays > 0) {
+                                AmountFormatter.formatPlain(totalAmount / totalWorkdays)
+                            } else "0.00"
+                        } else {
+                            if (dto.workers.isNotEmpty()) {
+                                AmountFormatter.formatPlain(totalAmount / dto.workers.size)
+                            } else "0.00"
+                        }
                         ProjectUiModel(
                             id = dto.id,
                             name = dto.name,
                             status = dto.status,
-                            totalAmount = String.format("%.2f", dto.totalAmount),
+                            totalAmount = totalAmountStr,
                             settlementStatus = dto.settlementStatus,
                             salaryDistribution = dto.salaryDistribution,
                             workerNames = dto.workers.map { it.nickname },
                             workerCount = dto.workers.size,
                             createdAt = dto.createdAt,
                             totalWorkdays = totalWorkdays,
-                            workerWageDetails = workerWageDetails
+                            workerWageDetails = workerWageDetails,
+                            // 预格式化字段，减少Composable内部计算
+                            perAmountText = perAmountText,
+                            workerNamesText = if (dto.workers.isNotEmpty()) {
+                                dto.workers.joinToString("、") { it.nickname }
+                            } else "待填写",
+                            totalWorkdaysText = "${totalWorkdays.toInt()} 天",
+                            totalAmountText = AmountFormatter.format(totalAmountStr)
                         )
                     }
 

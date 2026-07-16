@@ -99,6 +99,7 @@ import com.salary.core.design.component.GreenTopNavBar
 import com.salary.core.design.theme.AppColors
 import com.salary.core.network.dto.FileDto
 import com.salary.core.network.interceptor.LatencyTracker
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 
 /**
@@ -119,13 +120,10 @@ fun DashboardScreen(
     onMessageClick: (() -> Unit)? = null,
     unreadCount: Int = 0
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // 服务器在线状态和时延
-    val isOnline by latencyTracker?.isOnline?.collectAsState() ?: remember { mutableStateOf(true) }
-    val latencyMs by latencyTracker?.latencyMs?.collectAsState() ?: remember { mutableStateOf(0L) }
-    val lastError by latencyTracker?.lastError?.collectAsState() ?: remember { mutableStateOf(null) }
+    // 服务器在线状态和时延已下沉到 ServerStatusText 组件内部订阅，避免整页重组
 
     // 弹窗状态
     var showSpaceTypeDialog by remember { mutableStateOf(false) }
@@ -849,7 +847,8 @@ fun DashboardScreen(
                     items(uiState.projects, key = { it.id }) { project ->
                         ProjectHistoryCard(
                             project = project,
-                            viewModel = viewModel
+                            onOpenAttachmentList = { viewModel.openAttachmentList(project.id) },
+                            onOpenFilePicker = { viewModel.openFilePickerForProject(project.id) }
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                     }
@@ -875,46 +874,8 @@ fun DashboardScreen(
                         fontSize = 12.sp,
                         color = AppColors.TextSecondary
                     )
-                    // 右侧：服务器在线状态和时延
-                    // 三种状态：检测中（灰）/在线（绿/橙/红按延迟）/离线（红）
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // 检测中状态：isOnline=true && latencyMs=0 && lastError=null
-                        // HealthMonitor刚启动尚未收到响应时的初始状态
-                        val isChecking = isOnline && latencyMs == 0L && lastError == null
-                        Icon(
-                            imageVector = if (isChecking) Icons.Default.Info else if (isOnline) Icons.Default.CheckCircle else Icons.Default.Error,
-                            contentDescription = if (isChecking) "检测中" else if (isOnline) "在线" else "离线",
-                            modifier = Modifier.size(14.dp),
-                            tint = when {
-                                isChecking -> AppColors.TextTertiary
-                                isOnline -> AppColors.Success
-                                else -> AppColors.Error
-                            }
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = when {
-                                isChecking -> "正在检测..."
-                                isOnline -> if (latencyMs > 0) "服务器在线：${latencyMs}ms" else "服务器在线"
-                                else -> "服务器离线：${lastError ?: "连接失败"}"
-                            },
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = when {
-                                isChecking -> AppColors.TextTertiary
-                                isOnline -> when {
-                                    latencyMs <= 0 -> AppColors.Success
-                                    latencyMs < 200 -> AppColors.Success
-                                    latencyMs < 500 -> AppColors.Warning
-                                    else -> AppColors.Error
-                                }
-                                else -> AppColors.Error
-                            },
-                            maxLines = 1
-                        )
-                    }
+                    // 右侧：服务器在线状态和时延（独立 Composable，状态订阅仅在此重组）
+                    ServerStatusText(latencyTracker = latencyTracker)
                 }
                 } // end of footer item
 
@@ -977,7 +938,8 @@ fun DashboardScreen(
 @Composable
 private fun ProjectHistoryCard(
     project: ProjectHistoryUiModel,
-    viewModel: DashboardViewModel
+    onOpenAttachmentList: () -> Unit,
+    onOpenFilePicker: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         // 工程标题行：绿色背景 + 白色文字（名称+金额），建立标题栏权威感
@@ -1018,7 +980,7 @@ private fun ProjectHistoryCard(
         ) {
             // 左：查看附件（中性浅灰背景）
             Surface(
-                onClick = { viewModel.openAttachmentList(project.id) },
+                onClick = onOpenAttachmentList,
                 shape = RoundedCornerShape(8.dp),
                 color = AppColors.NeutralSurface
             ) {
@@ -1042,7 +1004,7 @@ private fun ProjectHistoryCard(
             }
             // 右：上传附件（浅绿背景）
             Surface(
-                onClick = { viewModel.openFilePickerForProject(project.id) },
+                onClick = onOpenFilePicker,
                 shape = RoundedCornerShape(8.dp),
                 color = AppColors.Green50
             ) {
@@ -1527,3 +1489,57 @@ private fun formatYearMonth(yearMonth: String): String {
 }
 
 // 附件列表弹窗、附件列表项、文件大小格式化已迁移到 AttachmentGridDialog.kt
+
+/**
+ * 服务器在线状态显示组件
+ *
+ * 将 LatencyTracker 的三个 Flow 订阅隔离在此组件内部作用域，
+ * 避免每次心跳触发的 latencyMs/isOnline 更新引发整页重组（LazyColumn 及卡片）。
+ * 状态变化仅触发本 Composable 自身重组。
+ *
+ * 三种状态：检测中（灰）/在线（绿/橙/红按延迟）/离线（红）
+ */
+@Composable
+private fun ServerStatusText(latencyTracker: LatencyTracker?) {
+    // 独立订阅，状态变化只触发本组件重组，不影响外层 LazyColumn
+    val isOnline by latencyTracker?.isOnline?.collectAsStateWithLifecycle() ?: remember { mutableStateOf(true) }
+    val latencyMs by latencyTracker?.latencyMs?.collectAsStateWithLifecycle() ?: remember { mutableStateOf(0L) }
+    val lastError by latencyTracker?.lastError?.collectAsStateWithLifecycle() ?: remember { mutableStateOf(null) }
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        // 检测中状态：isOnline=true && latencyMs=0 && lastError=null
+        // HealthMonitor 刚启动尚未收到响应时的初始状态
+        val isChecking = isOnline && latencyMs == 0L && lastError == null
+        Icon(
+            imageVector = if (isChecking) Icons.Default.Info else if (isOnline) Icons.Default.CheckCircle else Icons.Default.Error,
+            contentDescription = if (isChecking) "检测中" else if (isOnline) "在线" else "离线",
+            modifier = Modifier.size(14.dp),
+            tint = when {
+                isChecking -> AppColors.TextTertiary
+                isOnline -> AppColors.Success
+                else -> AppColors.Error
+            }
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = when {
+                isChecking -> "正在检测..."
+                isOnline -> if (latencyMs > 0) "服务器在线：${latencyMs}ms" else "服务器在线"
+                else -> "服务器离线：${lastError ?: "连接失败"}"
+            },
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            color = when {
+                isChecking -> AppColors.TextTertiary
+                isOnline -> when {
+                    latencyMs <= 0 -> AppColors.Success
+                    latencyMs < 200 -> AppColors.Success
+                    latencyMs < 500 -> AppColors.Warning
+                    else -> AppColors.Error
+                }
+                else -> AppColors.Error
+            },
+            maxLines = 1
+        )
+    }
+}

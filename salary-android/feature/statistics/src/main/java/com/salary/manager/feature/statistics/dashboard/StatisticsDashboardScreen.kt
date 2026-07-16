@@ -51,8 +51,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -109,24 +109,24 @@ fun StatisticsDashboardScreen(
     onMessageClick: (() -> Unit)? = null,
     unreadCount: Int = 0
 ) {
-    val state by viewModel.state.collectAsState()
-    val settlementSummary by viewModel.settlementSummary.collectAsState()
-    val constructionPlans by viewModel.constructionPlans.collectAsState()
-    val projectData by viewModel.projectData.collectAsState()
-    val settlementHistory by viewModel.settlementHistory.collectAsState()
-    val selectedProjectIds by viewModel.selectedProjectIds.collectAsState()
-    val calculationResult by viewModel.calculationResult.collectAsState()
-    val settling by viewModel.settling.collectAsState()
-    val expandedProjects by viewModel.expandedProjects.collectAsState()
-    val expandedHistoryProjects by viewModel.expandedHistoryProjects.collectAsState()
-    val errorMessage by viewModel.errorMessage.collectAsState()
-    val successMessage by viewModel.successMessage.collectAsState()
-    val statsProjectListState by viewModel.statsProjectListState.collectAsState()
-    val statsPopupTitle by viewModel.statsPopupTitle.collectAsState()
-    val exportingId by viewModel.exportingId.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val settlementSummary by viewModel.settlementSummary.collectAsStateWithLifecycle()
+    val constructionPlans by viewModel.constructionPlans.collectAsStateWithLifecycle()
+    val projectData by viewModel.projectData.collectAsStateWithLifecycle()
+    val settlementHistory by viewModel.settlementHistory.collectAsStateWithLifecycle()
+    val selectedProjectIds by viewModel.selectedProjectIds.collectAsStateWithLifecycle()
+    val calculationResult by viewModel.calculationResult.collectAsStateWithLifecycle()
+    val settling by viewModel.settling.collectAsStateWithLifecycle()
+    val expandedProjects by viewModel.expandedProjects.collectAsStateWithLifecycle()
+    val expandedHistoryProjects by viewModel.expandedHistoryProjects.collectAsStateWithLifecycle()
+    val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
+    val successMessage by viewModel.successMessage.collectAsStateWithLifecycle()
+    val statsProjectListState by viewModel.statsProjectListState.collectAsStateWithLifecycle()
+    val statsPopupTitle by viewModel.statsPopupTitle.collectAsStateWithLifecycle()
+    val exportingId by viewModel.exportingId.collectAsStateWithLifecycle()
 
     // 预支ViewModel状态
-    val advanceState by advanceViewModel.state.collectAsState()
+    val advanceState by advanceViewModel.state.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     var showSettleConfirm by remember { mutableStateOf(false) }
@@ -161,6 +161,19 @@ fun StatisticsDashboardScreen(
     val greenGradient = Brush.horizontalGradient(
         colors = listOf(Color(0xFF84CC16), Color(0xFF65A30D))
     )
+
+    // 提取稳定的 Lambda（只依赖 viewModel），用 remember 包裹避免每次重组新建
+    // 原实现：Lambda 在 item {} 内部声明，每次重组都新建，破坏 Compose skippable 机制
+    // 新实现：Lambda 用 remember 包裹，所有 item 共享同一实例，减少重组开销
+    val formatNumber: (Double?) -> String = remember(viewModel) { { viewModel.formatNumber(it) } }
+    val getUnitName: (String?) -> String = remember(viewModel) { { viewModel.getUnitName(it) } }
+    val onToggleSelectAll: () -> Unit = remember(viewModel) { { viewModel.toggleSelectAll() } }
+    val onToggleProjectSelection: (Int, Boolean) -> Unit = remember(viewModel) { { id, selected -> viewModel.toggleProjectSelection(id, selected) } }
+    val onToggleProjectExpand: (Int) -> Unit = remember(viewModel) { { viewModel.toggleProjectExpand(it) } }
+    val onExportCurrentImage: () -> Unit = remember(viewModel) { { viewModel.exportCurrentSettlementImage() } }
+    val onToggleHistoryProjectExpand: (Int, Int) -> Unit = remember(viewModel) { { settlementId, projectId -> viewModel.toggleHistoryProjectExpand(settlementId, projectId) } }
+    val onExportSettlementExcel: (Int, String) -> Unit = remember(viewModel) { { settlementId, settlementNo -> viewModel.exportSettlementExcel(settlementId, settlementNo) } }
+    val onExportSettlementImage: (SettlementHistoryDto) -> Unit = remember(viewModel) { { settlement -> viewModel.exportSettlementImage(settlement) } }
 
     // 顶部Tab：统计 / 预支，默认统计页面
     val statisticsTabs = listOf("统计", "预支")
@@ -232,10 +245,10 @@ fun StatisticsDashboardScreen(
                                     modifier = Modifier.fillMaxSize()
                                 ) {
                                     // 4宫格统计卡片
-                                    item {
+                                    item(key = "stats_grid") {
                                         StatsGridSection(
                                             summary = settlementSummary,
-                                            formatNumber = { viewModel.formatNumber(it) },
+                                            formatNumber = formatNumber,
                                             onCardClick = { type ->
                                                 statsFilterType = when (type) {
                                                     "待结算工程" -> "settling"
@@ -258,7 +271,7 @@ fun StatisticsDashboardScreen(
                                     }
 
                                     // 结算单区域
-                                    item {
+                                    item(key = "settlement_sheet") {
                                         SettlementSheetSection(
                                             constructionPlans = constructionPlans,
                                             projectData = projectData,
@@ -267,42 +280,57 @@ fun StatisticsDashboardScreen(
                                             calculationResult = calculationResult,
                                             settling = settling,
                                             greenGradient = greenGradient,
-                                            onToggleSelectAll = { viewModel.toggleSelectAll() },
-                                            onToggleProjectSelection = { id, selected ->
-                                                viewModel.toggleProjectSelection(id, selected)
-                                            },
-                                            onToggleProjectExpand = { viewModel.toggleProjectExpand(it) },
+                                            onToggleSelectAll = onToggleSelectAll,
+                                            onToggleProjectSelection = onToggleProjectSelection,
+                                            onToggleProjectExpand = onToggleProjectExpand,
                                             onSettle = { showSettleConfirm = true },
-                                            onExportImage = { viewModel.exportCurrentSettlementImage() },
-                                            getUnitName = { viewModel.getUnitName(it) },
-                                            formatNumber = { viewModel.formatNumber(it) }
+                                            onExportImage = onExportCurrentImage,
+                                            getUnitName = getUnitName,
+                                            formatNumber = formatNumber
                                         )
                                     }
 
-                                    // 结算历史区域
-                                    item {
-                                        SettlementHistorySection(
-                                            settlementHistory = settlementHistory,
-                                            constructionPlans = constructionPlans,
-                                            expandedHistoryProjects = expandedHistoryProjects,
-                                            greenGradient = greenGradient,
-                                            exportingId = exportingId,
-                                            onToggleHistoryProjectExpand = { settlementId, projectId ->
-                                                viewModel.toggleHistoryProjectExpand(settlementId, projectId)
-                                            },
-                                            onExportExcel = { settlementId, settlementNo ->
-                                                viewModel.exportSettlementExcel(settlementId, settlementNo)
-                                            },
-                                            onExportImage = { settlement ->
-                                                viewModel.exportSettlementImage(settlement)
-                                            },
-                                            getUnitName = { viewModel.getUnitName(it) },
-                                            formatNumber = { viewModel.formatNumber(it) }
-                                        )
+                                    // 结算历史区域 - 拆分为多个 item 以支持懒加载
+                                    // 原实现：单个 item 内部 forEach 渲染全部历史结算单，LazyColumn 懒加载失效
+                                    // 新实现：每个历史结算单作为独立 item，按需渲染
+                                    if (settlementHistory.isEmpty()) {
+                                        // 空状态：标题 + 空提示作为单独 item
+                                        item(key = "history_empty") {
+                                            SettlementHistoryEmptySection(
+                                                greenGradient = greenGradient
+                                            )
+                                        }
+                                    } else {
+                                        // 顶部间距（替代原 Column 的 vertical=16.dp 顶部 padding）
+                                        item(key = "history_top_spacer") {
+                                            Spacer(modifier = Modifier.height(16.dp))
+                                        }
+                                        // 每个历史结算单作为独立 item，支持懒加载
+                                        items(
+                                            items = settlementHistory,
+                                            key = { settlement -> "history_${settlement.settlementId}" }
+                                        ) { settlement ->
+                                            SettlementHistoryItem(
+                                                settlement = settlement,
+                                                constructionPlans = constructionPlans,
+                                                expandedHistoryProjects = expandedHistoryProjects,
+                                                greenGradient = greenGradient,
+                                                exportingId = exportingId,
+                                                onToggleHistoryProjectExpand = onToggleHistoryProjectExpand,
+                                                onExportExcel = onExportSettlementExcel,
+                                                onExportImage = onExportSettlementImage,
+                                                getUnitName = getUnitName,
+                                                formatNumber = formatNumber
+                                            )
+                                        }
+                                        // 底部间距（替代原 Column 的 vertical=16.dp 底部 padding）
+                                        item(key = "history_bottom_spacer") {
+                                            Spacer(modifier = Modifier.height(16.dp))
+                                        }
                                     }
 
                                     // 底部间距
-                                    item {
+                                    item(key = "footer_spacer") {
                                         Spacer(modifier = Modifier.height(80.dp))
                                     }
                                 }
@@ -316,8 +344,8 @@ fun StatisticsDashboardScreen(
                                     )
                                     // 预支相关状态
                                     var showCreateAdvanceDialog by remember { mutableStateOf(false) }
-                                    val createAdvanceError by advanceViewModel.createErrorMessage.collectAsState()
-                                    val isCreatingAdvance by advanceViewModel.isCreating.collectAsState()
+                                    val createAdvanceError by advanceViewModel.createErrorMessage.collectAsStateWithLifecycle()
+                                    val isCreatingAdvance by advanceViewModel.isCreating.collectAsStateWithLifecycle()
 
                                     // 仅施工员可创建预支，其他角色不显示FAB按钮（对齐后端权限规则）
                                     if (advanceViewModel.canCreateAdvance()) {
@@ -1382,11 +1410,58 @@ fun FinalTotalRow(
 // ========== 结算历史区域 ==========
 
 /**
- * 结算历史区域
+ * 结算历史空状态区域（无已结算工程时显示）
+ * 作为外层 LazyColumn 的独立 item
  */
 @Composable
-fun SettlementHistorySection(
-    settlementHistory: List<SettlementHistoryDto>,
+fun SettlementHistoryEmptySection(
+    greenGradient: Brush
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 16.dp)
+    ) {
+        // 绿色标题栏 + 空提示
+        SettlementTitleBar(
+            title = "📜 结算历史",
+            greenGradient = greenGradient
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color.White, RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
+                .padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                "暂无已结算工程",
+                fontSize = 13.sp,
+                color = AppColors.TextTertiary,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+/**
+ * 单个历史结算单项（标题栏 + 表格）
+ * 作为外层 LazyColumn 的独立 item，支持懒加载
+ *
+ * @param settlement 单个历史结算单数据
+ * @param constructionPlans 施工方案列表
+ * @param expandedHistoryProjects 展开的历史工程集合
+ * @param greenGradient 绿色渐变背景
+ * @param exportingId 当前正在导出的结算单ID
+ * @param onToggleHistoryProjectExpand 切换历史工程展开回调
+ * @param onExportExcel 导出表格回调
+ * @param onExportImage 导出图片回调
+ * @param getUnitName 获取单位名称回调
+ * @param formatNumber 格式化数字回调
+ */
+@Composable
+fun SettlementHistoryItem(
+    settlement: SettlementHistoryDto,
     constructionPlans: List<ConstructionPlanDto>,
     expandedHistoryProjects: Set<String>,
     greenGradient: Brush,
@@ -1400,54 +1475,31 @@ fun SettlementHistorySection(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 16.dp)
+            .padding(horizontal = 8.dp)
     ) {
-        if (settlementHistory.isEmpty()) {
-            // 绿色标题栏 + 空提示
-            SettlementTitleBar(
-                title = "📜 结算历史",
-                greenGradient = greenGradient
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color.White, RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
-                    .padding(24.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    "暂无已结算工程",
-                    fontSize = 13.sp,
-                    color = AppColors.TextTertiary,
-                    textAlign = TextAlign.Center
-                )
-            }
-        } else {
-            settlementHistory.forEach { settlement ->
-                Spacer(modifier = Modifier.height(8.dp))
+        // 顶部间距（保持与原 forEach 内 Spacer(8.dp) 一致的视觉间距）
+        Spacer(modifier = Modifier.height(8.dp))
 
-                // 绿色标题栏：左侧两行（结算时间 + 结算时间段），右侧导出按钮
-                // 设计说明：左侧使用 Column 显示两行文本，向左对齐；
-                //          右侧仅保留导出按钮，避免内容过多导致标题栏超高
-                SettlementHistoryTitleBar(
-                    settlement = settlement,
-                    greenGradient = greenGradient,
-                    exportingId = exportingId,
-                    onExportExcel = { onExportExcel(settlement.settlementId, settlement.settlementNo) },
-                    onExportImage = { onExportImage(settlement) }
-                )
+        // 绿色标题栏：左侧两行（结算时间 + 结算时间段），右侧导出按钮
+        // 设计说明：左侧使用 Column 显示两行文本，向左对齐；
+        //          右侧仅保留导出按钮，避免内容过多导致标题栏超高
+        SettlementHistoryTitleBar(
+            settlement = settlement,
+            greenGradient = greenGradient,
+            exportingId = exportingId,
+            onExportExcel = { onExportExcel(settlement.settlementId, settlement.settlementNo) },
+            onExportImage = { onExportImage(settlement) }
+        )
 
-                // 历史表格
-                SettlementHistoryTable(
-                    settlement = settlement,
-                    constructionPlans = constructionPlans,
-                    expandedHistoryProjects = expandedHistoryProjects,
-                    onToggleHistoryProjectExpand = onToggleHistoryProjectExpand,
-                    getUnitName = getUnitName,
-                    formatNumber = formatNumber
-                )
-            }
-        }
+        // 历史表格
+        SettlementHistoryTable(
+            settlement = settlement,
+            constructionPlans = constructionPlans,
+            expandedHistoryProjects = expandedHistoryProjects,
+            onToggleHistoryProjectExpand = onToggleHistoryProjectExpand,
+            getUnitName = getUnitName,
+            formatNumber = formatNumber
+        )
     }
 }
 
@@ -1725,8 +1777,8 @@ fun SettlementHistoryTable(
             // 历史表头（无选择列）
             HistoryHeaderRow(constructionPlans = constructionPlans)
 
-            // 去重后的工程列表
-            val uniqueProjects = settlement.projects.distinctBy { it.id }
+            // 去重后的工程列表（用 remember 包裹避免每次重组重复去重）
+            val uniqueProjects = remember(settlement.projects) { settlement.projects.distinctBy { it.id } }
             uniqueProjects.forEachIndexed { index, project ->
                 val isExpanded = expandedHistoryProjects.contains("${settlement.settlementId}-${project.id}")
 

@@ -48,6 +48,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -89,10 +90,10 @@ fun ProjectListScreen(
     onMessageClick: (() -> Unit)? = null,
     unreadCount: Int = 0
 ) {
-    val state by viewModel.state.collectAsState()
-    val advancedFilter by viewModel.advancedFilter.collectAsState()
-    val successMessage by viewModel.successMessage.collectAsState()
-    val errorMessage by viewModel.errorMessage.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val advancedFilter by viewModel.advancedFilter.collectAsStateWithLifecycle()
+    val successMessage by viewModel.successMessage.collectAsStateWithLifecycle()
+    val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
     var searchKeyword by remember { mutableStateOf("") }
     var showAdvancedFilter by remember { mutableStateOf(false) }
     var confirmProject by remember { mutableStateOf<ProjectUiModel?>(null) }
@@ -878,11 +879,11 @@ private fun ProjectList(
     ) {
         groupedProjects.forEach { (yearMonth, monthProjects) ->
             // 月份分组标题（绿色渐变背景，sticky）
-            item(key = "header_$yearMonth") {
+            item(key = "header_$yearMonth", contentType = "header") {
                 MonthGroupHeader(yearMonth = yearMonth)
             }
             // 该月下的工程卡片
-            items(monthProjects, key = { it.id }) { project ->
+            items(monthProjects, key = { it.id }, contentType = { "projectCard" }) { project ->
                 ProjectCard(
                     project = project,
                     onNavigateToProject = { onNavigateToProject(project.id) },
@@ -896,7 +897,7 @@ private fun ProjectList(
         // 加载更多指示器
         if (hasMore) {
             // 使用固定key标识加载更多项，避免重复组合
-            item(key = "loading_more") {
+            item(key = "loading_more", contentType = "footer") {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()

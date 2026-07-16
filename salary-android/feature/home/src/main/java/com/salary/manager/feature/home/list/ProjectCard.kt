@@ -146,19 +146,7 @@ private fun CardHeader(project: ProjectUiModel) {
 @Composable
 private fun AmountSection(project: ProjectUiModel) {
     val isWorkDays = project.salaryDistribution == "work_days"
-    val perAmount = if (isWorkDays) {
-        // 按工日分配：总额 / 总工日
-        val amount = project.totalAmount.toDoubleOrNull() ?: 0.0
-        if (project.totalWorkdays > 0) {
-            AmountFormatter.formatPlain(String.format("%.2f", amount / project.totalWorkdays))
-        } else "0.00"
-    } else {
-        // 平均分配：总额 / 人数
-        if (project.workerCount > 0) {
-            val amount = project.totalAmount.toDoubleOrNull() ?: 0.0
-            AmountFormatter.formatPlain(String.format("%.2f", amount / project.workerCount))
-        } else "0.00"
-    }
+    // perAmountText、totalAmountText 已在 ViewModel 预计算，Composable 直接使用
     val label = if (isWorkDays) "日均工费" else "人均工费"
 
     Column(
@@ -181,7 +169,7 @@ private fun AmountSection(project: ProjectUiModel) {
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = AmountFormatter.format(project.totalAmount),
+                    text = project.totalAmountText,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     color = AppColors.Green400
@@ -199,7 +187,7 @@ private fun AmountSection(project: ProjectUiModel) {
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "¥$perAmount",
+                    text = "¥${project.perAmountText}",
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     color = AppColors.Green400
@@ -219,7 +207,7 @@ private fun AmountSection(project: ProjectUiModel) {
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    // 总工日行
+                    // 总工日行（使用预格式化文本）
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -231,13 +219,13 @@ private fun AmountSection(project: ProjectUiModel) {
                             color = AppColors.Green600
                         )
                         Text(
-                            text = "${project.totalWorkdays.toInt()} 天",
+                            text = project.totalWorkdaysText,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = AppColors.Green400
                         )
                     }
-                    // 各施工人员日均工费明细
+                    // 各施工人员日均工费明细（使用预格式化文本，无Composable内部计算）
                     project.workerWageDetails.forEach { detail ->
                         if (detail.workdays > 0) {
                             Row(
@@ -245,7 +233,7 @@ private fun AmountSection(project: ProjectUiModel) {
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = "${detail.nickname} (${detail.workdays.toInt()}工日)",
+                                    text = detail.displayText,
                                     fontSize = 11.sp,
                                     color = AppColors.TextSecondary,
                                     maxLines = 1,
@@ -253,7 +241,7 @@ private fun AmountSection(project: ProjectUiModel) {
                                     modifier = Modifier.weight(1f)
                                 )
                                 Text(
-                                    text = AmountFormatter.format(detail.wage),
+                                    text = detail.wageText,
                                     fontSize = 11.sp,
                                     color = AppColors.Green400,
                                     fontWeight = FontWeight.Medium
@@ -277,12 +265,12 @@ private fun InfoSection(project: ProjectUiModel) {
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // 人员信息
+        // 人员信息（使用预格式化的 workerNamesText，避免Composable内部joinToString）
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(text = "👷", fontSize = 15.sp)
             Spacer(modifier = Modifier.width(6.dp))
             Text(
-                text = "人员：${if (project.workerNames.isNotEmpty()) project.workerNames.joinToString("、") else "待填写"}",
+                text = "人员：${project.workerNamesText}",
                 fontSize = 15.sp,
                 color = AppColors.TextPrimary,
                 maxLines = 1,
