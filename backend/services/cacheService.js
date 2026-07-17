@@ -176,10 +176,21 @@ const cacheKey = (namespace, ...parts) => {
 
 /**
  * 使工程相关缓存失效
+ *
+ * 缓存键结构（见 cacheKey 函数）：
+ * - 列表缓存：projects:{userId}:list:...   （按用户隔离）
+ * - 详情缓存：projects:detail:{projectId}    （所有用户共享，不带userId）
+ *
+ * 关键修复：原实现只清除 projects:{userId}:*，遗漏了 projects:detail:* 前缀，
+ *          导致更新工程后详情缓存不被清除，客户端重新加载仍命中10分钟旧缓存，
+ *          表现为"编辑后很久看不到更新"。
+ *
  * @param {number} userId - 用户ID
  */
 const invalidateProjectCache = async (userId) => {
   await delByPrefix(`projects:${userId || '*'}`);
+  // 详情缓存键为 projects:detail:{projectId}（不带userId），需单独清除
+  await delByPrefix('projects:detail:');
   await delByPrefix('statistics:');
 };
 
