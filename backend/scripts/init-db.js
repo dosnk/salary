@@ -901,6 +901,8 @@ const MIGRATIONS = [
         AND (ws.project_id = p.id OR ws.project_ids::jsonb @> to_jsonb(p.id))
       UNION
       -- 管理员和资料员可以查看所有工程
+      -- 注意：排除已经是该工程施工人员的管理员/资料员，避免与第一部分数据重叠
+      --       重叠会导致 (project_id, user_id) 重复，唯一索引创建失败
       SELECT
         COALESCE(pus.id, ROW_NUMBER() OVER (ORDER BY p.id, u.id) + 100000) AS id,
         p.id AS project_id,
@@ -918,8 +920,8 @@ const MIGRATIONS = [
             ELSE 'unsettled'
           END
         ) AS settlement_status,
-        pus.settlement_id,
-        pus.settled_at,
+        COALESCE(pus.settlement_id, ws.id) AS settlement_id,
+        COALESCE(pus.settled_at, ws.settled_at) AS settled_at,
         COALESCE(pus.created_at, CURRENT_TIMESTAMP) AS created_at,
         COALESCE(pus.updated_at, CURRENT_TIMESTAMP) AS updated_at
       FROM projects p
@@ -929,6 +931,10 @@ const MIGRATIONS = [
         ws.user_id = u.id
         AND (ws.project_id = p.id OR ws.project_ids::jsonb @> to_jsonb(p.id))
       WHERE u.role IN ('admin', 'documenter')
+        AND NOT EXISTS (
+          SELECT 1 FROM project_workers pw2
+          WHERE pw2.project_id = p.id AND pw2.user_id = u.id
+        )
       WITH DATA;
 
       -- 物化视图的唯一索引（REFRESH CONCURRENTLY 必须）
