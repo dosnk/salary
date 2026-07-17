@@ -374,6 +374,14 @@ async function migrate() {
     log.info('');
     log.info('[步骤 3] 开始导入数据...');
 
+    // 临时禁用外键约束和触发器（PostgreSQL 标准数据迁移方式）
+    // pg_dump 按字母顺序导出表，不考虑外键依赖关系
+    // 例如 files 表在 projects 表之前导出，但 files.project_id 引用 projects.id
+    // 设置 session_replication_role = 'replica' 会禁用所有触发器和外键检查
+    // 导入完成后恢复为 'origin' 重新启用
+    log.info('临时禁用外键约束（session_replication_role = replica）...');
+    await client.query("SET session_replication_role = 'replica'");
+
     let executedCount = 0;
     let failedCount = 0;
     const failedStatements = [];
@@ -446,6 +454,10 @@ async function migrate() {
         log.warn(`  ... 还有 ${failedStatements.length - 20} 条未显示`);
       }
     }
+
+    // 恢复外键约束和触发器
+    log.info('恢复外键约束（session_replication_role = origin）...');
+    await client.query("SET session_replication_role = 'origin'");
 
     // ========== 5. 重置所有序列 ==========
     log.info('');
