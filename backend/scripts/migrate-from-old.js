@@ -316,7 +316,7 @@ async function migrate() {
 
     // ========== 2. 清空新库已有数据 ==========
     log.info('');
-    log.info('[步骤 1] 清空新库已有数据（字典+默认用户，避免主键冲突）...');
+    log.info('[步骤 1] 清空新库已有数据（字典+默认用户+迁移版本表，避免主键冲突）...');
 
     await client.query(`
       TRUNCATE TABLE 
@@ -336,7 +336,8 @@ async function migrate() {
         action_types,
         construction_plans,
         space_types,
-        users
+        users,
+        db_versions
       CASCADE
     `);
     log.success('新库已清空');
@@ -378,63 +379,60 @@ async function migrate() {
     const failedStatements = [];
     const importedTableCount = {};
 
-    // 使用事务确保导入原子性
-    await client.query('BEGIN');
+    // 每条 INSERT 独立事务，避免单条失败导致整个事务中止
+    // （PostgreSQL 事务中一旦出错，后续所有语句都会被拒绝，必须 ROLLBACK 后重新 BEGIN）
+    for (let i = 0; i < inserts.length; i++) {
+      const { text, values, table } = inserts[i];
 
-    try {
-      for (let i = 0; i < inserts.length; i++) {
-        const { text, values, table } = inserts[i];
+      try {
+        await client.query('BEGIN');
+        if (values) {
+          // COPY 格式（参数化查询）
+          await client.query(text, values);
+        } else {
+          // INSERT 格式（直接执行）
+          await client.query(text);
+        }
+        await client.query('COMMIT');
+        executedCount++;
 
-        try {
+        // 统计成功导入（按表）
+        importedTableCount[table] = (importedTableCount[table] || 0) + 1;
+
+        // 进度提示（每1000条输出一次）
+        if (executedCount % 1000 === 0) {
+          log.info(`  进度: ${executedCount}/${inserts.length} (${(executedCount / inserts.length * 100).toFixed(1)}%)`);
+        }
+      } catch (err) {
+        // 单条失败：回滚当前事务，开下一条新事务
+        try { await client.query('ROLLBACK'); } catch (e) { /* 忽略回滚错误 */ }
+        failedCount++;
+        failedStatements.push({
+          index: i + 1,
+          table: table,
+          error: err.message,
+          preview: text.substring(0, 150)
+        });
+        // 输出前10条失败的详细信息
+        if (failedCount <= 10) {
+          log.warn(`  语句 ${i + 1} [${table}] 失败: ${err.message}`);
+          log.warn(`    预览: ${text.substring(0, 100)}...`);
           if (values) {
-            // COPY 格式（参数化查询）
-            await client.query(text, values);
-          } else {
-            // INSERT 格式（直接执行）
-            await client.query(text);
-          }
-          executedCount++;
-
-          // 统计成功导入（按表）
-          importedTableCount[table] = (importedTableCount[table] || 0) + 1;
-
-          // 进度提示（每1000条输出一次）
-          if (executedCount % 1000 === 0) {
-            log.info(`  进度: ${executedCount}/${inserts.length} (${(executedCount / inserts.length * 100).toFixed(1)}%)`);
-          }
-        } catch (err) {
-          failedCount++;
-          failedStatements.push({
-            index: i + 1,
-            table: table,
-            error: err.message,
-            preview: text.substring(0, 150)
-          });
-          // 输出前10条失败的详细信息
-          if (failedCount <= 10) {
-            log.warn(`  语句 ${i + 1} [${table}] 失败: ${err.message}`);
-            log.warn(`    预览: ${text.substring(0, 100)}...`);
-            if (values) {
-              log.warn(`    参数: ${JSON.stringify(values).substring(0, 200)}`);
-            }
+            log.warn(`    参数: ${JSON.stringify(values).substring(0, 200)}`);
           }
         }
       }
+    }
 
-      await client.query('COMMIT');
-      log.success(`数据导入完成: 成功 ${executedCount - failedCount} 条, 失败 ${failedCount} 条`);
+    log.success(`数据导入完成: 成功 ${executedCount} 条, 失败 ${failedCount} 条`);
 
-      // 输出按表导入统计
-      if (Object.keys(importedTableCount).length > 0) {
-        log.info('');
-        log.info('按表导入成功统计:');
-        Object.entries(importedTableCount).forEach(([table, count]) => {
-          log.info(`  ${table.padEnd(30)} ${count} 条`);
-        });
-      }
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw new Error(`导入事务失败，已回滚: ${err.message}`);
+    // 输出按表导入统计
+    if (Object.keys(importedTableCount).length > 0) {
+      log.info('');
+      log.info('按表导入成功统计:');
+      Object.entries(importedTableCount).forEach(([table, count]) => {
+        log.info(`  ${table.padEnd(30)} ${count} 条`);
+      });
     }
 
     // 输出失败详情汇总
