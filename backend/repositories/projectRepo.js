@@ -553,7 +553,9 @@ const addWorkers = async (projectId, workers, client) => {
   });
 
   // 构建参数化批量插入：每个 (project_id, user_id, workdays) 使用独立占位符
-  // workdays 为 null 时使用数据库默认值，不为 null 时写入指定工日数
+  // workdays 为 null 时只插入 (project_id, user_id)，由数据库填充 DEFAULT 1
+  // （project_workers.workdays 是 NOT NULL DEFAULT 1，显式传 NULL 会违反 NOT NULL 约束）
+  // PostgreSQL 支持同一 VALUES 列表中不同行占位符数量不同：VALUES ($1, $2), ($3, $4, $5)
   const valuePlaceholders = [];
   const params = [];
   let paramIndex = 1;
@@ -565,29 +567,16 @@ const addWorkers = async (projectId, workers, client) => {
       params.push(projectId, worker.userId, worker.workdays);
       paramIndex += 3;
     } else {
-      // 平均分配模式：不写入工日数，使用数据库默认值
+      // 平均分配模式：不写入工日数，使用数据库默认值 1
       valuePlaceholders.push(`($${paramIndex}, $${paramIndex + 1})`);
       params.push(projectId, worker.userId);
       paramIndex += 2;
     }
   }
 
-  // 根据是否有 workdays 动态构建 INSERT 语句
-  // 由于不同行的占位符数量可能不同（有/无 workdays），需要分别处理
-  // 简化方案：统一使用三列插入，workdays 为 null 时显式传入 NULL
-  const unifiedPlaceholders = [];
-  const unifiedParams = [];
-  let unifiedIndex = 1;
-
-  for (const worker of normalizedWorkers) {
-    unifiedPlaceholders.push(`($${unifiedIndex}, $${unifiedIndex + 1}, $${unifiedIndex + 2})`);
-    unifiedParams.push(projectId, worker.userId, worker.workdays);
-    unifiedIndex += 3;
-  }
-
   await executor.query(
-    `INSERT INTO project_workers (project_id, user_id, workdays) VALUES ${unifiedPlaceholders.join(', ')} ON CONFLICT DO NOTHING`,
-    unifiedParams
+    `INSERT INTO project_workers (project_id, user_id, workdays) VALUES ${valuePlaceholders.join(', ')} ON CONFLICT DO NOTHING`,
+    params
   );
 };
 
