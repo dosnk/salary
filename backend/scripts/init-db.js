@@ -951,6 +951,23 @@ const MIGRATIONS = [
       DROP INDEX IF EXISTS idx_wage_distributions_user_settlement;
     `,
     tables: ['mv_project_user_settlement_status']
+  },
+  {
+    version: 'V2.0',
+    description: '工程备注字段规范化：projects 表添加 remark 列，将原 description 数据迁移到 remark',
+    up: `
+      -- 1. 添加 remark 列（projects 表原本没有 remark 列，工程备注通过 description 列存储）
+      ALTER TABLE projects ADD COLUMN IF NOT EXISTS remark TEXT;
+
+      -- 2. 数据迁移：将现有 description 列的备注内容复制到 remark 列
+      --    背景：V2.0 之前 createProject 将前端传入的 remark 存入 description 列
+      --    V2.0 之后 createProject 直接存入 remark 列，description 列不再用于存储备注
+      UPDATE projects SET remark = description WHERE remark IS NULL AND description IS NOT NULL;
+    `,
+    down: `
+      ALTER TABLE projects DROP COLUMN IF EXISTS remark;
+    `,
+    tables: ['projects']
   }
 ];
 
