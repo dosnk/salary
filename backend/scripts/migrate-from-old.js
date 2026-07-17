@@ -1,11 +1,26 @@
 /**
- * 旧库 → 新库 数据迁移脚本（Node.js 版本 v2）
+ * 旧库 → 新库 数据迁移脚本（Node.js 版本 v3）
  *
- * v2 修复：
- *   - 修复多行 INSERT 语句解析问题（pg_dump --column-inserts 生成的 INSERT 跨多行）
- *   - 修复语句类型识别（trim 后再判断前缀）
- *   - 增加详细的导入计数（按表名统计）
- *   - 失败时输出完整错误语句
+ * v3 修复：
+ *   - 支持 COPY ... FROM stdin 格式（pg_dump 默认格式，宝塔面板备份使用此格式）
+ *   - 支持 INSERT INTO 格式（pg_dump --column-inserts 格式）
+ *   - 自动检测导出文件格式
+ *
+ * COPY 格式说明：
+ *   pg_dump 默认用 COPY 语句批量导出数据，格式如下：
+ *
+ *     COPY public.table_name (col1, col2, col3, ...) FROM stdin;
+ *     1\tvalue1\tvalue2\tvalue3\n
+ *     2\tvalue1\tvalue2\tvalue3\n
+ *     \.
+ *
+ *   特殊标记：
+ *     - \N  表示 NULL
+ *     - \t  表示制表符（列分隔符）
+ *     - \n  表示换行符（数据内的换行）
+ *     - \r  表示回车
+ *     - \\  表示反斜杠本身
+ *     - \.  单独一行表示数据结束
  *
  * 使用方法：
  *   docker exec -it <容器名> node scripts/migrate-from-old.js [导出文件路径]
@@ -41,84 +56,238 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000
 });
 
-// ===================== SQL 语句解析 =====================
+// ===================== COPY 格式数据解析 =====================
 /**
- * 解析 SQL 导出文件为独立语句数组
+ * 解析 COPY 数据行（tab 分隔，含转义字符）
  *
- * pg_dump --column-inserts 输出格式：
- *   -- 注释行
- *   INSERT INTO table_name (col1, col2, ...) VALUES
- *     (val1, val2, ...);
- *   INSERT INTO table_name (col1, col2, ...) VALUES
- *     (val1, val2, ...);
+ * PostgreSQL COPY 格式转义规则：
+ *   \N  → NULL
+ *   \t  → 制表符
+ *   \n  → 换行符
+ *   \r  → 回车
+ *   \\  → 反斜杠
+ *   其他 \x → x（保留原字符）
  *
- * 解析要点：
- *   1. 按分号分割语句，但需跳过字符串内的分号（如备注中的分号）
- *   2. 多行 INSERT 的 VALUES 在下一行，需合并到同一条语句
- *   3. 过滤注释行（以 -- 开头）和空行
- *   4. trim 后再判断语句类型
- *
- * @param {string} content - SQL 文件内容
- * @returns {string[]} 独立 SQL 语句数组
+ * @param {string} line - COPY 数据行（不含换行符）
+ * @returns {Array} 解析后的值数组，NULL 用 null 表示
  */
-function parseSqlStatements(content) {
-  const statements = [];
-  let currentStatement = '';
-  let inString = false;
+function parseCopyDataLine(line) {
+  // 按 tab 分隔列，但需处理转义的 \t
+  // PostgreSQL COPY 格式中 \t 表示数据内的 tab，\N 表示 NULL
+  const values = [];
+  let current = '';
+  let i = 0;
 
-  for (let i = 0; i < content.length; i++) {
-    const char = content[i];
+  while (i < line.length) {
+    const char = line[i];
 
-    // 处理单引号字符串（PostgreSQL 用 '' 转义单引号）
-    if (char === "'" && content[i - 1] !== '\\') {
-      inString = !inString;
-    }
-
-    currentStatement += char;
-
-    // 遇到分号且不在字符串内，视为语句结束
-    if (char === ';' && !inString) {
-      // 移除语句内的注释行（以 -- 开头的整行）
-      const lines = currentStatement.split('\n');
-      const codeLines = lines.filter(line => {
-        const trimmed = line.trim();
-        // 保留有内容的代码行，过滤纯注释行（以--开头）和空行
-        return trimmed && !trimmed.startsWith('--');
-      });
-      const cleanStatement = codeLines.join(' ').trim();
-
-      if (cleanStatement) {
-        statements.push(cleanStatement);
+    if (char === '\t') {
+      // 列分隔符
+      values.push(parseCopyValue(current));
+      current = '';
+      i++;
+    } else if (char === '\\' && i + 1 < line.length) {
+      // 转义字符
+      const next = line[i + 1];
+      if (next === 'N') {
+        current += '\u0000'; // 临时标记 NULL，稍后处理
+        i += 2;
+      } else if (next === 't') {
+        current += '\t';
+        i += 2;
+      } else if (next === 'n') {
+        current += '\n';
+        i += 2;
+      } else if (next === 'r') {
+        current += '\r';
+        i += 2;
+      } else if (next === '\\') {
+        current += '\\';
+        i += 2;
+      } else {
+        // 其他转义保留原字符
+        current += next;
+        i += 2;
       }
-      currentStatement = '';
+    } else {
+      current += char;
+      i++;
     }
   }
+  // 最后一列
+  values.push(parseCopyValue(current));
 
-  return statements;
+  return values;
 }
 
 /**
- * 识别 SQL 语句类型
- * @param {string} stmt - SQL 语句
- * @returns {string} 语句类型: INSERT/SET/SELECT/OTHER
+ * 解析单个 COPY 值
+ * @param {string} value - 原始值（已处理转义，但可能含 NULL 标记）
+ * @returns {string|null} 解析后的值，NULL 返回 null
  */
-function getStatementType(stmt) {
-  const upper = stmt.toUpperCase().trim();
-  if (upper.startsWith('INSERT INTO')) return 'INSERT';
-  if (upper.startsWith('SET ')) return 'SET';
-  if (upper.startsWith('SELECT ')) return 'SELECT';
-  return 'OTHER';
+function parseCopyValue(value) {
+  if (value === '\u0000') {
+    return null;
+  }
+  return value;
 }
 
 /**
- * 从 INSERT 语句中提取表名
- * 用于按表统计导入数量
- * @param {string} stmt - INSERT 语句
- * @returns {string|null} 表名
+ * 从 COPY 语句中提取表名和列名
+ *
+ * COPY 语句格式：
+ *   COPY public.table_name (col1, col2, ...) FROM stdin;
+ *   COPY public.table_name FROM stdin;  (无列名，表示所有列)
+ *
+ * @param {string} copyStmt - COPY 语句
+ * @returns {{tableName: string, columns: string[]|null}}
  */
-function getTableNameFromInsert(stmt) {
-  const match = stmt.match(/^INSERT\s+INTO\s+(\w+)/i);
-  return match ? match[1] : null;
+function parseCopyStatement(copyStmt) {
+  // 提取表名：COPY public.table_name 或 COPY table_name
+  const tableMatch = copyStmt.match(/COPY\s+(?:public\.)?(\w+)/i);
+  const tableName = tableMatch ? tableMatch[1] : null;
+
+  // 提取列名：(col1, col2, ...) 可选
+  const columnsMatch = copyStmt.match(/\(([^)]+)\)/);
+  let columns = null;
+  if (columnsMatch) {
+    columns = columnsMatch[1].split(',').map(c => c.trim());
+  }
+
+  return { tableName, columns };
+}
+
+/**
+ * 将值数组转换为 SQL INSERT 语句
+ *
+ * @param {string} tableName - 表名
+ * @param {string[]|null} columns - 列名数组（null 表示所有列）
+ * @param {Array} values - 值数组
+ * @returns {string} INSERT 语句
+ */
+function buildInsertStatement(tableName, columns, values) {
+  // 处理列名
+  const columnList = columns ? `(${columns.join(', ')})` : '';
+
+  // 处理值（参数化）
+  const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
+
+  return {
+    text: `INSERT INTO ${tableName} ${columnList} VALUES (${placeholders})`.replace(/\s+/g, ' ').trim(),
+    values: values
+  };
+}
+
+// ===================== SQL 文件解析 =====================
+/**
+ * 解析 SQL 导出文件，提取所有数据操作
+ *
+ * 支持两种格式：
+ *   1. COPY ... FROM stdin 格式（pg_dump 默认，宝塔备份使用）
+ *   2. INSERT INTO 格式（pg_dump --column-inserts）
+ *
+ * @param {string} content - SQL 文件内容
+ * @returns {{inserts: Array, stats: object}} INSERT 语句数组和统计信息
+ */
+function parseSqlFile(content) {
+  const inserts = []; // {text, values, table}
+  const stats = {
+    copyBlocks: 0,
+    copyRows: 0,
+    insertStatements: 0,
+    setStatements: 0,
+    otherStatements: 0,
+    tables: {} // 按表统计行数
+  };
+
+  const lines = content.split('\n');
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // 跳过空行和注释
+    if (!line.trim() || line.trim().startsWith('--')) {
+      i++;
+      continue;
+    }
+
+    // 检测 COPY 语句
+    if (/^COPY\s+/i.test(line.trim())) {
+      const { tableName, columns } = parseCopyStatement(line);
+
+      if (!tableName) {
+        log.warn(`无法解析 COPY 语句: ${line.substring(0, 100)}`);
+        i++;
+        continue;
+      }
+
+      stats.copyBlocks++;
+      i++; // 移动到数据行
+
+      // 读取 COPY 数据，直到遇到 \. 结束标记
+      let rowCount = 0;
+      while (i < lines.length && lines[i] !== '\\.') {
+        const dataLine = lines[i];
+
+        // 跳过空行（COPY 数据中的空行可能是数据，需根据列数判断）
+        // 但通常 \. 之前的空行是数据行，需保留
+        if (dataLine !== '\\.') {
+          const values = parseCopyDataLine(dataLine);
+          const insert = buildInsertStatement(tableName, columns, values);
+          inserts.push({ ...insert, table: tableName });
+          rowCount++;
+          stats.copyRows++;
+        }
+        i++;
+      }
+
+      // 跳过 \. 结束标记
+      if (i < lines.length && lines[i] === '\\.') {
+        i++;
+      }
+
+      stats.tables[tableName] = (stats.tables[tableName] || 0) + rowCount;
+      continue;
+    }
+
+    // 检测 INSERT 语句（可能跨多行，以分号结束）
+    if (/^INSERT\s+INTO/i.test(line.trim())) {
+      let fullStatement = line;
+      // 如果不以分号结束，继续读取下一行
+      while (i + 1 < lines.length && !fullStatement.trim().endsWith(';')) {
+        i++;
+        fullStatement += '\n' + lines[i];
+      }
+
+      // 提取表名
+      const tableMatch = fullStatement.match(/INSERT\s+INTO\s+(?:public\.)?(\w+)/i);
+      const tableName = tableMatch ? tableMatch[1] : 'unknown';
+
+      inserts.push({
+        text: fullStatement.replace(/\s+/g, ' ').trim(),
+        values: null, // INSERT 语句无需参数化（已含字面值）
+        table: tableName
+      });
+      stats.insertStatements++;
+      stats.tables[tableName] = (stats.tables[tableName] || 0) + 1;
+      i++;
+      continue;
+    }
+
+    // 检测 SET 语句
+    if (/^SET\s+/i.test(line.trim())) {
+      stats.setStatements++;
+      i++;
+      continue;
+    }
+
+    // 其他语句（CREATE、ALTER、COMMENT等，数据迁移时跳过）
+    stats.otherStatements++;
+    i++;
+  }
+
+  return { inserts, stats };
 }
 
 // ===================== 主迁移流程 =====================
@@ -127,7 +296,8 @@ async function migrate() {
 
   try {
     log.info('==========================================');
-    log.info('  旧库 → 新库 数据迁移（Node.js 版本 v2）');
+    log.info('  旧库 → 新库 数据迁移（Node.js 版本 v3）');
+    log.info('  支持 COPY 和 INSERT 两种格式');
     log.info('==========================================');
 
     // ========== 1. 前置检查 ==========
@@ -173,44 +343,29 @@ async function migrate() {
 
     // ========== 3. 读取并解析导出文件 ==========
     log.info('');
-    log.info('[步骤 2] 读取导出文件...');
+    log.info('[步骤 2] 读取并解析导出文件...');
 
     const sqlContent = fs.readFileSync(DUMP_FILE, 'utf8');
     log.info(`文件内容长度: ${sqlContent.length} 字符`);
 
-    const statements = parseSqlStatements(sqlContent);
-    log.info(`解析出 ${statements.length} 条 SQL 语句`);
+    const { inserts, stats } = parseSqlFile(sqlContent);
 
-    // 按类型统计
-    const typeCount = { INSERT: 0, SET: 0, SELECT: 0, OTHER: 0 };
-    const tableCount = {}; // 按表名统计 INSERT 数量
-    statements.forEach(stmt => {
-      const type = getStatementType(stmt);
-      typeCount[type]++;
+    log.info(`解析完成:`);
+    log.info(`  - COPY 数据块: ${stats.copyBlocks} 个`);
+    log.info(`  - COPY 数据行: ${stats.copyRows} 行`);
+    log.info(`  - INSERT 语句: ${stats.insertStatements} 条`);
+    log.info(`  - SET 语句: ${stats.setStatements} 条（已跳过）`);
+    log.info(`  - 其他语句: ${stats.otherStatements} 条（已跳过）`);
+    log.info(`  - 待导入数据: ${inserts.length} 条`);
 
-      if (type === 'INSERT') {
-        const tableName = getTableNameFromInsert(stmt);
-        if (tableName) {
-          tableCount[tableName] = (tableCount[tableName] || 0) + 1;
-        }
-      }
-    });
-
-    log.info(`  - INSERT 语句: ${typeCount.INSERT} 条`);
-    log.info(`  - SET 语句: ${typeCount.SET} 条`);
-    log.info(`  - SELECT 语句: ${typeCount.SELECT} 条`);
-    log.info(`  - 其他: ${typeCount.OTHER} 条`);
-
-    if (typeCount.INSERT === 0) {
-      log.error('未解析到任何 INSERT 语句！请检查导出文件格式');
-      log.error('提示：导出时必须使用 --column-inserts 参数');
-      log.error('示例: pg_dump --data-only --column-inserts --no-owner --exclude-table=db_versions > dump.sql');
-      throw new Error('导出文件无有效 INSERT 语句');
+    if (inserts.length === 0) {
+      log.error('未解析到任何数据！请检查导出文件格式');
+      throw new Error('导出文件无有效数据');
     }
 
     log.info('');
-    log.info('按表统计 INSERT 数量:');
-    Object.entries(tableCount).forEach(([table, count]) => {
+    log.info('按表统计待导入数量:');
+    Object.entries(stats.tables).forEach(([table, count]) => {
       log.info(`  ${table.padEnd(30)} ${count} 条`);
     });
 
@@ -221,46 +376,48 @@ async function migrate() {
     let executedCount = 0;
     let failedCount = 0;
     const failedStatements = [];
-    const importedTableCount = {}; // 实际导入成功的数量（按表）
+    const importedTableCount = {};
 
     // 使用事务确保导入原子性
     await client.query('BEGIN');
 
     try {
-      for (let i = 0; i < statements.length; i++) {
-        const stmt = statements[i];
-        const type = getStatementType(stmt);
+      for (let i = 0; i < inserts.length; i++) {
+        const { text, values, table } = inserts[i];
 
         try {
-          await client.query(stmt);
+          if (values) {
+            // COPY 格式（参数化查询）
+            await client.query(text, values);
+          } else {
+            // INSERT 格式（直接执行）
+            await client.query(text);
+          }
           executedCount++;
 
-          // 统计成功导入的 INSERT（按表）
-          if (type === 'INSERT') {
-            const tableName = getTableNameFromInsert(stmt);
-            if (tableName) {
-              importedTableCount[tableName] = (importedTableCount[tableName] || 0) + 1;
-            }
-          }
+          // 统计成功导入（按表）
+          importedTableCount[table] = (importedTableCount[table] || 0) + 1;
 
           // 进度提示（每1000条输出一次）
           if (executedCount % 1000 === 0) {
-            log.info(`  进度: ${executedCount}/${statements.length} (${(executedCount / statements.length * 100).toFixed(1)}%)`);
+            log.info(`  进度: ${executedCount}/${inserts.length} (${(executedCount / inserts.length * 100).toFixed(1)}%)`);
           }
         } catch (err) {
-          // INSERT 失败是严重问题，需要记录
-          if (type === 'INSERT') {
-            failedCount++;
-            failedStatements.push({
-              index: i + 1,
-              error: err.message,
-              statement: stmt.substring(0, 200),
-              table: getTableNameFromInsert(stmt)
-            });
-            log.warn(`  语句 ${i + 1} 执行失败: ${err.message}`);
-            log.warn(`    预览: ${stmt.substring(0, 100)}...`);
+          failedCount++;
+          failedStatements.push({
+            index: i + 1,
+            table: table,
+            error: err.message,
+            preview: text.substring(0, 150)
+          });
+          // 输出前10条失败的详细信息
+          if (failedCount <= 10) {
+            log.warn(`  语句 ${i + 1} [${table}] 失败: ${err.message}`);
+            log.warn(`    预览: ${text.substring(0, 100)}...`);
+            if (values) {
+              log.warn(`    参数: ${JSON.stringify(values).substring(0, 200)}`);
+            }
           }
-          // SET/SELECT 等辅助语句失败静默跳过
         }
       }
 
@@ -280,15 +437,15 @@ async function migrate() {
       throw new Error(`导入事务失败，已回滚: ${err.message}`);
     }
 
-    // 输出失败详情
+    // 输出失败详情汇总
     if (failedStatements.length > 0) {
       log.warn('');
-      log.warn(`失败的 INSERT 语句详情（共 ${failedStatements.length} 条）:`);
-      failedStatements.slice(0, 10).forEach(s => {
+      log.warn(`失败的语句汇总（共 ${failedStatements.length} 条）:`);
+      failedStatements.slice(0, 20).forEach(s => {
         log.warn(`  语句 ${s.index} [${s.table}]: ${s.error}`);
       });
-      if (failedStatements.length > 10) {
-        log.warn(`  ... 还有 ${failedStatements.length - 10} 条未显示`);
+      if (failedStatements.length > 20) {
+        log.warn(`  ... 还有 ${failedStatements.length - 20} 条未显示`);
       }
     }
 
