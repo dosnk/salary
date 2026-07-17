@@ -91,8 +91,10 @@ const testConnection = async () => {
 };
 
 // ===================== 3. 默认用户配置（从环境变量读取） =====================
-const DEFAULT_PASSWORD_HASH = process.env.DEFAULT_PASSWORD_HASH || '$2b$10$y9517fJtlz0hQ5UKbbDHeORG.r7AZ/l4K7cpfsblQz7Aut8Kns67W';
-const DEFAULT_PASSWORD = process.env.DEFAULT_PASSWORD || 'admin123';
+// 默认密码与旧程序保持一致：990066（6位纯数字）
+// 对应 bcrypt hash（10轮加密），与旧库 users.password 字段一致，迁移后用户可用旧密码直接登录
+const DEFAULT_PASSWORD_HASH = process.env.DEFAULT_PASSWORD_HASH || '$2b$10$P3wghHsPlXTX.IGPrxMmAeKNyeTHFBG6CKkpNFHnT1oPv.pFTHFpS';
+const DEFAULT_PASSWORD = process.env.DEFAULT_PASSWORD || '990066';
 
 // 默认用户列表（可从环境变量覆盖）
 const DEFAULT_USERS = process.env.DEFAULT_USERS ? 
