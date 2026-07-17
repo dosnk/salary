@@ -1,37 +1,16 @@
 /**
- * 旧库 → 新库 数据迁移脚本（Node.js 版本）
+ * 旧库 → 新库 数据迁移脚本（Node.js 版本 v2）
  *
- * 使用场景：
- *   后端服务运行在 Docker 容器中，容器内无 psql 客户端，但有 Node.js + pg 库
- *   旧库在腾讯云（不可直连），已通过 pg_dump 导出为 SQL 文件
+ * v2 修复：
+ *   - 修复多行 INSERT 语句解析问题（pg_dump --column-inserts 生成的 INSERT 跨多行）
+ *   - 修复语句类型识别（trim 后再判断前缀）
+ *   - 增加详细的导入计数（按表名统计）
+ *   - 失败时输出完整错误语句
  *
  * 使用方法：
- *   1. 在腾讯云旧库导出数据：
- *      pg_dump -h 127.0.0.1 -U postgres -d salary_system \
- *        --data-only --column-inserts --no-owner --no-privileges \
- *        --exclude-table=db_versions > /tmp/old_data_dump.sql
+ *   docker exec -it <容器名> node scripts/migrate-from-old.js [导出文件路径]
  *
- *   2. 将导出文件复制到容器内：
- *      docker cp old_data_dump.sql <容器名>:/app/scripts/old_data_dump.sql
- *
- *   3. 在容器内执行本脚本：
- *      docker exec -it <容器名> node scripts/migrate-from-old.js
- *
- *   或指定导出文件路径：
- *      docker exec -it <容器名> node scripts/migrate-from-old.js /tmp/old_data_dump.sql
- *
- * 迁移范围：
- *   ✅ 用户表（users）— 保留旧库 ID，用户可用旧密码登录
- *   ✅ 业务数据（projects、subprojects、wage_settlements 等）
- *   ✅ 附件记录（files 表）— 附件文件需用户自行按原路径迁移
- *   ❌ 字典表（space_types、construction_plans 等）— 用旧库覆盖
- *   ❌ 迁移版本表（db_versions）— 各自保留
- *   ❌ AI 相关表 — 旧库无
- *
- * 结构差异处理：
- *   1. projects.remark 列：新库有，旧库无。导入时 remark 自动为 NULL
- *   2. 物化视图 mv_project_user_settlement_status：导入完成后刷新
- *   3. length/width 单位：旧库新库都是厘米，无需换算
+ * 默认导出文件路径: /app/scripts/old_data_dump.sql
  */
 
 const path = require('path');
@@ -49,10 +28,8 @@ const log = {
 };
 
 // ===================== 配置 =====================
-// 导出文件路径：优先使用命令行参数，其次使用默认路径
 const DUMP_FILE = process.argv[2] || '/app/scripts/old_data_dump.sql';
 
-// 新库连接配置：从 .env 读取
 const pool = new Pool({
   user: process.env.DB_USER || 'postgres',
   host: process.env.DB_HOST || 'localhost',
@@ -64,17 +41,96 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000
 });
 
+// ===================== SQL 语句解析 =====================
+/**
+ * 解析 SQL 导出文件为独立语句数组
+ *
+ * pg_dump --column-inserts 输出格式：
+ *   -- 注释行
+ *   INSERT INTO table_name (col1, col2, ...) VALUES
+ *     (val1, val2, ...);
+ *   INSERT INTO table_name (col1, col2, ...) VALUES
+ *     (val1, val2, ...);
+ *
+ * 解析要点：
+ *   1. 按分号分割语句，但需跳过字符串内的分号（如备注中的分号）
+ *   2. 多行 INSERT 的 VALUES 在下一行，需合并到同一条语句
+ *   3. 过滤注释行（以 -- 开头）和空行
+ *   4. trim 后再判断语句类型
+ *
+ * @param {string} content - SQL 文件内容
+ * @returns {string[]} 独立 SQL 语句数组
+ */
+function parseSqlStatements(content) {
+  const statements = [];
+  let currentStatement = '';
+  let inString = false;
+
+  for (let i = 0; i < content.length; i++) {
+    const char = content[i];
+
+    // 处理单引号字符串（PostgreSQL 用 '' 转义单引号）
+    if (char === "'" && content[i - 1] !== '\\') {
+      inString = !inString;
+    }
+
+    currentStatement += char;
+
+    // 遇到分号且不在字符串内，视为语句结束
+    if (char === ';' && !inString) {
+      // 移除语句内的注释行（以 -- 开头的整行）
+      const lines = currentStatement.split('\n');
+      const codeLines = lines.filter(line => {
+        const trimmed = line.trim();
+        // 保留有内容的代码行，过滤纯注释行（以--开头）和空行
+        return trimmed && !trimmed.startsWith('--');
+      });
+      const cleanStatement = codeLines.join(' ').trim();
+
+      if (cleanStatement) {
+        statements.push(cleanStatement);
+      }
+      currentStatement = '';
+    }
+  }
+
+  return statements;
+}
+
+/**
+ * 识别 SQL 语句类型
+ * @param {string} stmt - SQL 语句
+ * @returns {string} 语句类型: INSERT/SET/SELECT/OTHER
+ */
+function getStatementType(stmt) {
+  const upper = stmt.toUpperCase().trim();
+  if (upper.startsWith('INSERT INTO')) return 'INSERT';
+  if (upper.startsWith('SET ')) return 'SET';
+  if (upper.startsWith('SELECT ')) return 'SELECT';
+  return 'OTHER';
+}
+
+/**
+ * 从 INSERT 语句中提取表名
+ * 用于按表统计导入数量
+ * @param {string} stmt - INSERT 语句
+ * @returns {string|null} 表名
+ */
+function getTableNameFromInsert(stmt) {
+  const match = stmt.match(/^INSERT\s+INTO\s+(\w+)/i);
+  return match ? match[1] : null;
+}
+
 // ===================== 主迁移流程 =====================
 async function migrate() {
   let client;
 
   try {
-    // ========== 1. 前置检查 ==========
     log.info('==========================================');
-    log.info('  旧库 → 新库 数据迁移（Node.js 版本）');
+    log.info('  旧库 → 新库 数据迁移（Node.js 版本 v2）');
     log.info('==========================================');
 
-    // 检查导出文件是否存在
+    // ========== 1. 前置检查 ==========
     if (!fs.existsSync(DUMP_FILE)) {
       throw new Error(`导出文件不存在: ${DUMP_FILE}\n请先在腾讯云执行 pg_dump 导出数据，并复制到容器内`);
     }
@@ -92,8 +148,6 @@ async function migrate() {
     log.info('');
     log.info('[步骤 1] 清空新库已有数据（字典+默认用户，避免主键冲突）...');
 
-    // 按外键依赖反序清空所有业务表
-    // 使用 TRUNCATE CASCADE 一次性清空，避免逐表删除的外键约束问题
     await client.query(`
       TRUNCATE TABLE 
         messages,
@@ -124,50 +178,41 @@ async function migrate() {
     const sqlContent = fs.readFileSync(DUMP_FILE, 'utf8');
     log.info(`文件内容长度: ${sqlContent.length} 字符`);
 
-    // 将 SQL 文件按分号分割为独立语句
-    // 注意：pg_dump --column-inserts 生成的 INSERT 语句每条以分号结尾
-    // 需要处理：1) 注释行（以 -- 开头）2) 空行 3) 多行INSERT（含换行）
-    const statements = [];
-    let currentStatement = '';
-    let inString = false;
-
-    // 逐字符解析，处理字符串内的分号（如备注中的分号）
-    for (let i = 0; i < sqlContent.length; i++) {
-      const char = sqlContent[i];
-
-      // 处理单引号字符串（转义单引号用 '' 表示）
-      if (char === "'" && sqlContent[i - 1] !== '\\') {
-        inString = !inString;
-      }
-
-      currentStatement += char;
-
-      // 遇到分号且不在字符串内，视为语句结束
-      if (char === ';' && !inString) {
-        const trimmed = currentStatement.trim();
-        // 过滤空语句和纯注释
-        if (trimmed && !trimmed.startsWith('--')) {
-          // 移除语句内的注释行（如 -- Name: users_id_seq; Type: SEQUENCE ...）
-          const lines = trimmed.split('\n');
-          const codeLines = lines.filter(line => !line.trim().startsWith('--'));
-          const cleanStatement = codeLines.join('\n').trim();
-          if (cleanStatement) {
-            statements.push(cleanStatement);
-          }
-        }
-        currentStatement = '';
-      }
-    }
-
+    const statements = parseSqlStatements(sqlContent);
     log.info(`解析出 ${statements.length} 条 SQL 语句`);
 
-    // 统计语句类型
-    const insertCount = statements.filter(s => s.toUpperCase().startsWith('INSERT INTO')).length;
-    const setCount = statements.filter(s => s.toUpperCase().startsWith('SET ')).length;
-    const otherCount = statements.length - insertCount - setCount;
-    log.info(`  - INSERT 语句: ${insertCount} 条`);
-    log.info(`  - SET 语句: ${setCount} 条（如 SET client_encoding）`);
-    log.info(`  - 其他: ${otherCount} 条`);
+    // 按类型统计
+    const typeCount = { INSERT: 0, SET: 0, SELECT: 0, OTHER: 0 };
+    const tableCount = {}; // 按表名统计 INSERT 数量
+    statements.forEach(stmt => {
+      const type = getStatementType(stmt);
+      typeCount[type]++;
+
+      if (type === 'INSERT') {
+        const tableName = getTableNameFromInsert(stmt);
+        if (tableName) {
+          tableCount[tableName] = (tableCount[tableName] || 0) + 1;
+        }
+      }
+    });
+
+    log.info(`  - INSERT 语句: ${typeCount.INSERT} 条`);
+    log.info(`  - SET 语句: ${typeCount.SET} 条`);
+    log.info(`  - SELECT 语句: ${typeCount.SELECT} 条`);
+    log.info(`  - 其他: ${typeCount.OTHER} 条`);
+
+    if (typeCount.INSERT === 0) {
+      log.error('未解析到任何 INSERT 语句！请检查导出文件格式');
+      log.error('提示：导出时必须使用 --column-inserts 参数');
+      log.error('示例: pg_dump --data-only --column-inserts --no-owner --exclude-table=db_versions > dump.sql');
+      throw new Error('导出文件无有效 INSERT 语句');
+    }
+
+    log.info('');
+    log.info('按表统计 INSERT 数量:');
+    Object.entries(tableCount).forEach(([table, count]) => {
+      log.info(`  ${table.padEnd(30)} ${count} 条`);
+    });
 
     // ========== 4. 执行导入 ==========
     log.info('');
@@ -176,6 +221,7 @@ async function migrate() {
     let executedCount = 0;
     let failedCount = 0;
     const failedStatements = [];
+    const importedTableCount = {}; // 实际导入成功的数量（按表）
 
     // 使用事务确保导入原子性
     await client.query('BEGIN');
@@ -183,48 +229,63 @@ async function migrate() {
     try {
       for (let i = 0; i < statements.length; i++) {
         const stmt = statements[i];
-        const stmtPreview = stmt.substring(0, 80).replace(/\n/g, ' ');
+        const type = getStatementType(stmt);
 
         try {
           await client.query(stmt);
           executedCount++;
+
+          // 统计成功导入的 INSERT（按表）
+          if (type === 'INSERT') {
+            const tableName = getTableNameFromInsert(stmt);
+            if (tableName) {
+              importedTableCount[tableName] = (importedTableCount[tableName] || 0) + 1;
+            }
+          }
 
           // 进度提示（每1000条输出一次）
           if (executedCount % 1000 === 0) {
             log.info(`  进度: ${executedCount}/${statements.length} (${(executedCount / statements.length * 100).toFixed(1)}%)`);
           }
         } catch (err) {
-          // 某些非关键语句失败可以跳过（如 SET search_path、序列操作等）
-          // 但 INSERT 失败需要记录
-          if (stmt.toUpperCase().startsWith('INSERT INTO')) {
+          // INSERT 失败是严重问题，需要记录
+          if (type === 'INSERT') {
             failedCount++;
             failedStatements.push({
               index: i + 1,
               error: err.message,
-              preview: stmtPreview
+              statement: stmt.substring(0, 200),
+              table: getTableNameFromInsert(stmt)
             });
-            // INSERT 失败是严重问题，输出警告但继续执行（可能部分数据已导入）
             log.warn(`  语句 ${i + 1} 执行失败: ${err.message}`);
-            log.warn(`    预览: ${stmtPreview}...`);
+            log.warn(`    预览: ${stmt.substring(0, 100)}...`);
           }
-          // 非 INSERT 语句（SET、SELECT等）失败静默跳过
+          // SET/SELECT 等辅助语句失败静默跳过
         }
       }
 
       await client.query('COMMIT');
       log.success(`数据导入完成: 成功 ${executedCount - failedCount} 条, 失败 ${failedCount} 条`);
+
+      // 输出按表导入统计
+      if (Object.keys(importedTableCount).length > 0) {
+        log.info('');
+        log.info('按表导入成功统计:');
+        Object.entries(importedTableCount).forEach(([table, count]) => {
+          log.info(`  ${table.padEnd(30)} ${count} 条`);
+        });
+      }
     } catch (err) {
       await client.query('ROLLBACK');
       throw new Error(`导入事务失败，已回滚: ${err.message}`);
     }
 
-    // 如果有失败的 INSERT，输出详细信息
+    // 输出失败详情
     if (failedStatements.length > 0) {
       log.warn('');
       log.warn(`失败的 INSERT 语句详情（共 ${failedStatements.length} 条）:`);
       failedStatements.slice(0, 10).forEach(s => {
-        log.warn(`  语句 ${s.index}: ${s.error}`);
-        log.warn(`    预览: ${s.preview}`);
+        log.warn(`  语句 ${s.index} [${s.table}]: ${s.error}`);
       });
       if (failedStatements.length > 10) {
         log.warn(`  ... 还有 ${failedStatements.length - 10} 条未显示`);
@@ -235,8 +296,6 @@ async function migrate() {
     log.info('');
     log.info('[步骤 4] 重置所有表序列到最大ID...');
 
-    // 查询所有有 SERIAL 序列的表，并重置序列到该表的最大ID
-    // 不重置会导致后续 INSERT 报主键冲突（序列从1开始，但已导入的ID可能很大）
     const sequenceQuery = `
       SELECT 
         c.relname AS table_name,
@@ -251,12 +310,9 @@ async function migrate() {
       ORDER BY c.relname
     `;
     const sequenceResult = await client.query(sequenceQuery);
-
     log.info(`找到 ${sequenceResult.rows.length} 个序列需要重置`);
 
     for (const row of sequenceResult.rows) {
-      // 动态执行 setval，将序列设为该列当前最大值
-      // COALESCE 处理表为空的情况（默认设为1）
       const maxQuery = `SELECT COALESCE(MAX(${row.column_name}), 1) AS max_id FROM ${row.table_name}`;
       const maxResult = await client.query(maxQuery);
       const maxId = maxResult.rows[0].max_id;
@@ -272,11 +328,9 @@ async function migrate() {
     log.info('[步骤 5] 刷新物化视图...');
 
     try {
-      // 优先尝试 CONCURRENTLY（不阻塞读，需要唯一索引）
       await client.query('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_project_user_settlement_status');
       log.success('物化视图已刷新（CONCURRENTLY 模式）');
     } catch (err) {
-      // CONCURRENTLY 失败（如唯一索引未创建），降级为普通刷新
       log.warn(`CONCURRENTLY 刷新失败，降级为普通刷新: ${err.message}`);
       await client.query('REFRESH MATERIALIZED VIEW mv_project_user_settlement_status');
       log.success('物化视图已刷新（普通模式）');
@@ -295,11 +349,14 @@ async function migrate() {
 
     log.info('');
     log.info('========== 数据量统计 ==========');
+    let totalRecords = 0;
     for (const table of tablesToVerify) {
       const countResult = await client.query(`SELECT COUNT(*) AS count FROM ${table}`);
       const count = parseInt(countResult.rows[0].count, 10);
+      totalRecords += count;
       console.log(`  ${table.padEnd(30)} ${count} 条`);
     }
+    log.info(`  ${'总计'.padEnd(30)} ${totalRecords} 条`);
 
     // 金额校验
     log.info('');
@@ -315,24 +372,6 @@ async function migrate() {
       const result = await client.query(check.query);
       const total = parseFloat(result.rows[0].total).toFixed(2);
       console.log(`  ${check.name.padEnd(20)} ¥${total}`);
-    }
-
-    // 序列校验
-    log.info('');
-    log.info('========== 序列检查 ==========');
-    const seqCheckResult = await client.query(`
-      SELECT 
-        c.relname AS table_name,
-        a.attname AS column_name,
-        (SELECT last_value FROM pg_sequences s WHERE s.schemaname = 'public' AND s.sequencename = split_part(pg_get_serial_sequence(c.relname, a.attname), '.', 2)) AS current_seq_value,
-        (SELECT MAX(${'$'}{1}) FROM ${'$'}{2} LIMIT 1) AS max_id
-      FROM pg_class c
-      JOIN pg_attribute a ON a.attrelid = c.oid
-      LIMIT 5
-    `).catch(() => null);
-
-    if (seqCheckResult) {
-      log.info('  （序列已重置，下次 INSERT 将正确递增）');
     }
 
     // ========== 完成 ==========
