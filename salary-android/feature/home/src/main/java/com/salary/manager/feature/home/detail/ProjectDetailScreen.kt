@@ -124,10 +124,11 @@ fun ProjectDetailScreen(
         viewModel.loadProject(projectId)
     }
 
-    // 监听成功消息：保存成功时通知上层刷新列表
+    // 监听成功消息：保存成功时通知上层刷新列表，并清除消息避免残留
     LaunchedEffect(successMessage) {
         successMessage?.let {
             onDataChanged()
+            viewModel.clearSuccessMessage()
         }
     }
 
@@ -1009,7 +1010,7 @@ fun SubprojectEditDialog(
     var constructionScheme by remember { mutableStateOf(subproject.constructionPlanName) }
     var length by remember { mutableStateOf(formatNumber(subproject.length / 100.0)) }
     var width by remember { mutableStateOf(formatNumber(subproject.width / 100.0)) }
-    var remark by remember { mutableStateOf("") }
+    var remark by remember { mutableStateOf(subproject.remark ?: "") }
 
     // 计算面积（单位：米）
     val lengthValue = length.toDoubleOrNull() ?: 0.0
@@ -1106,7 +1107,8 @@ fun SubprojectEditDialog(
                     onClick = {
                         onConfirm(lengthValue, widthValue, remark.ifBlank { null })
                     },
-                    enabled = !saving && lengthValue > 0,
+                    // 长度和宽度都必须大于0（面积型方案需要两个维度都有有效值）
+                    enabled = !saving && lengthValue > 0 && widthValue > 0,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = AppColors.Green400,
                         contentColor = Color.White
@@ -1535,12 +1537,18 @@ fun EditProjectDialog(
         }
     }
 
-    // 工程状态选项（不含"已完工"，该状态需通过"确认完工"独立流程触发）
-    val statusOptions = listOf(
-        "preparing" to "备料中",
-        "constructing" to "施工中",
-        "canceled" to "已取消"
-    )
+    // 工程状态选项
+    // 注意："已完工"状态需通过"确认完工"独立流程触发，编辑弹窗中不提供切换到该状态的选项
+    //       但当工程当前状态为"已完工"时，需显示该选项以呈现选中态，避免用户困惑
+    val statusOptions = buildList {
+        add("preparing" to "备料中")
+        add("constructing" to "施工中")
+        add("canceled" to "已取消")
+        // 仅当工程当前状态为已完工时才加入选项，用于显示选中态
+        if (detail.status == "completed") {
+            add("completed" to "已完工")
+        }
+    }
     // 工资分配方式选项
     val distributionOptions = listOf(
         "average" to "平均分配",

@@ -83,7 +83,9 @@ data class SubprojectDto(
     val amount: Double? = null,
     @SerialName("salary_distribution")
     val salaryDistribution: String? = null,
-    val status: String? = null
+    val status: String? = null,
+    /** 子项目备注（后端 SELECT sp.* 返回，null表示无备注） */
+    val remark: String? = null
 )
 
 /**

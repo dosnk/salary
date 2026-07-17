@@ -63,7 +63,9 @@ data class SubprojectUiModel(
     val length: Double,
     val width: Double,
     val quantity: Double,
-    val amount: Double
+    val amount: Double,
+    /** 子项目备注（null表示无备注，编辑弹窗初始化时使用） */
+    val remark: String? = null
 )
 
 /**
@@ -180,7 +182,8 @@ class ProjectDetailViewModel @Inject constructor(
                                 SubprojectUiModel(
                                     it.id, it.spaceTypeName, it.constructionPlanName,
                                     it.length ?: 0.0, it.width ?: 0.0, it.quantity ?: 0.0,
-                                    it.amount ?: 0.0
+                                    it.amount ?: 0.0,
+                                    it.remark
                                 )
                             },
                             files = mappedFiles,
@@ -260,6 +263,9 @@ class ProjectDetailViewModel @Inject constructor(
     ) {
         viewModelScope.launch {
             _savingSubproject.value = true
+            // 清除上一次操作的消息，避免残留的 successMessage 导致弹窗误判保存成功
+            _successMessage.value = null
+            _errorMessage.value = null
             try {
                 // 米转厘米
                 val lengthCm = lengthMeter * 100
@@ -357,6 +363,9 @@ class ProjectDetailViewModel @Inject constructor(
     ) {
         viewModelScope.launch {
             _savingProject.value = true
+            // 清除上一次操作的消息，避免残留的 successMessage 导致弹窗误判保存成功
+            _successMessage.value = null
+            _errorMessage.value = null
             try {
                 // 构造施工人员列表
                 val constructors = constructorIds.map { ConstructorItem(it) }

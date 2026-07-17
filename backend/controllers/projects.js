@@ -116,7 +116,7 @@ const getProjectDetail = async (ctx) => {
  */
 const updateProject = async (ctx) => {
   const { id } = ctx.params;
-  const { name, description, status, salaryDistribution, constructors, totalWorkDays, workerWorkDays } = ctx.request.body;
+  const { name, description, status, salaryDistribution, constructors, totalWorkDays, workerWorkDays, remark } = ctx.request.body;
   const userId = ctx.state.user.id;
 
   try {
@@ -128,6 +128,7 @@ const updateProject = async (ctx) => {
       constructors,
       totalWorkDays,
       workerWorkDays,
+      remark,
     }, userId);
     ctx.success(result);
   } catch (error) {

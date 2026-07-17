@@ -18,7 +18,7 @@ const logger = require('../config/logger');
 const findById = async (id) => {
   const result = await pool.query(
     `SELECT id, name, description, status, COALESCE(total_amount, 0) AS total_amount,
-            salary_distribution, total_work_days, settled_by, created_by,
+            salary_distribution, total_work_days, settled_by, created_by, remark,
             TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
             TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
      FROM projects WHERE id = $1`,
