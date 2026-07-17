@@ -118,28 +118,43 @@ fun ProjectDetailScreen(
     // 收集成功/错误消息状态，用于响应消息变化触发对应副作用
     val successMessage by viewModel.successMessage.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
+    val savingProject by viewModel.savingProject.collectAsState()
+    val savingSubproject by viewModel.savingSubproject.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(projectId) {
         viewModel.loadProject(projectId)
     }
 
+    // 编辑保存流程的标志位：在调用updateProject/updateSubproject前置true，
+    // 在编辑弹窗的LaunchedEffect消费消息后置false。
+    // 外层LaunchedEffect通过此标志位区分"编辑保存消息"与"其他操作消息"，
+    // 避免编辑保存的成功/失败消息被外层误消费为Snackbar或onDataChanged
+    var isEditingSave by remember { mutableStateOf(false) }
+
     // 监听成功消息：保存成功时通知上层刷新列表，并清除消息避免残留
+    // 注意：编辑工程/子项目保存流程中的成功消息由对应弹窗的LaunchedEffect消费为SaveResultDialog，
+    //       此处需跳过保存流程中的消息，避免重复消费
     LaunchedEffect(successMessage) {
         successMessage?.let {
-            onDataChanged()
-            viewModel.clearSuccessMessage()
+            if (!isEditingSave) {
+                onDataChanged()
+                viewModel.clearSuccessMessage()
+            }
         }
     }
 
     // 监听错误消息：操作失败时通过Snackbar提示用户
+    // 注意：编辑工程/子项目保存流程中的错误消息由对应弹窗的LaunchedEffect消费为SaveResultDialog，
+    //       此处需跳过保存流程中的消息，避免重复消费
     LaunchedEffect(errorMessage) {
         errorMessage?.let {
-            snackbarHostState.showSnackbar(it)
-            viewModel.clearErrorMessage()
+            if (!isEditingSave) {
+                snackbarHostState.showSnackbar(it)
+                viewModel.clearErrorMessage()
+            }
         }
     }
-
     Scaffold(
         containerColor = AppColors.Background,
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
@@ -205,6 +220,9 @@ fun ProjectDetailScreen(
                         projectId = projectId,
                         onEdit = onEdit,
                         viewModel = viewModel,
+                        onDataChanged = onDataChanged,
+                        isEditingSave = isEditingSave,
+                        onEditingSaveChange = { isEditingSave = it },
                         modifier = Modifier.padding(padding)
                     )
                 }
@@ -230,6 +248,10 @@ fun ProjectDetailScreen(
 
 /**
  * 工程详情内容区域
+ *
+ * @param onDataChanged 工程数据变更回调（编辑工程/子项目保存成功后触发，通知上层列表刷新）
+ * @param isEditingSave 编辑保存流程标志位（由外层ProjectDetailScreen持有，用于协调消息消费）
+ * @param onEditingSaveChange 编辑保存标志位变更回调
  */
 @Composable
 fun ProjectDetailContent(
@@ -237,6 +259,9 @@ fun ProjectDetailContent(
     projectId: Int,
     onEdit: (Int) -> Unit,
     viewModel: ProjectDetailViewModel,
+    onDataChanged: () -> Unit,
+    isEditingSave: Boolean,
+    onEditingSaveChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     // 子项目编辑弹窗状态
@@ -251,6 +276,10 @@ fun ProjectDetailContent(
     // 当前用户角色（仅施工员可编辑工程/子项目/删除附件，admin/documenter 只读）
     val userRole by viewModel.userRole.collectAsState()
     val canEdit = userRole == "constructor"
+
+    // 保存结果弹窗状态（用于编辑工程/子项目保存后弹窗提示成功/失败）
+    // null 表示不显示弹窗；非 null 时显示对应结果
+    var saveResult by remember { mutableStateOf<SaveResult?>(null) }
 
     // 打开编辑工程弹窗时加载施工人员列表
     LaunchedEffect(showEditProjectDialog) {
@@ -363,10 +392,23 @@ fun ProjectDetailContent(
         LaunchedEffect(savingSubproject) {
             // 保存完成（saving从true变false）且之前正在保存，说明本次保存已结束
             if (prevSaving && !savingSubproject) {
-                // 成功消息非空表示保存成功，关闭弹窗；失败时errorMessage已由Snackbar展示，弹窗保持打开
-                if (viewModel.successMessage.value != null) {
+                val successMsg = viewModel.successMessage.value
+                val errorMsg = viewModel.errorMessage.value
+                if (successMsg != null) {
+                    // 保存成功：关闭编辑弹窗，显示成功提示弹窗
+                    saveResult = SaveResult.Success(successMsg)
                     editingSubproject = null
+                    // 通知上层刷新列表（原外层LaunchedEffect的职责）
+                    onDataChanged()
+                } else if (errorMsg != null) {
+                    // 保存失败：保持编辑弹窗打开（用户可修改后重试），显示失败提示弹窗
+                    saveResult = SaveResult.Failure(errorMsg)
                 }
+                // 成功/失败消息已在弹窗中展示，立即清除避免被外层LaunchedEffect重复消费为Snackbar
+                viewModel.clearSuccessMessage()
+                viewModel.clearErrorMessage()
+                // 重置编辑保存标志位，允许后续非编辑操作的消息走外层Snackbar流程
+                onEditingSaveChange(false)
             }
             prevSaving = savingSubproject
         }
@@ -376,6 +418,8 @@ fun ProjectDetailContent(
             saving = savingSubproject,
             onDismiss = { editingSubproject = null },
             onConfirm = { lengthMeter, widthMeter, remark ->
+                // 标记进入编辑保存流程，阻止外层LaunchedEffect消费本次消息
+                onEditingSaveChange(true)
                 viewModel.updateSubproject(
                     projectId = projectId,
                     subprojectId = sub.id,
@@ -405,10 +449,23 @@ fun ProjectDetailContent(
         var prevSavingProject by remember { mutableStateOf(false) }
         LaunchedEffect(savingProject) {
             if (prevSavingProject && !savingProject) {
-                // 成功消息非空表示保存成功，关闭弹窗；失败时errorMessage已由Snackbar展示，弹窗保持打开
-                if (viewModel.successMessage.value != null) {
+                val successMsg = viewModel.successMessage.value
+                val errorMsg = viewModel.errorMessage.value
+                if (successMsg != null) {
+                    // 保存成功：关闭编辑弹窗，显示成功提示弹窗
+                    saveResult = SaveResult.Success(successMsg)
                     showEditProjectDialog = false
+                    // 通知上层刷新列表（原外层LaunchedEffect的职责）
+                    onDataChanged()
+                } else if (errorMsg != null) {
+                    // 保存失败：保持编辑弹窗打开（用户可修改后重试），显示失败提示弹窗
+                    saveResult = SaveResult.Failure(errorMsg)
                 }
+                // 成功/失败消息已在弹窗中展示，立即清除避免被外层LaunchedEffect重复消费为Snackbar
+                viewModel.clearSuccessMessage()
+                viewModel.clearErrorMessage()
+                // 重置编辑保存标志位，允许后续非编辑操作的消息走外层Snackbar流程
+                onEditingSaveChange(false)
             }
             prevSavingProject = savingProject
         }
@@ -419,6 +476,8 @@ fun ProjectDetailContent(
             saving = savingProject,
             onDismiss = { showEditProjectDialog = false },
             onConfirm = { name, remark, status, salaryDistribution, constructorIds, workerWorkdays ->
+                // 标记进入编辑保存流程，阻止外层LaunchedEffect消费本次消息
+                onEditingSaveChange(true)
                 viewModel.updateProject(
                     projectId = projectId,
                     name = name,
@@ -430,6 +489,15 @@ fun ProjectDetailContent(
                 )
                 // 不在此处关闭弹窗，等待保存成功后由LaunchedEffect自动关闭
             }
+        )
+    }
+
+    // 保存结果提示弹窗（编辑工程/子项目保存成功或失败时显示）
+    // 使用 AlertDialog 替代 Snackbar，提供更明显的反馈和明确的用户确认动作
+    saveResult?.let { result ->
+        SaveResultDialog(
+            result = result,
+            onConfirm = { saveResult = null }
         )
     }
 }
@@ -2027,4 +2095,77 @@ private fun formatNumber(value: String): String {
     } catch (e: Exception) {
         "0.00"
     }
+}
+
+/**
+ * 保存结果密封类
+ *
+ * 用于编辑工程/子项目保存后的结果反馈，区分成功和失败两种状态。
+ * 配合 [SaveResultDialog] 以弹窗形式提示用户，替代原 Snackbar 提示，
+ * 提供更明显的视觉反馈和明确的用户确认动作。
+ *
+ * - [Success]：保存成功，携带成功提示消息
+ * - [Failure]：保存失败，携带失败原因（通常是服务端错误码翻译后的中文提示）
+ */
+sealed class SaveResult {
+    /** 保存成功 */
+    data class Success(val message: String) : SaveResult()
+
+    /** 保存失败 */
+    data class Failure(val message: String) : SaveResult()
+}
+
+/**
+ * 保存结果提示弹窗
+ *
+ * 统一展示编辑工程/子项目的保存结果：
+ * - 成功：绿色标题"保存成功" + 成功消息 + "确认"按钮（绿色）
+ * - 失败：红色标题"保存失败" + 失败原因 + "确认"按钮（红色）
+ *
+ * 用户点击"确认"后通过 [onConfirm] 回调关闭弹窗。
+ * 失败时编辑弹窗保持打开（由调用方控制），用户可修改后重试。
+ *
+ * @param result 保存结果（成功或失败）
+ * @param onConfirm 用户点击确认按钮的回调
+ */
+@Composable
+fun SaveResultDialog(
+    result: SaveResult,
+    onConfirm: () -> Unit
+) {
+    val isSuccess = result is SaveResult.Success
+    val message = when (result) {
+        is SaveResult.Success -> result.message
+        is SaveResult.Failure -> result.message
+    }
+    val titleColor = if (isSuccess) AppColors.Green400 else Color(0xFFE53935)
+    val buttonColor = if (isSuccess) AppColors.Green400 else Color(0xFFE53935)
+
+    AlertDialog(
+        onDismissRequest = onConfirm,
+        title = {
+            Text(
+                text = if (isSuccess) "保存成功" else "保存失败",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = titleColor
+            )
+        },
+        text = {
+            Text(
+                text = message,
+                fontSize = 14.sp,
+                color = AppColors.TextSecondary
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(
+                    "确认",
+                    color = buttonColor,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    )
 }
