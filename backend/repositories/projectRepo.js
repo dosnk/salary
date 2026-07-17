@@ -552,10 +552,13 @@ const addWorkers = async (projectId, workers, client) => {
     return { userId: w.userId, workdays: w.workdays ?? null };
   });
 
-  // 构建参数化批量插入：每个 (project_id, user_id, workdays) 使用独立占位符
-  // workdays 为 null 时只插入 (project_id, user_id)，由数据库填充 DEFAULT 1
-  // （project_workers.workdays 是 NOT NULL DEFAULT 1，显式传 NULL 会违反 NOT NULL 约束）
-  // PostgreSQL 支持同一 VALUES 列表中不同行占位符数量不同：VALUES ($1, $2), ($3, $4, $5)
+  // 构建参数化批量插入：所有行统一3列，workdays 为 null 时使用 DEFAULT 关键字
+  // 关键约束：
+  //   1. project_workers.workdays 是 NOT NULL DEFAULT 1，显式传 NULL 会违反 NOT NULL 约束
+  //   2. PostgreSQL 要求 VALUES 列表中所有行的列数一致（INSERT 指定3列，每行必须3个表达式）
+  // 解决方案：workdays 为 null 时使用 DEFAULT 关键字（不是参数占位符），让数据库填充默认值 1
+  //   VALUES ($1, $2, DEFAULT), ($3, $4, $5)  — 合法
+  //   VALUES ($1, $2), ($3, $4, $5)           — 非法（列数不一致）
   const valuePlaceholders = [];
   const params = [];
   let paramIndex = 1;
@@ -567,8 +570,8 @@ const addWorkers = async (projectId, workers, client) => {
       params.push(projectId, worker.userId, worker.workdays);
       paramIndex += 3;
     } else {
-      // 平均分配模式：不写入工日数，使用数据库默认值 1
-      valuePlaceholders.push(`($${paramIndex}, $${paramIndex + 1})`);
+      // 平均分配模式：使用 DEFAULT 关键字，让数据库填充默认值 1
+      valuePlaceholders.push(`($${paramIndex}, $${paramIndex + 1}, DEFAULT)`);
       params.push(projectId, worker.userId);
       paramIndex += 2;
     }
