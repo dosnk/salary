@@ -868,11 +868,14 @@ const MIGRATIONS = [
       --    原视图每次被 JOIN 都重新计算（CROSS JOIN users + JSONB @> + EXISTS 子查询），数据量大时极慢
       --    物化视图缓存计算结果，通过 REFRESH CONCURRENTLY 异步刷新
       DROP VIEW IF EXISTS v_project_user_settlement_status;
+      -- 注意：使用 DROP + CREATE 而非 CREATE IF NOT EXISTS
+      --       因为上次迁移可能 CREATE 成功但创建唯一索引失败，IF NOT EXISTS 会跳过重建导致定义陈旧
+      DROP MATERIALIZED VIEW IF EXISTS mv_project_user_settlement_status;
 
-      CREATE MATERIALIZED VIEW IF NOT EXISTS mv_project_user_settlement_status AS
+      CREATE MATERIALIZED VIEW mv_project_user_settlement_status AS
       -- 施工人员的结算状态
       SELECT
-        COALESCE(pus.id, ROW_NUMBER() OVER (ORDER BY p.id, u.id)) AS id,
+        ROW_NUMBER() OVER (ORDER BY p.id, u.id) AS id,
         p.id AS project_id,
         u.id AS user_id,
         COALESCE(
@@ -896,15 +899,27 @@ const MIGRATIONS = [
       JOIN project_workers pw ON pw.project_id = p.id
       JOIN users u ON u.id = pw.user_id
       LEFT JOIN project_user_status pus ON pus.project_id = p.id AND pus.user_id = u.id
-      LEFT JOIN wage_settlements ws ON
-        ws.user_id = u.id
-        AND (ws.project_id = p.id OR ws.project_ids::jsonb @> to_jsonb(p.id))
+      -- 关键修复：用 LATERAL + LIMIT 1 取最新一条结算单
+      -- 原因：wage_settlements 的 UNIQUE 约束是 (user_id, settled_at, settlement_no)，
+      --       一个 user 对一个 project 可能有多条结算单（单工程结算 + 多工程结算），
+      --       直接 LEFT JOIN 会产生一对多行膨胀，导致 (project_id, user_id) 重复，
+      --       唯一索引 idx_mv_puss_project_user 创建失败
+      LEFT JOIN LATERAL (
+        SELECT id, settled_at
+        FROM wage_settlements
+        WHERE user_id = u.id
+          AND (project_id = p.id OR project_ids::jsonb @> to_jsonb(p.id))
+        ORDER BY settled_at DESC NULLS LAST, id DESC
+        LIMIT 1
+      ) ws ON true
       UNION
       -- 管理员和资料员可以查看所有工程
-      -- 注意：排除已经是该工程施工人员的管理员/资料员，避免与第一部分数据重叠
-      --       重叠会导致 (project_id, user_id) 重复，唯一索引创建失败
+      -- 注意1：排除已经是该工程施工人员的管理员/资料员，避免与第一部分数据重叠
+      --        重叠会导致 (project_id, user_id) 重复，唯一索引创建失败
+      -- 注意2：第二部分 id 加 100000 偏移，避免与第一部分 ROW_NUMBER 冲突
+      --        （业务规模不会超过 10 万条施工人员记录，偏移量足够安全）
       SELECT
-        COALESCE(pus.id, ROW_NUMBER() OVER (ORDER BY p.id, u.id) + 100000) AS id,
+        ROW_NUMBER() OVER (ORDER BY p.id, u.id) + 100000 AS id,
         p.id AS project_id,
         u.id AS user_id,
         COALESCE(
@@ -927,9 +942,14 @@ const MIGRATIONS = [
       FROM projects p
       CROSS JOIN users u
       LEFT JOIN project_user_status pus ON pus.project_id = p.id AND pus.user_id = u.id
-      LEFT JOIN wage_settlements ws ON
-        ws.user_id = u.id
-        AND (ws.project_id = p.id OR ws.project_ids::jsonb @> to_jsonb(p.id))
+      LEFT JOIN LATERAL (
+        SELECT id, settled_at
+        FROM wage_settlements
+        WHERE user_id = u.id
+          AND (project_id = p.id OR project_ids::jsonb @> to_jsonb(p.id))
+        ORDER BY settled_at DESC NULLS LAST, id DESC
+        LIMIT 1
+      ) ws ON true
       WHERE u.role IN ('admin', 'documenter')
         AND NOT EXISTS (
           SELECT 1 FROM project_workers pw2
