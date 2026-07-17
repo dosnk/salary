@@ -17,6 +17,25 @@ const logger = require('../config/logger');
 const { isAdmin, isConstructor } = require('../middleware/rbac');
 
 /**
+ * 异步刷新物化视图（不阻塞当前操作，失败只记录日志）
+ * 工程状态变更后调用，确保结算状态数据立即更新
+ * （物化视图 mv_project_user_settlement_status 依赖工程状态计算 settlement_status，
+ *   不触发刷新则最长5分钟后才更新，导致用户看到陈旧状态）
+ */
+let refreshMvAsync;
+try {
+  const { refreshMaterializedView } = require('../scripts/refresh-mv');
+  refreshMvAsync = () => {
+    refreshMaterializedView().catch(err => {
+      logger.warn('工程状态变更后刷新物化视图失败', { error: err.message });
+    });
+  };
+} catch (e) {
+  // refresh-mv.js 不存在时降级为空函数，不影响主流程
+  refreshMvAsync = () => {};
+}
+
+/**
  * 业务异常类
  * Controller 层捕获后调用 ctx.fail(error.code, error.message)
  */
@@ -499,14 +518,19 @@ module.exports = {
       await projectRepo.updateWorkerWorkDays(projectId, updates.workerWorkDays);
     }
 
+    // 工程状态是否变更（用于判断是否需要刷新物化视图）
+    let statusChanged = false;
+
     // 工程完工时同步子项目状态
     if (updates.status === 'completed' && project.status !== 'completed') {
       await projectRepo.updateSubprojectsStatus(projectId, 'completed');
+      statusChanged = true;
     }
 
     // 工程从已完成恢复为其他状态时，子项目恢复为施工中
     if (project.status === 'completed' && updates.status && updates.status !== 'completed') {
       await projectRepo.updateSubprojectsStatus(projectId, 'constructing');
+      statusChanged = true;
     }
 
     // 添加历史记录
@@ -514,6 +538,12 @@ module.exports = {
 
     // 清除缓存
     await invalidateCache(userId);
+
+    // 工程状态变更后异步刷新物化视图（不阻塞响应，失败仅记日志）
+    // settlement_status 依赖工程 status 计算（completed → settling），需立即刷新避免数据陈旧
+    if (statusChanged) {
+      refreshMvAsync();
+    }
 
     logger.info('更新工程成功', { projectId, userId });
 
