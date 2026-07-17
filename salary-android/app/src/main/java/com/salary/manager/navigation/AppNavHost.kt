@@ -112,13 +112,10 @@ fun AppNavHost() {
         healthMonitor.start()
     }
 
-    // 后端离线时自动退出登录
-    LaunchedEffect(isOnline) {
-        if (!isOnline && isAuthenticated) {
-            tokenStorage.clearTokens()
-            userStorage.clearUserInfo()
-        }
-    }
+    // 注意：后端离线状态(isOnline=false)仅作为UI提示，不再自动清除会话
+    // 原实现会在任意一次网络抖动时清除token，导致"不定期自动退出登录"
+    // 会话失效只能由 AuthInterceptor 检测到 401 且 refresh_token 刷新失败时触发
+    // （即 tokenStorage.isAuthenticated 流转为 false，下方 isAuthenticated 分支会自动跳转登录页）
 
     if (isChecking) {
         // 加载中
