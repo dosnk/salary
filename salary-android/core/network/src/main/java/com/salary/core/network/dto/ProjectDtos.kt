@@ -23,6 +23,8 @@ data class ProjectDto(
     /** 子项目列表（列表接口已聚合返回，避免N+1详情请求；字段名与详情接口一致） */
     @SerialName("sub_projects")
     val subprojects: List<SubprojectDto> = emptyList(),
+    /** 工程备注（列表接口返回，用于卡片预览；null表示无备注） */
+    val remark: String? = null,
     val description: String? = null,
     @SerialName("created_by")
     val createdBy: Int? = null,

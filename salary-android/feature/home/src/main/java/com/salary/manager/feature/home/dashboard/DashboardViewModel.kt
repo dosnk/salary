@@ -63,7 +63,9 @@ data class ProjectHistoryUiModel(
     val fileCount: Int,
     val createdAt: String,
     val updatedAt: String,
-    val subprojects: List<SubprojectUiModel>
+    val subprojects: List<SubprojectUiModel>,
+    /** 工程备注（null或空白表示无备注，卡片中不显示备注预览行） */
+    val remark: String? = null
 )
 
 /**
@@ -524,7 +526,8 @@ class DashboardViewModel @Inject constructor(
             fileCount = dto.filesCount,
             createdAt = dto.createdAt,
             updatedAt = dto.updatedAt,
-            subprojects = dto.subprojects.map { mapToSubprojectModel(it) }
+            subprojects = dto.subprojects.map { mapToSubprojectModel(it) },
+            remark = dto.remark
         )
     }
 

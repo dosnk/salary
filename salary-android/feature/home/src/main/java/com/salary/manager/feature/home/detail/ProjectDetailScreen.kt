@@ -473,11 +473,9 @@ fun ProjectInfoSection(detail: ProjectDetailUiModel) {
             // 工资分配方式 - Tag标签
             DistributionCellRow(detail.salaryDistribution)
             HorizontalDivider(color = AppColors.Green100, thickness = 0.5.dp)
-            // 工程备注
-            if (!detail.remark.isNullOrBlank()) {
-                CellRow(label = "工程备注", value = detail.remark)
-                HorizontalDivider(color = AppColors.Green100, thickness = 0.5.dp)
-            }
+            // 工程备注 - 独立块状展示（标签在上，内容在下，占整行宽度）
+            RemarkBlock(remark = detail.remark)
+            HorizontalDivider(color = AppColors.Green100, thickness = 0.5.dp)
             // 状态 - Tag标签
             StatusCellRow(detail.status)
             HorizontalDivider(color = AppColors.Green100, thickness = 0.5.dp)
@@ -520,6 +518,66 @@ fun CellRow(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f, fill = false)
         )
+    }
+}
+
+/**
+ * 工程备注块 - 独立块状展示（标签在上，内容在下，占整行宽度）
+ *
+ * 与CellRow的左右布局不同，备注是描述性长文本，采用上下布局更合适：
+ * - 标签"工程备注"灰色小字在上
+ * - 内容在下，占整行宽度，默认最多3行省略，点击可展开查看全部
+ * - 空备注显示"暂无备注"灰色斜体占位，避免用户误以为系统缺失备注显示
+ *
+ * @param remark 工程备注内容，null或空白表示无备注
+ */
+@Composable
+fun RemarkBlock(remark: String?) {
+    // 备注展开状态：默认折叠（最多3行），点击内容区切换展开/折叠
+    var expanded by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        // 标签行
+        Text(
+            text = "工程备注",
+            fontSize = 14.sp,
+            color = AppColors.TextSecondary
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        if (remark.isNullOrBlank()) {
+            // 空备注占位：灰色斜体提示，避免用户以为系统缺失备注显示
+            Text(
+                text = "暂无备注",
+                fontSize = 14.sp,
+                color = AppColors.TextTertiary,
+                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+            )
+        } else {
+            // 备注内容：折叠时最多3行省略，展开后显示全部
+            Text(
+                text = remark,
+                fontSize = 14.sp,
+                color = AppColors.TextPrimary,
+                maxLines = if (expanded) Int.MAX_VALUE else 3,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.clickable { expanded = !expanded }
+            )
+            // 超过3行时显示展开/收起提示
+            // 通过简单判断备注长度来决定是否显示提示（避免Layout计算）
+            if (remark.length > 60) {
+                Text(
+                    text = if (expanded) "收起" else "展开全部",
+                    fontSize = 12.sp,
+                    color = AppColors.Green400,
+                    modifier = Modifier
+                        .clickable { expanded = !expanded }
+                        .padding(top = 2.dp)
+                )
+            }
+        }
     }
 }
 

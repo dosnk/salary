@@ -73,6 +73,22 @@ fun ProjectCard(
             // 信息区：人员 + 分配方式（单行紧凑布局）
             InfoSection(project = project)
 
+            // 工程备注预览（单行省略，空备注不显示，保持卡片紧凑）
+            if (!project.remark.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = "📝", fontSize = 13.sp)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = project.remark,
+                        fontSize = 12.sp,
+                        color = AppColors.TextTertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.height(18.dp))
 
             // 按钮区：状态按钮 + 查看详情（并排两按钮）

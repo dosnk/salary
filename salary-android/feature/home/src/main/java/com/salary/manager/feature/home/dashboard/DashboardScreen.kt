@@ -1115,6 +1115,25 @@ private fun ProjectHistoryCard(
             Spacer(modifier = Modifier.height(6.dp))
         }
 
+        // 工程备注预览（单行省略，空备注不显示，保持卡片紧凑）
+        if (!project.remark.isNullOrBlank()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(vertical = 2.dp)
+            ) {
+                Text(text = "📝", fontSize = 13.sp)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = project.remark,
+                    fontSize = 12.sp,
+                    color = AppColors.TextTertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+        }
+
         // 底部信息行：施工人员(左) + 时间(右)，包裹在水平滚动容器中，支持横向滑动查看
         ProjectInfoScrollRow(
             workerNames = project.workerNames,

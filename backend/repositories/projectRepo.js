@@ -181,6 +181,7 @@ const listWithFilters = async (filters) => {
       p.status,
       COALESCE(p.total_amount, 0) AS total_amount,
       p.salary_distribution,
+      p.remark,
       p.created_by,
       TO_CHAR(p.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
       TO_CHAR(p.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at,

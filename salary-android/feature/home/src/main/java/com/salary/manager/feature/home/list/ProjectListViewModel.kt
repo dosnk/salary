@@ -40,7 +40,9 @@ data class ProjectUiModel(
     /** 预格式化的总工日文本（如"15 天"） */
     val totalWorkdaysText: String = "0 天",
     /** 预格式化的工费总额文本（如"¥12,345.00"） */
-    val totalAmountText: String = "¥0.00"
+    val totalAmountText: String = "¥0.00",
+    /** 工程备注（null或空白表示无备注，卡片中不显示备注预览行） */
+    val remark: String? = null
 )
 
 /**
@@ -210,7 +212,8 @@ class ProjectListViewModel @Inject constructor(
                                 dto.workers.joinToString("、") { it.nickname }
                             } else "待填写",
                             totalWorkdaysText = "${totalWorkdays.toInt()} 天",
-                            totalAmountText = AmountFormatter.format(totalAmountStr)
+                            totalAmountText = AmountFormatter.format(totalAmountStr),
+                            remark = dto.remark
                         )
                     }
 
