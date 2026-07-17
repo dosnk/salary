@@ -48,10 +48,9 @@ const login = async (ctx) => {
       'string.pattern.base': '用户名必须是2-10位中文字符',
       'any.required': '用户名不能为空'
     }),
-    password: Joi.string().min(6).max(20).pattern(/^(?=.*[A-Za-z])(?=.*\d).+$/).required().messages({
+    password: Joi.string().min(6).max(20).required().messages({
       'string.min': '密码最少6位',
       'string.max': '密码最多20位',
-      'string.pattern.base': '密码必须包含字母和数字',
       'any.required': '密码不能为空'
     })
   });
@@ -241,10 +240,9 @@ const register = async (ctx) => {
       'string.pattern.base': '用户名必须是2-10位中文字符',
       'any.required': '用户名不能为空'
     }),
-    password: Joi.string().min(6).max(20).pattern(/^(?=.*[A-Za-z])(?=.*\d).+$/).required().messages({
+    password: Joi.string().min(6).max(20).required().messages({
       'string.min': '密码最少6位',
       'string.max': '密码最多20位',
-      'string.pattern.base': '密码必须包含字母和数字',
       'any.required': '密码不能为空'
     }),
     phone: Joi.string().pattern(/^1[3-9]\d{9}$/).required().messages({

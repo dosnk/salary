@@ -405,16 +405,14 @@ const updateProfileSchema = Joi.object({
 });
 
 const changePasswordSchema = Joi.object({
-  old_password: Joi.string().min(6).max(20).pattern(/^(?=.*[A-Za-z])(?=.*\d).+$/).required().messages({
+  old_password: Joi.string().min(6).max(20).required().messages({
     'string.min': '密码长度至少6位',
     'string.max': '密码长度最多20位',
-    'string.pattern.base': '密码必须包含字母和数字',
     'any.required': '旧密码不能为空'
   }),
-  new_password: Joi.string().min(6).max(20).pattern(/^(?=.*[A-Za-z])(?=.*\d).+$/).required().messages({
+  new_password: Joi.string().min(6).max(20).required().messages({
     'string.min': '密码长度至少6位',
     'string.max': '密码长度最多20位',
-    'string.pattern.base': '密码必须包含字母和数字',
     'any.required': '新密码不能为空'
   })
 });
@@ -425,10 +423,9 @@ const createUserSchema = Joi.object({
     'string.max': '用户名长度最多50位',
     'any.required': '用户名不能为空'
   }),
-  password: Joi.string().min(6).max(20).pattern(/^(?=.*[A-Za-z])(?=.*\d).+$/).required().messages({
+  password: Joi.string().min(6).max(20).required().messages({
     'string.min': '密码长度至少6位',
     'string.max': '密码长度最多20位',
-    'string.pattern.base': '密码必须包含字母和数字',
     'any.required': '密码不能为空'
   }),
   nickname: Joi.string().min(2).max(50).allow('').optional(),
@@ -440,10 +437,9 @@ const createUserSchema = Joi.object({
 
 const resetPasswordSchema = Joi.object({
   id: Joi.number().integer().positive().required(),
-  new_password: Joi.string().min(6).max(20).pattern(/^(?=.*[A-Za-z])(?=.*\d).+$/).required().messages({
+  new_password: Joi.string().min(6).max(20).required().messages({
     'string.min': '密码长度至少6位',
     'string.max': '密码长度最多20位',
-    'string.pattern.base': '密码必须包含字母和数字',
     'any.required': '新密码不能为空'
   })
 });
