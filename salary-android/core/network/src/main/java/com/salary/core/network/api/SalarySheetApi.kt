@@ -94,7 +94,8 @@ data class SalaryProjectDto(
     @SerialName("salary_distribution")
     val salaryDistribution: String = "",
     val subprojects: List<SubprojectDto> = emptyList(),
-    @SerialName("plan_quantities")
+    // 后端返回字段名为驼峰 planQuantities（非 snake_case），需与后端对齐
+    @SerialName("planQuantities")
     val planQuantities: Map<String, PlanQuantityDto> = emptyMap()
 )
 
