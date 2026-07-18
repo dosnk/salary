@@ -4,7 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,7 +23,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -252,13 +250,7 @@ fun StatisticsDashboardScreen(
                         when (page) {
                             0 -> {
                                 // 统计内容区域
-                                // 创建共享的横向滚动状态（结算单表格所有行共享，确保列对齐）
-                                val tableScrollState = rememberScrollState()
-                                // 计算表格固定总宽度（资料员/管理员无选择列：序号36 + 工程名100 + 方案72*n + 总额64）
-                                // 施工员有选择列：选择48 + 序号36 + 工程名100 + 方案72*n + 总额64
-                                val tableWidth = remember(constructionPlans.size, canSettle) {
-                    ((if (canSettle) 48 else 0) + 36 + 100 + 72 * constructionPlans.size + 64).dp
-                }
+                                // 表格各列采用 weight 自适应填满容器宽度，无需横向滚动
 
                                 LazyColumn(
                                     modifier = Modifier.fillMaxSize()
@@ -341,22 +333,19 @@ fun StatisticsDashboardScreen(
                                     } else {
                                         val allSelected = selectedProjectIds.size == projectData.size && projectData.isNotEmpty()
 
-                                        // 表头行（横向可滚动，共享 tableScrollState）
+                                        // 表头行
                                         item(key = "settlement_table_header") {
-                                            Box(
+                                            Column(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .background(Color.White)
-                                                    .horizontalScroll(tableScrollState)
                                             ) {
-                                                Column(Modifier.width(tableWidth)) {
-                                                    TableHeaderRow(
-                                                        constructionPlans = constructionPlans,
-                                                        allSelected = allSelected,
-                                                        canSettle = canSettle,
-                                                        onToggleSelectAll = onToggleSelectAll
-                                                    )
-                                                }
+                                                TableHeaderRow(
+                                                    constructionPlans = constructionPlans,
+                                                    allSelected = allSelected,
+                                                    canSettle = canSettle,
+                                                    onToggleSelectAll = onToggleSelectAll
+                                                )
                                             }
                                         }
 
@@ -367,36 +356,33 @@ fun StatisticsDashboardScreen(
                                         ) { index, project ->
                                             val isSelected = selectedProjectIds.contains(project.id)
                                             val isExpanded = expandedProjects.contains(project.id)
-                                            Box(
+                                            Column(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .background(Color.White)
-                                                    .horizontalScroll(tableScrollState)
                                             ) {
-                                                Column(Modifier.width(tableWidth)) {
-                                                    ProjectDataRow(
-                                                        index = index,
-                                                        project = project,
-                                                        constructionPlans = constructionPlans,
-                                                        isSelected = isSelected,
-                                                        isExpanded = isExpanded,
-                                                        canSettle = canSettle,
-                                                        onToggleSelection = { onToggleProjectSelection(project.id, it) },
-                                                        onToggleExpand = { onToggleProjectExpand(project.id) },
-                                                        getUnitName = getUnitName,
-                                                        formatNumber = formatNumber
-                                                    )
-                                                    // 展开的子项目明细行
-                                                    AnimatedVisibility(visible = isExpanded) {
-                                                        Column {
-                                                            project.subprojects.forEach { sub ->
-                                                                SubprojectRow(
-                                                                    subproject = sub,
-                                                                    constructionPlans = constructionPlans,
-                                                                    canSettle = canSettle,
-                                                                    getUnitName = getUnitName
-                                                                )
-                                                            }
+                                                ProjectDataRow(
+                                                    index = index,
+                                                    project = project,
+                                                    constructionPlans = constructionPlans,
+                                                    isSelected = isSelected,
+                                                    isExpanded = isExpanded,
+                                                    canSettle = canSettle,
+                                                    onToggleSelection = { onToggleProjectSelection(project.id, it) },
+                                                    onToggleExpand = { onToggleProjectExpand(project.id) },
+                                                    getUnitName = getUnitName,
+                                                    formatNumber = formatNumber
+                                                )
+                                                // 展开的子项目明细行
+                                                AnimatedVisibility(visible = isExpanded) {
+                                                    Column {
+                                                        project.subprojects.forEach { sub ->
+                                                            SubprojectRow(
+                                                                subproject = sub,
+                                                                constructionPlans = constructionPlans,
+                                                                canSettle = canSettle,
+                                                                getUnitName = getUnitName
+                                                            )
                                                         }
                                                     }
                                                 }
@@ -405,47 +391,44 @@ fun StatisticsDashboardScreen(
 
                                         // 尾部行（合计/单价/总计/预支/总额）
                                         item(key = "settlement_table_footer") {
-                                            Box(
+                                            Column(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .background(Color.White, RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
-                                                    .horizontalScroll(tableScrollState)
                                             ) {
-                                                Column(Modifier.width(tableWidth)) {
-                                                    TotalRow(
-                                                        constructionPlans = constructionPlans,
-                                                        planTotals = calculationResult.planTotals,
-                                                        canSettle = canSettle,
-                                                        getUnitName = getUnitName,
-                                                        formatNumber = formatNumber
-                                                    )
-                                                    PriceRow(
-                                                        constructionPlans = constructionPlans,
-                                                        canSettle = canSettle,
-                                                        getUnitName = getUnitName
-                                                    )
-                                                    GrandTotalRow(
-                                                        constructionPlans = constructionPlans,
-                                                        planTotals = calculationResult.planTotals,
-                                                        grandTotal = calculationResult.grandTotal,
-                                                        canSettle = canSettle,
-                                                        formatNumber = formatNumber
-                                                    )
-                                                    calculationResult.advances.forEach { advance ->
-                                                        AdvanceRow(
-                                                            advance = advance,
-                                                            planCount = constructionPlans.size,
-                                                            canSettle = canSettle,
-                                                            formatNumber = formatNumber
-                                                        )
-                                                    }
-                                                    FinalTotalRow(
-                                                        finalTotal = calculationResult.finalTotal,
+                                                TotalRow(
+                                                    constructionPlans = constructionPlans,
+                                                    planTotals = calculationResult.planTotals,
+                                                    canSettle = canSettle,
+                                                    getUnitName = getUnitName,
+                                                    formatNumber = formatNumber
+                                                )
+                                                PriceRow(
+                                                    constructionPlans = constructionPlans,
+                                                    canSettle = canSettle,
+                                                    getUnitName = getUnitName
+                                                )
+                                                GrandTotalRow(
+                                                    constructionPlans = constructionPlans,
+                                                    planTotals = calculationResult.planTotals,
+                                                    grandTotal = calculationResult.grandTotal,
+                                                    canSettle = canSettle,
+                                                    formatNumber = formatNumber
+                                                )
+                                                calculationResult.advances.forEach { advance ->
+                                                    AdvanceRow(
+                                                        advance = advance,
                                                         planCount = constructionPlans.size,
                                                         canSettle = canSettle,
                                                         formatNumber = formatNumber
                                                     )
                                                 }
+                                                FinalTotalRow(
+                                                    finalTotal = calculationResult.finalTotal,
+                                                    planCount = constructionPlans.size,
+                                                    canSettle = canSettle,
+                                                    formatNumber = formatNumber
+                                                )
                                             }
                                         }
                                     }
@@ -952,31 +935,25 @@ fun SettlementSheetHeader(
 }
 
 /**
- * 表格内竖向分隔线绘制
+ * 单元格右边框（用于形成表格内竖线）
  *
- * 在 Row 上按列宽累积位置画竖线，形成单元格分隔效果（内边框）。
- * 仅画竖线，横线由 Row 自身的 border 提供。
+ * 配合 Modifier.weight(1f) 自适应宽度使用，在单元格右侧画竖线，
+ * 多个单元格组合形成完整的内边框分隔效果。
  *
- * @param widths 各列宽度列表（dp），按从左到右顺序；最后一列不画线
- * @param color 竖线颜色（默认浅灰，与外边框区分）
+ * @param width 边框宽度（默认0.5dp）
+ * @param color 边框颜色（默认浅灰，与外边框区分）
  */
-fun Modifier.drawVerticalLines(
-    widths: List<Dp>,
+fun Modifier.rightBorder(
+    width: Dp = 0.5.dp,
     color: Color = Color(0xFFE5E7EB)
 ): Modifier = this.drawBehind {
-    var xOffset = 0f
-    for (width in widths) {
-        xOffset += width.toPx()
-        // 最后一列右侧不画线（避免与外边框重叠）
-        if (xOffset < size.width - 1f) {
-            drawLine(
-                color = color,
-                start = Offset(xOffset, 0f),
-                end = Offset(xOffset, size.height),
-                strokeWidth = 1.dp.toPx()
-            )
-        }
-    }
+    val borderWidth = width.toPx()
+    drawLine(
+        color = color,
+        start = Offset(size.width, 0f),
+        end = Offset(size.width, size.height),
+        strokeWidth = borderWidth
+    )
 }
 
 /**
@@ -1026,25 +1003,22 @@ fun TableHeaderRow(
     val headerGradient = Brush.horizontalGradient(
         colors = listOf(Color(0xFFF9FAFB), Color(0xFFF3F4F6))
     )
-    // 各列宽度（用于绘制内竖线）：选择列48(可选)+序号36+工程名100+各方案72
-    val columnWidths = buildList {
-        if (canSettle) add(48.dp)
-        add(36.dp)
-        add(100.dp)
-        constructionPlans.forEach { add(72.dp) }
-    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(headerGradient)
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
-            .drawVerticalLines(columnWidths)
             .padding(vertical = 8.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 选择列 —— 资料员/管理员不可结算时隐藏 Checkbox
         if (canSettle) {
-            Box(modifier = Modifier.width(48.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .rightBorder(),
+                contentAlignment = Alignment.Center
+            ) {
                 Checkbox(
                     checked = allSelected,
                     onCheckedChange = { onToggleSelectAll() },
@@ -1054,16 +1028,31 @@ fun TableHeaderRow(
             }
         }
         // 序号
-        Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .rightBorder(),
+            contentAlignment = Alignment.Center
+        ) {
             Text("序号", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
         // 工程名称
-        Box(modifier = Modifier.width(100.dp), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .weight(2f)
+                .rightBorder(),
+            contentAlignment = Alignment.Center
+        ) {
             Text("工程名称", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
-        // 各施工方案列
-        constructionPlans.forEach { plan ->
-            Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
+        // 各施工方案列（最后一个方案列不画右边框，与总额列之间由总额列画线）
+        constructionPlans.forEachIndexed { index, plan ->
+            Box(
+                modifier = Modifier
+                    .weight(1.5f)
+                    .rightBorder(),
+                contentAlignment = Alignment.Center
+            ) {
                 Text(
                     plan.name,
                     fontSize = 12.sp,
@@ -1075,8 +1064,11 @@ fun TableHeaderRow(
                 )
             }
         }
-        // 总额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        // 总额（最后一列，不画右边框避免与外边框重叠）
+        Box(
+            modifier = Modifier.weight(1.5f),
+            contentAlignment = Alignment.Center
+        ) {
             Text("总额", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
     }
@@ -1099,25 +1091,22 @@ fun ProjectDataRow(
     formatNumber: (Double?) -> String
 ) {
     val bgColor = if (!isSelected) Color(0xFFF5F5F5) else Color.White
-    // 各列宽度（用于绘制内竖线）：选择列48(可选)+序号36+工程名100+各方案72
-    val columnWidths = buildList {
-        if (canSettle) add(48.dp)
-        add(36.dp)
-        add(100.dp)
-        constructionPlans.forEach { add(72.dp) }
-    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(bgColor)
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
-            .drawVerticalLines(columnWidths)
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 选择列 —— 资料员/管理员不可结算时隐藏 Checkbox
         if (canSettle) {
-            Box(modifier = Modifier.width(48.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .rightBorder(),
+                contentAlignment = Alignment.Center
+            ) {
                 Checkbox(
                     checked = isSelected,
                     onCheckedChange = onToggleSelection,
@@ -1127,13 +1116,19 @@ fun ProjectDataRow(
             }
         }
         // 序号
-        Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .rightBorder(),
+            contentAlignment = Alignment.Center
+        ) {
             Text("${index + 1}", fontSize = 12.sp, color = Color(0xFF333333))
         }
         // 工程名称（可展开，单行省略避免换行撑高行高）
         Box(
             modifier = Modifier
-                .width(100.dp)
+                .weight(2f)
+                .rightBorder()
                 .clickable { onToggleExpand() },
             contentAlignment = Alignment.CenterStart
         ) {
@@ -1156,7 +1151,12 @@ fun ProjectDataRow(
         // 各施工方案列
         // 子项目未展开时显示该工程在该方案下的合计数量，展开时显示"-"（明细行已显示各自数量）
         constructionPlans.forEach { plan ->
-            Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .weight(1.5f)
+                    .rightBorder(),
+                contentAlignment = Alignment.Center
+            ) {
                 if (!isExpanded) {
                     val planQty = project.planQuantities[plan.id.toString()]
                     if (planQty != null && planQty.totalQuantity > 0) {
@@ -1176,7 +1176,10 @@ fun ProjectDataRow(
         }
         // 总额
         // 子项目未展开时显示该工程的合计金额（各方案金额之和），展开时显示"-"（明细行已显示金额）
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier.weight(1.5f),
+            contentAlignment = Alignment.Center
+        ) {
             if (!isExpanded) {
                 val projectTotalAmount = project.planQuantities.values.sumOf { it.totalAmount }
                 if (projectTotalAmount > 0) {
@@ -1209,30 +1212,25 @@ fun SubprojectRow(
     canSettle: Boolean = true,
     getUnitName: (String?) -> String
 ) {
-    // 各列宽度（用于绘制内竖线）：选择列48(可选)+序号36+子项目名100+各方案72
-    val columnWidths = buildList {
-        if (canSettle) add(48.dp)
-        add(36.dp)
-        add(100.dp)
-        constructionPlans.forEach { add(72.dp) }
-    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFFF8FAFC))
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
-            .drawVerticalLines(columnWidths)
             .padding(vertical = 4.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 空选择列 —— 资料员/管理员不可结算时无此列
         if (canSettle) {
-            Box(modifier = Modifier.width(48.dp))
+            Box(modifier = Modifier.weight(1f).rightBorder())
         }
         // 空序号
-        Box(modifier = Modifier.width(36.dp))
+        Box(modifier = Modifier.weight(1f).rightBorder())
         // 子项目名称（允许多行显示，完整展示内容）
-        Box(modifier = Modifier.width(100.dp), contentAlignment = Alignment.CenterStart) {
+        Box(
+            modifier = Modifier.weight(2f).rightBorder(),
+            contentAlignment = Alignment.CenterStart
+        ) {
             Text(
                 "${subproject.spaceTypeName} - ${subproject.planName}",
                 fontSize = 11.sp,
@@ -1245,7 +1243,10 @@ fun SubprojectRow(
         }
         // 各施工方案列
         constructionPlans.forEach { plan ->
-            Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier.weight(1.5f).rightBorder(),
+                contentAlignment = Alignment.Center
+            ) {
                 if (subproject.planId == plan.id) {
                     Text(
                         "${String.format("%.2f", subproject.userQuantity)}${getUnitName(plan.unit)}",
@@ -1259,7 +1260,7 @@ fun SubprojectRow(
             }
         }
         // 总额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.weight(1.5f), contentAlignment = Alignment.Center) {
             Text("-", fontSize = 11.sp, color = Color(0xFFCCCCCC))
         }
     }
@@ -1275,27 +1276,27 @@ fun PriceRow(
     canSettle: Boolean = true,
     getUnitName: (String?) -> String
 ) {
-    // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
-    val columnWidths = buildList {
-        add(if (canSettle) 184.dp else 136.dp)
-        constructionPlans.forEach { add(72.dp) }
-    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFFF5F5F5))
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
-            .drawVerticalLines(columnWidths)
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
-        Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
+        // 合并前3列（选择+序号+工程名，weight=1+1+2=4）
+        Box(
+            modifier = Modifier.weight(4f).rightBorder(),
+            contentAlignment = Alignment.CenterStart
+        ) {
             Text("单价", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Color(0xFF666666))
         }
         // 各方案单价
         constructionPlans.forEach { plan ->
-            Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier.weight(1.5f).rightBorder(),
+                contentAlignment = Alignment.Center
+            ) {
                 Text(
                     "¥${plan.price ?: 0}/${getUnitName(plan.unit)}",
                     fontSize = 11.sp,
@@ -1306,7 +1307,7 @@ fun PriceRow(
             }
         }
         // 总额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.weight(1.5f), contentAlignment = Alignment.Center) {
             Text("-", fontSize = 11.sp, color = Color(0xFF999999))
         }
     }
@@ -1327,27 +1328,27 @@ fun TotalRow(
     val blueGradient = Brush.horizontalGradient(
         colors = listOf(Color(0xFFDBEAFE), Color(0xFFBFDBFE))
     )
-    // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
-    val columnWidths = buildList {
-        add(if (canSettle) 184.dp else 136.dp)
-        constructionPlans.forEach { add(72.dp) }
-    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(blueGradient)
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
-            .drawVerticalLines(columnWidths)
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
-        Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
+        // 合并前3列（选择+序号+工程名，weight=1+1+2=4）
+        Box(
+            modifier = Modifier.weight(4f).rightBorder(),
+            contentAlignment = Alignment.CenterStart
+        ) {
             Text("合计", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF))
         }
         // 各方案合计
         constructionPlans.forEach { plan ->
-            Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier.weight(1.5f).rightBorder(),
+                contentAlignment = Alignment.Center
+            ) {
                 val total = planTotals[plan.id.toString()]
                 if (total != null && total.totalQuantity > 0) {
                     Text(
@@ -1363,7 +1364,7 @@ fun TotalRow(
             }
         }
         // 总额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.weight(1.5f), contentAlignment = Alignment.Center) {
             Text("-", fontSize = 12.sp, color = Color(0xFF1E40AF))
         }
     }
@@ -1384,27 +1385,27 @@ fun GrandTotalRow(
     val greenGradientRow = Brush.horizontalGradient(
         colors = listOf(Color(0xFFD4EDDA), Color(0xFFC3E6CB))
     )
-    // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
-    val columnWidths = buildList {
-        add(if (canSettle) 184.dp else 136.dp)
-        constructionPlans.forEach { add(72.dp) }
-    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(greenGradientRow)
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
-            .drawVerticalLines(columnWidths)
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
-        Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
+        // 合并前3列（选择+序号+工程名，weight=1+1+2=4）
+        Box(
+            modifier = Modifier.weight(4f).rightBorder(),
+            contentAlignment = Alignment.CenterStart
+        ) {
             Text("总计", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF))
         }
         // 各方案总计金额
         constructionPlans.forEach { plan ->
-            Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier.weight(1.5f).rightBorder(),
+                contentAlignment = Alignment.Center
+            ) {
                 val total = planTotals[plan.id.toString()]
                 if (total != null && total.totalAmount > 0) {
                     Text(
@@ -1420,7 +1421,7 @@ fun GrandTotalRow(
             }
         }
         // 总额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.weight(1.5f), contentAlignment = Alignment.Center) {
             Text(
                 "¥${formatNumber(grandTotal)}",
                 fontSize = 12.sp,
@@ -1445,23 +1446,19 @@ fun AdvanceRow(
     val yellowGradient = Brush.horizontalGradient(
         colors = listOf(Color(0xFFFEF3C7), Color(0xFFFDE68A))
     )
-    // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
-    val columnWidths = buildList {
-        add(if (canSettle) 184.dp else 136.dp)
-        repeat(planCount) { add(72.dp) }
-    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(yellowGradient)
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
-            .drawVerticalLines(columnWidths)
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 日期+预支标签（格式：2026.06.22预支）
-        // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
-        Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
+        // 合并前3列（选择+序号+工程名，weight=1+1+2=4）
+        Box(
+            modifier = Modifier.weight(4f).rightBorder(),
+            contentAlignment = Alignment.CenterStart
+        ) {
             Text(
                 "${formatAdvanceDate(advance.advanceDate)}预支",
                 fontSize = 12.sp,
@@ -1471,12 +1468,15 @@ fun AdvanceRow(
         }
         // 各方案列（显示-）
         repeat(planCount) {
-            Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier.weight(1.5f).rightBorder(),
+                contentAlignment = Alignment.Center
+            ) {
                 Text("-", fontSize = 12.sp, color = Color(0xFF92400E))
             }
         }
         // 预支金额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.weight(1.5f), contentAlignment = Alignment.Center) {
             Text(
                 "¥${formatNumber(advance.advanceAmount)}",
                 fontSize = 12.sp,
@@ -1501,32 +1501,32 @@ fun FinalTotalRow(
     val pinkGradient = Brush.horizontalGradient(
         colors = listOf(Color(0xFFFCE4EC), Color(0xFFFADBD8))
     )
-    // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
-    val columnWidths = buildList {
-        add(if (canSettle) 184.dp else 136.dp)
-        repeat(planCount) { add(72.dp) }
-    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(pinkGradient)
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
-            .drawVerticalLines(columnWidths)
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 总额标签（合并前3列：施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
-        Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
+        // 总额标签（合并前3列：选择+序号+工程名，weight=1+1+2=4）
+        Box(
+            modifier = Modifier.weight(4f).rightBorder(),
+            contentAlignment = Alignment.CenterStart
+        ) {
             Text("总额", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF))
         }
         // 各方案列（显示-）
         repeat(planCount) {
-            Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier.weight(1.5f).rightBorder(),
+                contentAlignment = Alignment.Center
+            ) {
                 Text("-", fontSize = 12.sp, color = Color(0xFF1E40AF))
             }
         }
         // 最终总额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.weight(1.5f), contentAlignment = Alignment.Center) {
             Text(
                 "¥${formatNumber(finalTotal)}",
                 fontSize = 12.sp,
@@ -1925,17 +1925,15 @@ fun SettlementHistoryTable(
     getUnitName: (String?) -> String,
     formatNumber: (Double?) -> String
 ) {
-    val scrollState = rememberScrollState()
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color.White, RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
     ) {
+        // 表格各列采用 weight 自适应填满容器宽度，无需横向滚动
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(scrollState)
         ) {
             // 历史表头（无选择列）
             HistoryHeaderRow(constructionPlans = constructionPlans)
@@ -2031,32 +2029,34 @@ fun HistoryHeaderRow(
     val headerGradient = Brush.horizontalGradient(
         colors = listOf(Color(0xFFF9FAFB), Color(0xFFF3F4F6))
     )
-    // 各列宽度（用于绘制内竖线）：序号36+工程名148+各方案72
-    val columnWidths = buildList {
-        add(36.dp)
-        add(148.dp)
-        constructionPlans.forEach { add(72.dp) }
-    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(headerGradient)
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
-            .drawVerticalLines(columnWidths)
             .padding(vertical = 8.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 序号
-        Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier.weight(1f).rightBorder(),
+            contentAlignment = Alignment.Center
+        ) {
             Text("序号", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
-        // 工程名称（宽度148dp，与TotalRow等合并宽度184dp对齐：36+148=184）
-        Box(modifier = Modifier.width(148.dp), contentAlignment = Alignment.Center) {
+        // 工程名称（weight=3，与TotalRow等合并列weight=4对齐：1+3=4）
+        Box(
+            modifier = Modifier.weight(3f).rightBorder(),
+            contentAlignment = Alignment.Center
+        ) {
             Text("工程名称", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
         // 各施工方案列
         constructionPlans.forEach { plan ->
-            Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier.weight(1.5f).rightBorder(),
+                contentAlignment = Alignment.Center
+            ) {
                 Text(
                     plan.name,
                     fontSize = 12.sp,
@@ -2069,7 +2069,7 @@ fun HistoryHeaderRow(
             }
         }
         // 总额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.weight(1.5f), contentAlignment = Alignment.Center) {
             Text("总额", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
     }
@@ -2089,29 +2089,26 @@ fun HistoryProjectDataRow(
     getUnitName: (String?) -> String,
     formatNumber: (Double?) -> String
 ) {
-    // 各列宽度（用于绘制内竖线）：序号36+工程名148+各方案72
-    val columnWidths = buildList {
-        add(36.dp)
-        add(148.dp)
-        constructionPlans.forEach { add(72.dp) }
-    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color.White)
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
-            .drawVerticalLines(columnWidths)
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 序号
-        Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier.weight(1f).rightBorder(),
+            contentAlignment = Alignment.Center
+        ) {
             Text("${index + 1}", fontSize = 12.sp, color = Color(0xFF333333))
         }
-        // 工程名称（可展开，宽度148dp与表头一致，单行省略避免换行撑高行高）
+        // 工程名称（可展开，weight=3与表头对齐，单行省略避免换行撑高行高）
         Box(
             modifier = Modifier
-                .width(148.dp)
+                .weight(3f)
+                .rightBorder()
                 .clickable { onToggleExpand() },
             contentAlignment = Alignment.CenterStart
         ) {
@@ -2134,7 +2131,10 @@ fun HistoryProjectDataRow(
         // 各施工方案列
         // 子项目未展开时显示该工程在该方案下的合计数量，展开时显示"-"（明细行已显示各自数量）
         constructionPlans.forEach { plan ->
-            Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier.weight(1.5f).rightBorder(),
+                contentAlignment = Alignment.Center
+            ) {
                 if (!isExpanded) {
                     val planQty = project.planQuantities[plan.id.toString()]
                     if (planQty != null && planQty.totalQuantity > 0) {
@@ -2154,7 +2154,7 @@ fun HistoryProjectDataRow(
         }
         // 总额
         // 子项目未展开时显示该工程的合计金额（各方案金额之和），展开时显示"-"（明细行已显示金额）
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.weight(1.5f), contentAlignment = Alignment.Center) {
             if (!isExpanded) {
                 val projectTotalAmount = project.planQuantities.values.sumOf { it.totalAmount }
                 if (projectTotalAmount > 0) {
@@ -2186,25 +2186,21 @@ fun HistorySubprojectRow(
     constructionPlans: List<ConstructionPlanDto>,
     getUnitName: (String?) -> String
 ) {
-    // 各列宽度（用于绘制内竖线）：序号36+子项目名148+各方案72
-    val columnWidths = buildList {
-        add(36.dp)
-        add(148.dp)
-        constructionPlans.forEach { add(72.dp) }
-    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFFF8FAFC))
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
-            .drawVerticalLines(columnWidths)
             .padding(vertical = 4.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 空序号
-        Box(modifier = Modifier.width(36.dp))
-        // 子项目名称（宽度148dp，与工程名称列对齐；允许多行显示，完整展示内容）
-        Box(modifier = Modifier.width(148.dp), contentAlignment = Alignment.CenterStart) {
+        Box(modifier = Modifier.weight(1f).rightBorder())
+        // 子项目名称（weight=3与工程名称列对齐；允许多行显示，完整展示内容）
+        Box(
+            modifier = Modifier.weight(3f).rightBorder(),
+            contentAlignment = Alignment.CenterStart
+        ) {
             Text(
                 "${subproject.spaceTypeName} - ${subproject.planName}",
                 fontSize = 11.sp,
@@ -2217,7 +2213,10 @@ fun HistorySubprojectRow(
         }
         // 各施工方案列
         constructionPlans.forEach { plan ->
-            Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier.weight(1.5f).rightBorder(),
+                contentAlignment = Alignment.Center
+            ) {
                 if (subproject.planId == plan.id) {
                     Text(
                         "${String.format("%.2f", subproject.userQuantity)}${getUnitName(plan.unit)}",
@@ -2231,7 +2230,7 @@ fun HistorySubprojectRow(
             }
         }
         // 总额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.weight(1.5f), contentAlignment = Alignment.Center) {
             Text("-", fontSize = 11.sp, color = Color(0xFFCCCCCC))
         }
     }
