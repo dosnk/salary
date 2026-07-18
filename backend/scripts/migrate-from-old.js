@@ -158,6 +158,42 @@ function parseCopyStatement(copyStmt) {
 }
 
 /**
+ * 旧库 → 新库 字段单位/格式转换规则
+ *
+ * 背景：旧库 subprojects.length/width 存储单位为"米"，新库存储单位为"厘米"
+ *       新库 calculation.js 计算 quantity 时会 length / 100 转回米
+ *       所以迁移时需将旧库的米值乘以 100 转为厘米
+ *
+ * 规则：
+ *   - subprojects.length 乘以 100（米 → 厘米）
+ *   - subprojects.width  乘以 100（米 → 厘米）
+ *   - subprojects.quantity/amount 保持不变（旧库已是基于米的正确值）
+ *
+ * @param {string} tableName - 表名
+ * @param {string[]|null} columns - 列名数组
+ * @param {Array} values - 值数组
+ * @returns {Array} 转换后的值数组
+ */
+function transformValues(tableName, columns, values) {
+  // 仅 subprojects 表需要转换 length/width
+  if (tableName !== 'subprojects' || !columns) {
+    return values;
+  }
+
+  return values.map((value, index) => {
+    const column = columns[index];
+    // length 和 width 乘以 100（米 → 厘米），NULL 保持 NULL
+    if ((column === 'length' || column === 'width') && value !== null && value !== '') {
+      const numValue = parseFloat(value);
+      if (!isNaN(numValue)) {
+        return numValue * 100;
+      }
+    }
+    return value;
+  });
+}
+
+/**
  * 将值数组转换为 SQL INSERT 语句
  *
  * @param {string} tableName - 表名
@@ -166,15 +202,18 @@ function parseCopyStatement(copyStmt) {
  * @returns {string} INSERT 语句
  */
 function buildInsertStatement(tableName, columns, values) {
+  // 应用字段转换规则（如 subprojects.length/width 单位换算）
+  const transformedValues = transformValues(tableName, columns, values);
+
   // 处理列名
   const columnList = columns ? `(${columns.join(', ')})` : '';
 
   // 处理值（参数化）
-  const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
+  const placeholders = transformedValues.map((_, i) => `$${i + 1}`).join(', ');
 
   return {
     text: `INSERT INTO ${tableName} ${columnList} VALUES (${placeholders})`.replace(/\s+/g, ' ').trim(),
-    values: values
+    values: transformedValues
   };
 }
 
