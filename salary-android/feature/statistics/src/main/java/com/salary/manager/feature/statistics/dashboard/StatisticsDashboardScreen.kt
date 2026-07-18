@@ -1,11 +1,14 @@
 package com.salary.manager.feature.statistics.dashboard
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -66,6 +69,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -1026,11 +1031,11 @@ fun TableHeaderRow(
     val headerGradient = Brush.horizontalGradient(
         colors = listOf(Color(0xFFF9FAFB), Color(0xFFF3F4F6))
     )
-    // 各列宽度（用于绘制内竖线）：选择列48(可选)+序号36+工程名100+各方案72
+    // 各列宽度（用于绘制内竖线）：选择列48(可选)+序号36+工程名130+各方案72
     val columnWidths = buildList {
         if (canSettle) add(48.dp)
         add(36.dp)
-        add(100.dp)
+        add(130.dp)
         constructionPlans.forEach { add(72.dp) }
     }
     Row(
@@ -1057,8 +1062,8 @@ fun TableHeaderRow(
         Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {
             Text("序号", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
-        // 工程名称
-        Box(modifier = Modifier.width(100.dp), contentAlignment = Alignment.Center) {
+        // 工程名称（加宽至130dp，配合 Middle 省略号保留首尾关键信息）
+        Box(modifier = Modifier.width(130.dp), contentAlignment = Alignment.Center) {
             Text("工程名称", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
         // 各施工方案列
@@ -1084,7 +1089,16 @@ fun TableHeaderRow(
 
 /**
  * 工程数据行
+ *
+ * 工程名交互：
+ * - 单击：展开/折叠子项目明细
+ * - 长按：弹出完整工程名弹窗（含复制按钮），避免超长工程名被省略号截断后无法查看完整内容
+ *
+ * 工程名显示策略：
+ * - 列宽 130dp（加宽，原100dp），更多空间显示工程名
+ * - 单行省略号，长按弹窗查看完整名称
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ProjectDataRow(
     index: Int,
@@ -1099,13 +1113,17 @@ fun ProjectDataRow(
     formatNumber: (Double?) -> String
 ) {
     val bgColor = if (!isSelected) Color(0xFFF5F5F5) else Color.White
-    // 各列宽度（用于绘制内竖线）：选择列48(可选)+序号36+工程名100+各方案72
+    // 各列宽度（用于绘制内竖线）：选择列48(可选)+序号36+工程名130+各方案72
     val columnWidths = buildList {
         if (canSettle) add(48.dp)
         add(36.dp)
-        add(100.dp)
+        add(130.dp)
         constructionPlans.forEach { add(72.dp) }
     }
+    // 长按工程名弹窗状态（显示完整工程名 + 复制按钮）
+    var showFullNameDialog by remember { mutableStateOf(false) }
+    val clipboardManager = LocalClipboardManager.current
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1130,11 +1148,15 @@ fun ProjectDataRow(
         Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {
             Text("${index + 1}", fontSize = 12.sp, color = Color(0xFF333333))
         }
-        // 工程名称（可展开，单行省略避免换行撑高行高）
+        // 工程名称（单击展开/折叠，长按查看完整名称）
+        // 列宽加宽至130dp，长按弹窗查看完整名称
         Box(
             modifier = Modifier
-                .width(100.dp)
-                .clickable { onToggleExpand() },
+                .width(130.dp)
+                .combinedClickable(
+                    onClick = { onToggleExpand() },
+                    onLongClick = { showFullNameDialog = true }
+                ),
             contentAlignment = Alignment.CenterStart
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1195,6 +1217,18 @@ fun ProjectDataRow(
             }
         }
     }
+
+    // 长按工程名弹窗：显示完整工程名 + 复制按钮
+    if (showFullNameDialog) {
+        ProjectNameDetailDialog(
+            projectName = project.projectName,
+            onDismiss = { showFullNameDialog = false },
+            onCopy = {
+                clipboardManager.setText(AnnotatedString(project.projectName))
+                showFullNameDialog = false
+            }
+        )
+    }
 }
 
 /**
@@ -1209,11 +1243,11 @@ fun SubprojectRow(
     canSettle: Boolean = true,
     getUnitName: (String?) -> String
 ) {
-    // 各列宽度（用于绘制内竖线）：选择列48(可选)+序号36+子项目名100+各方案72
+    // 各列宽度（用于绘制内竖线）：选择列48(可选)+序号36+子项目名130+各方案72
     val columnWidths = buildList {
         if (canSettle) add(48.dp)
         add(36.dp)
-        add(100.dp)
+        add(130.dp)
         constructionPlans.forEach { add(72.dp) }
     }
     Row(
@@ -1231,8 +1265,8 @@ fun SubprojectRow(
         }
         // 空序号
         Box(modifier = Modifier.width(36.dp))
-        // 子项目名称（允许多行显示，完整展示内容）
-        Box(modifier = Modifier.width(100.dp), contentAlignment = Alignment.CenterStart) {
+        // 子项目名称（加宽至130dp，配合多行显示完整内容）
+        Box(modifier = Modifier.width(130.dp), contentAlignment = Alignment.CenterStart) {
             Text(
                 "${subproject.spaceTypeName} - ${subproject.planName}",
                 fontSize = 11.sp,
@@ -1277,7 +1311,7 @@ fun PriceRow(
 ) {
     // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
     val columnWidths = buildList {
-        add(if (canSettle) 184.dp else 136.dp)
+        add(if (canSettle) 214.dp else 166.dp)
         constructionPlans.forEach { add(72.dp) }
     }
     Row(
@@ -1290,7 +1324,7 @@ fun PriceRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
-        Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
+        Box(modifier = Modifier.width(if (canSettle) 214.dp else 166.dp), contentAlignment = Alignment.CenterStart) {
             Text("单价", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Color(0xFF666666))
         }
         // 各方案单价
@@ -1329,7 +1363,7 @@ fun TotalRow(
     )
     // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
     val columnWidths = buildList {
-        add(if (canSettle) 184.dp else 136.dp)
+        add(if (canSettle) 214.dp else 166.dp)
         constructionPlans.forEach { add(72.dp) }
     }
     Row(
@@ -1342,7 +1376,7 @@ fun TotalRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
-        Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
+        Box(modifier = Modifier.width(if (canSettle) 214.dp else 166.dp), contentAlignment = Alignment.CenterStart) {
             Text("合计", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF))
         }
         // 各方案合计
@@ -1386,7 +1420,7 @@ fun GrandTotalRow(
     )
     // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
     val columnWidths = buildList {
-        add(if (canSettle) 184.dp else 136.dp)
+        add(if (canSettle) 214.dp else 166.dp)
         constructionPlans.forEach { add(72.dp) }
     }
     Row(
@@ -1399,7 +1433,7 @@ fun GrandTotalRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
-        Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
+        Box(modifier = Modifier.width(if (canSettle) 214.dp else 166.dp), contentAlignment = Alignment.CenterStart) {
             Text("总计", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF))
         }
         // 各方案总计金额
@@ -1447,7 +1481,7 @@ fun AdvanceRow(
     )
     // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
     val columnWidths = buildList {
-        add(if (canSettle) 184.dp else 136.dp)
+        add(if (canSettle) 214.dp else 166.dp)
         repeat(planCount) { add(72.dp) }
     }
     Row(
@@ -1461,7 +1495,7 @@ fun AdvanceRow(
     ) {
         // 日期+预支标签（格式：2026.06.22预支）
         // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
-        Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
+        Box(modifier = Modifier.width(if (canSettle) 214.dp else 166.dp), contentAlignment = Alignment.CenterStart) {
             Text(
                 "${formatAdvanceDate(advance.advanceDate)}预支",
                 fontSize = 12.sp,
@@ -1503,7 +1537,7 @@ fun FinalTotalRow(
     )
     // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
     val columnWidths = buildList {
-        add(if (canSettle) 184.dp else 136.dp)
+        add(if (canSettle) 214.dp else 166.dp)
         repeat(planCount) { add(72.dp) }
     }
     Row(
@@ -1516,7 +1550,7 @@ fun FinalTotalRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 总额标签（合并前3列：施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
-        Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
+        Box(modifier = Modifier.width(if (canSettle) 214.dp else 166.dp), contentAlignment = Alignment.CenterStart) {
             Text("总额", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF))
         }
         // 各方案列（显示-）
@@ -2022,7 +2056,7 @@ fun SettlementHistoryTable(
 
 /**
  * 历史表头行（无选择列）
- * 注意：前两列总宽 = 36 + 148 = 184dp，与 TotalRow/GrandTotalRow/PriceRow 的"合并前3列"宽度一致，确保列对齐
+ * 注意：前两列总宽 = 36 + 170 = 206dp，与 TotalRow/GrandTotalRow/PriceRow 的"合并前3列"宽度一致，确保列对齐
  */
 @Composable
 fun HistoryHeaderRow(
@@ -2031,10 +2065,10 @@ fun HistoryHeaderRow(
     val headerGradient = Brush.horizontalGradient(
         colors = listOf(Color(0xFFF9FAFB), Color(0xFFF3F4F6))
     )
-    // 各列宽度（用于绘制内竖线）：序号36+工程名148+各方案72
+    // 各列宽度（用于绘制内竖线）：序号36+工程名170+各方案72
     val columnWidths = buildList {
         add(36.dp)
-        add(148.dp)
+        add(170.dp)
         constructionPlans.forEach { add(72.dp) }
     }
     Row(
@@ -2050,8 +2084,8 @@ fun HistoryHeaderRow(
         Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {
             Text("序号", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
-        // 工程名称（宽度148dp，与TotalRow等合并宽度184dp对齐：36+148=184）
-        Box(modifier = Modifier.width(148.dp), contentAlignment = Alignment.Center) {
+        // 工程名称（宽度170dp，与TotalRow等合并宽度206dp对齐：36+170=206）
+        Box(modifier = Modifier.width(170.dp), contentAlignment = Alignment.Center) {
             Text("工程名称", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
         // 各施工方案列
@@ -2077,8 +2111,16 @@ fun HistoryHeaderRow(
 
 /**
  * 历史工程数据行（无选择列）
- * 注意：工程名称宽度148dp，前两列总宽184dp与合计/总计行对齐
+ *
+ * 工程名交互：
+ * - 单击：展开/折叠子项目明细
+ * - 长按：弹出完整工程名弹窗（含复制按钮），避免超长工程名被省略号截断后无法查看完整内容
+ *
+ * 工程名显示策略：
+ * - 列宽 170dp（加宽，原148dp），更多空间显示工程名
+ * - 单行省略号，长按弹窗查看完整名称
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun HistoryProjectDataRow(
     index: Int,
@@ -2089,12 +2131,16 @@ fun HistoryProjectDataRow(
     getUnitName: (String?) -> String,
     formatNumber: (Double?) -> String
 ) {
-    // 各列宽度（用于绘制内竖线）：序号36+工程名148+各方案72
+    // 各列宽度（用于绘制内竖线）：序号36+工程名170+各方案72
     val columnWidths = buildList {
         add(36.dp)
-        add(148.dp)
+        add(170.dp)
         constructionPlans.forEach { add(72.dp) }
     }
+    // 长按工程名弹窗状态（显示完整工程名 + 复制按钮）
+    var showFullNameDialog by remember { mutableStateOf(false) }
+    val clipboardManager = LocalClipboardManager.current
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -2108,11 +2154,15 @@ fun HistoryProjectDataRow(
         Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {
             Text("${index + 1}", fontSize = 12.sp, color = Color(0xFF333333))
         }
-        // 工程名称（可展开，宽度148dp与表头一致，单行省略避免换行撑高行高）
+        // 工程名称（单击展开/折叠，长按查看完整名称）
+        // 列宽加宽至170dp，长按弹窗查看完整名称
         Box(
             modifier = Modifier
-                .width(148.dp)
-                .clickable { onToggleExpand() },
+                .width(170.dp)
+                .combinedClickable(
+                    onClick = { onToggleExpand() },
+                    onLongClick = { showFullNameDialog = true }
+                ),
             contentAlignment = Alignment.CenterStart
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2173,11 +2223,23 @@ fun HistoryProjectDataRow(
             }
         }
     }
+
+    // 长按工程名弹窗：显示完整工程名 + 复制按钮
+    if (showFullNameDialog) {
+        ProjectNameDetailDialog(
+            projectName = project.projectName,
+            onDismiss = { showFullNameDialog = false },
+            onCopy = {
+                clipboardManager.setText(AnnotatedString(project.projectName))
+                showFullNameDialog = false
+            }
+        )
+    }
 }
 
 /**
  * 历史子项目明细行（无选择列）
- * 前2列合并宽度 = 36 + 148 = 184dp，与 TotalRow/GrandTotalRow/PriceRow 对齐
+ * 前2列合并宽度 = 36 + 170 = 206dp，与 TotalRow/GrandTotalRow/PriceRow 对齐
  * 名称列允许多行显示，避免"空间类型 - 施工方案"较长时被省略号截断显示不完整
  */
 @Composable
@@ -2186,10 +2248,10 @@ fun HistorySubprojectRow(
     constructionPlans: List<ConstructionPlanDto>,
     getUnitName: (String?) -> String
 ) {
-    // 各列宽度（用于绘制内竖线）：序号36+子项目名148+各方案72
+    // 各列宽度（用于绘制内竖线）：序号36+子项目名170+各方案72
     val columnWidths = buildList {
         add(36.dp)
-        add(148.dp)
+        add(170.dp)
         constructionPlans.forEach { add(72.dp) }
     }
     Row(
@@ -2203,8 +2265,8 @@ fun HistorySubprojectRow(
     ) {
         // 空序号
         Box(modifier = Modifier.width(36.dp))
-        // 子项目名称（宽度148dp，与工程名称列对齐；允许多行显示，完整展示内容）
-        Box(modifier = Modifier.width(148.dp), contentAlignment = Alignment.CenterStart) {
+        // 子项目名称（宽度170dp，与工程名称列对齐；允许多行显示，完整展示内容）
+        Box(modifier = Modifier.width(170.dp), contentAlignment = Alignment.CenterStart) {
             Text(
                 "${subproject.spaceTypeName} - ${subproject.planName}",
                 fontSize = 11.sp,
@@ -2235,6 +2297,67 @@ fun HistorySubprojectRow(
             Text("-", fontSize = 11.sp, color = Color(0xFFCCCCCC))
         }
     }
+}
+
+// ========== 工程名详情弹窗 ==========
+
+/**
+ * 工程名详情弹窗
+ *
+ * 用于表格中长按工程名时显示完整工程名（避免超长工程名被省略号截断后无法查看完整内容）。
+ * 弹窗支持滚动以适应任意长度的工程名，并提供"复制"按钮复制到系统剪贴板。
+ *
+ * @param projectName 完整工程名
+ * @param onDismiss 关闭弹窗回调
+ * @param onCopy 点击复制按钮回调（由调用方实现剪贴板写入）
+ */
+@Composable
+fun ProjectNameDetailDialog(
+    projectName: String,
+    onDismiss: () -> Unit,
+    onCopy: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "工程名称",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = AppColors.TextPrimary
+            )
+        },
+        text = {
+            // 工程名可能极长，使用 verticalScroll 支持滚动查看完整内容
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 60.dp, max = 280.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    text = projectName,
+                    fontSize = 15.sp,
+                    color = AppColors.TextPrimary,
+                    lineHeight = 22.sp
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onCopy()
+                }
+            ) {
+                Text("复制", color = AppColors.Green400, fontWeight = FontWeight.Medium)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭", color = AppColors.TextSecondary)
+            }
+        }
+    )
 }
 
 // ========== 统计卡片弹窗工程列表 ==========
