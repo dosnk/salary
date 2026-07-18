@@ -61,12 +61,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -949,6 +952,34 @@ fun SettlementSheetHeader(
 }
 
 /**
+ * 表格内竖向分隔线绘制
+ *
+ * 在 Row 上按列宽累积位置画竖线，形成单元格分隔效果（内边框）。
+ * 仅画竖线，横线由 Row 自身的 border 提供。
+ *
+ * @param widths 各列宽度列表（dp），按从左到右顺序；最后一列不画线
+ * @param color 竖线颜色（默认浅灰，与外边框区分）
+ */
+fun Modifier.drawVerticalLines(
+    widths: List<Dp>,
+    color: Color = Color(0xFFE5E7EB)
+): Modifier = this.drawBehind {
+    var xOffset = 0f
+    for (width in widths) {
+        xOffset += width.toPx()
+        // 最后一列右侧不画线（避免与外边框重叠）
+        if (xOffset < size.width - 1f) {
+            drawLine(
+                color = color,
+                start = Offset(xOffset, 0f),
+                end = Offset(xOffset, size.height),
+                strokeWidth = 1.dp.toPx()
+            )
+        }
+    }
+}
+
+/**
  * 结算单/历史标题栏 - 绿色渐变背景
  * 注意：左侧标题使用weight(1f)占满剩余空间并单行省略，
  *       右侧内容保持紧凑单行，避免内容过多时换行导致标题栏超高
@@ -995,11 +1026,19 @@ fun TableHeaderRow(
     val headerGradient = Brush.horizontalGradient(
         colors = listOf(Color(0xFFF9FAFB), Color(0xFFF3F4F6))
     )
+    // 各列宽度（用于绘制内竖线）：选择列48(可选)+序号36+工程名100+各方案72
+    val columnWidths = buildList {
+        if (canSettle) add(48.dp)
+        add(36.dp)
+        add(100.dp)
+        constructionPlans.forEach { add(72.dp) }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(headerGradient)
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
+            .drawVerticalLines(columnWidths)
             .padding(vertical = 8.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1060,11 +1099,19 @@ fun ProjectDataRow(
     formatNumber: (Double?) -> String
 ) {
     val bgColor = if (!isSelected) Color(0xFFF5F5F5) else Color.White
+    // 各列宽度（用于绘制内竖线）：选择列48(可选)+序号36+工程名100+各方案72
+    val columnWidths = buildList {
+        if (canSettle) add(48.dp)
+        add(36.dp)
+        add(100.dp)
+        constructionPlans.forEach { add(72.dp) }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(bgColor)
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
+            .drawVerticalLines(columnWidths)
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1083,7 +1130,7 @@ fun ProjectDataRow(
         Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {
             Text("${index + 1}", fontSize = 12.sp, color = Color(0xFF333333))
         }
-        // 工程名称（可展开）
+        // 工程名称（可展开，单行省略避免换行撑高行高）
         Box(
             modifier = Modifier
                 .width(100.dp)
@@ -1101,7 +1148,7 @@ fun ProjectDataRow(
                     project.projectName,
                     fontSize = 12.sp,
                     color = Color(0xFF333333),
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -1162,11 +1209,19 @@ fun SubprojectRow(
     canSettle: Boolean = true,
     getUnitName: (String?) -> String
 ) {
+    // 各列宽度（用于绘制内竖线）：选择列48(可选)+序号36+子项目名100+各方案72
+    val columnWidths = buildList {
+        if (canSettle) add(48.dp)
+        add(36.dp)
+        add(100.dp)
+        constructionPlans.forEach { add(72.dp) }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFFF8FAFC))
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
+            .drawVerticalLines(columnWidths)
             .padding(vertical = 4.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1220,11 +1275,17 @@ fun PriceRow(
     canSettle: Boolean = true,
     getUnitName: (String?) -> String
 ) {
+    // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
+    val columnWidths = buildList {
+        add(if (canSettle) 184.dp else 136.dp)
+        constructionPlans.forEach { add(72.dp) }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFFF5F5F5))
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
+            .drawVerticalLines(columnWidths)
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1266,11 +1327,17 @@ fun TotalRow(
     val blueGradient = Brush.horizontalGradient(
         colors = listOf(Color(0xFFDBEAFE), Color(0xFFBFDBFE))
     )
+    // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
+    val columnWidths = buildList {
+        add(if (canSettle) 184.dp else 136.dp)
+        constructionPlans.forEach { add(72.dp) }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(blueGradient)
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
+            .drawVerticalLines(columnWidths)
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1317,11 +1384,17 @@ fun GrandTotalRow(
     val greenGradientRow = Brush.horizontalGradient(
         colors = listOf(Color(0xFFD4EDDA), Color(0xFFC3E6CB))
     )
+    // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
+    val columnWidths = buildList {
+        add(if (canSettle) 184.dp else 136.dp)
+        constructionPlans.forEach { add(72.dp) }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(greenGradientRow)
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
+            .drawVerticalLines(columnWidths)
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1372,11 +1445,17 @@ fun AdvanceRow(
     val yellowGradient = Brush.horizontalGradient(
         colors = listOf(Color(0xFFFEF3C7), Color(0xFFFDE68A))
     )
+    // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
+    val columnWidths = buildList {
+        add(if (canSettle) 184.dp else 136.dp)
+        repeat(planCount) { add(72.dp) }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(yellowGradient)
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
+            .drawVerticalLines(columnWidths)
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1422,11 +1501,17 @@ fun FinalTotalRow(
     val pinkGradient = Brush.horizontalGradient(
         colors = listOf(Color(0xFFFCE4EC), Color(0xFFFADBD8))
     )
+    // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
+    val columnWidths = buildList {
+        add(if (canSettle) 184.dp else 136.dp)
+        repeat(planCount) { add(72.dp) }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(pinkGradient)
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
+            .drawVerticalLines(columnWidths)
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1946,11 +2031,18 @@ fun HistoryHeaderRow(
     val headerGradient = Brush.horizontalGradient(
         colors = listOf(Color(0xFFF9FAFB), Color(0xFFF3F4F6))
     )
+    // 各列宽度（用于绘制内竖线）：序号36+工程名148+各方案72
+    val columnWidths = buildList {
+        add(36.dp)
+        add(148.dp)
+        constructionPlans.forEach { add(72.dp) }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(headerGradient)
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
+            .drawVerticalLines(columnWidths)
             .padding(vertical = 8.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1997,11 +2089,18 @@ fun HistoryProjectDataRow(
     getUnitName: (String?) -> String,
     formatNumber: (Double?) -> String
 ) {
+    // 各列宽度（用于绘制内竖线）：序号36+工程名148+各方案72
+    val columnWidths = buildList {
+        add(36.dp)
+        add(148.dp)
+        constructionPlans.forEach { add(72.dp) }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color.White)
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
+            .drawVerticalLines(columnWidths)
             .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -2009,7 +2108,7 @@ fun HistoryProjectDataRow(
         Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {
             Text("${index + 1}", fontSize = 12.sp, color = Color(0xFF333333))
         }
-        // 工程名称（可展开，宽度148dp与表头一致）
+        // 工程名称（可展开，宽度148dp与表头一致，单行省略避免换行撑高行高）
         Box(
             modifier = Modifier
                 .width(148.dp)
@@ -2027,7 +2126,7 @@ fun HistoryProjectDataRow(
                     project.projectName,
                     fontSize = 12.sp,
                     color = Color(0xFF333333),
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -2087,11 +2186,18 @@ fun HistorySubprojectRow(
     constructionPlans: List<ConstructionPlanDto>,
     getUnitName: (String?) -> String
 ) {
+    // 各列宽度（用于绘制内竖线）：序号36+子项目名148+各方案72
+    val columnWidths = buildList {
+        add(36.dp)
+        add(148.dp)
+        constructionPlans.forEach { add(72.dp) }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFFF8FAFC))
             .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
+            .drawVerticalLines(columnWidths)
             .padding(vertical = 4.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
