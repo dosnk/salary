@@ -1123,8 +1123,24 @@ fun ProjectDataRow(
             }
         }
         // 总额
+        // 子项目未展开时显示该工程的合计金额（各方案金额之和），展开时显示"-"（明细行已显示金额）
         Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
-            Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+            if (!isExpanded) {
+                val projectTotalAmount = project.planQuantities.values.sumOf { it.totalAmount }
+                if (projectTotalAmount > 0) {
+                    Text(
+                        "¥${formatNumber(projectTotalAmount)}",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF1E40AF),
+                        textAlign = TextAlign.Center
+                    )
+                } else {
+                    Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+                }
+            } else {
+                Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+            }
         }
     }
 }
@@ -2028,8 +2044,24 @@ fun HistoryProjectDataRow(
             }
         }
         // 总额
+        // 子项目未展开时显示该工程的合计金额（各方案金额之和），展开时显示"-"（明细行已显示金额）
         Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
-            Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+            if (!isExpanded) {
+                val projectTotalAmount = project.planQuantities.values.sumOf { it.totalAmount }
+                if (projectTotalAmount > 0) {
+                    Text(
+                        "¥${formatNumber(projectTotalAmount)}",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF1E40AF),
+                        textAlign = TextAlign.Center
+                    )
+                } else {
+                    Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+                }
+            } else {
+                Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+            }
         }
     }
 }
