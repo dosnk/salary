@@ -517,12 +517,25 @@ class StatisticsDashboardViewModel @Inject constructor(
                 // 获取施工方案列表（从已加载的数据中）
                 val plans = _constructionPlans.value
 
+                // 从历史展开状态中解析当前结算单的展开工程ID集合
+                // key 格式为 "settlementId-projectId"，筛选当前结算单的已展开工程
+                val expandedProjectIds = _expandedHistoryProjects.value
+                    .mapNotNull { key ->
+                        val parts = key.split("-")
+                        if (parts.size == 2 && parts[0] == settlement.settlementId.toString()) {
+                            parts[1].toIntOrNull()
+                        } else null
+                    }
+                    .toSet()
+
                 // 在IO线程生成图片（自动分页，返回多页Bitmap列表）
+                // 根据当前展开状态导出：展开的工程导出明细，未展开的工程仅导出汇总行
                 val pageBitmaps = withContext(Dispatchers.IO) {
                     SettlementImageGenerator.generate(
                         settlement = settlement,
                         constructionPlans = plans,
                         userName = userName,
+                        expandedProjectIds = expandedProjectIds,
                         getUnitName = { unit -> getUnitName(unit) },
                         formatNumber = { num -> formatNumber(num) }
                     )
@@ -617,11 +630,14 @@ class StatisticsDashboardViewModel @Inject constructor(
                 )
 
                 // 在IO线程生成图片（自动分页，返回多页Bitmap列表）
+                // 根据当前展开状态导出：展开的工程导出明细，未展开的工程仅导出汇总行
+                val expandedProjectIds = _expandedProjects.value
                 val pageBitmaps = withContext(Dispatchers.IO) {
                     SettlementImageGenerator.generate(
                         settlement = currentSettlement,
                         constructionPlans = plans,
                         userName = userName,
+                        expandedProjectIds = expandedProjectIds,
                         getUnitName = { unit -> getUnitName(unit) },
                         formatNumber = { num -> formatNumber(num) }
                     )

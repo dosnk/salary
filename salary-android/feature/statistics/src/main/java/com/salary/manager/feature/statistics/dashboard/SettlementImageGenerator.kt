@@ -81,8 +81,11 @@ object SettlementImageGenerator {
      * 用于分页时统一处理不同类型的行
      */
     private sealed class RowData {
-        /** 工程汇总行 */
-        data class ProjectSummary(val index: Int, val project: SalaryProjectDto) : RowData()
+        /**
+         * 工程汇总行
+         * @param isExpanded 是否展开（展开时总额列显示"-"，未展开时显示合计金额）
+         */
+        data class ProjectSummary(val index: Int, val project: SalaryProjectDto, val isExpanded: Boolean) : RowData()
         /** 子项目明细行 */
         data class SubprojectRow(val sub: SubprojectDto) : RowData()
         /** 合计行 */
@@ -105,11 +108,16 @@ object SettlementImageGenerator {
      * 工程汇总行与子项目明细行视为一个整体，绝不拆分到不同页。
      *
      * 分页依据：单页数据行总高度不超过 MAX_PAGE_HEIGHT（4800px，约82行数据）。
-     * 单工程组高度超过单页可用高度时，该工程独占一页（极端情况）。
+     * 单工程组高度超过单页可用高度时，该工程独占一页（极端情况兜底）。
+     *
+     * 导出内容根据展开状态决定：
+     * - 展开的工程：导出工程汇总行 + 所有子项目明细行
+     * - 未展开的工程：仅导出工程汇总行（含合计数量和合计金额）
      *
      * @param settlement 结算历史数据
      * @param constructionPlans 施工方案列表
      * @param userName 用户名（用于标题）
+     * @param expandedProjectIds 已展开的工程ID集合（决定是否导出子项目明细行）
      * @param getUnitName 单位名称转换函数
      * @param formatNumber 数字格式化函数
      * @return 生成的Bitmap列表（每页一个Bitmap，至少返回一个）
@@ -118,14 +126,14 @@ object SettlementImageGenerator {
         settlement: SettlementHistoryDto,
         constructionPlans: List<ConstructionPlanDto>,
         userName: String,
+        expandedProjectIds: Set<Int>,
         getUnitName: (String?) -> String,
         formatNumber: (Double?) -> String
     ): List<Bitmap> {
-        // 1. 收集所有数据行
-        val allRows = collectAllRows(settlement)
+        // 1. 收集所有数据行（根据展开状态决定是否包含子项目明细行）
+        val allRows = collectAllRows(settlement, expandedProjectIds)
 
-        // 2. 按工程数量分页：每页最多 MAX_PROJECTS_PER_PAGE（30）份工程
-        //    以"工程数量"为分页依据，工程汇总行与其所有子项目明细行视为整体绝不拆分
+        // 2. 按数据行高度自适应分页
         val pages = paginateRows(allRows)
 
         // 3. 计算图片宽度
@@ -159,15 +167,29 @@ object SettlementImageGenerator {
 
     /**
      * 收集所有数据行
+     *
+     * 根据展开状态决定是否添加子项目明细行：
+     * - 展开的工程：添加工程汇总行 + 所有子项目明细行
+     * - 未展开的工程：仅添加工程汇总行（汇总行显示合计数量和合计金额）
+     *
+     * @param settlement 结算历史数据
+     * @param expandedProjectIds 已展开的工程ID集合
      */
-    private fun collectAllRows(settlement: SettlementHistoryDto): List<RowData> {
+    private fun collectAllRows(
+        settlement: SettlementHistoryDto,
+        expandedProjectIds: Set<Int>
+    ): List<RowData> {
         val rows = mutableListOf<RowData>()
         val uniqueProjects = settlement.projects.distinctBy { it.id }
         var index = 1
         for (project in uniqueProjects) {
-            rows.add(RowData.ProjectSummary(index, project))
-            for (sub in project.subprojects) {
-                rows.add(RowData.SubprojectRow(sub))
+            val isExpanded = expandedProjectIds.contains(project.id)
+            rows.add(RowData.ProjectSummary(index, project, isExpanded))
+            // 仅展开的工程才添加子项目明细行
+            if (isExpanded) {
+                for (sub in project.subprojects) {
+                    rows.add(RowData.SubprojectRow(sub))
+                }
             }
             index++
         }
@@ -364,6 +386,8 @@ object SettlementImageGenerator {
             when (rowData) {
                 is RowData.ProjectSummary -> {
                     // 工程汇总行（淡绿背景）
+                    // 展开时各方案列显示"-"（明细行已显示数量），总额列显示"-"
+                    // 未展开时各方案列显示合计数量，总额列显示合计金额（各方案金额之和）
                     textPaint.typeface = Typeface.DEFAULT_BOLD
                     bgPaint.color = COLOR_PROJECT_BG
                     canvas.drawRect(0f, y, bitmapWidth.toFloat(), y + ROW_HEIGHT, bgPaint)
@@ -375,14 +399,25 @@ object SettlementImageGenerator {
                     drawTextInCell(canvas, textPaint, rowData.project.projectName, x, y, COL_PROJECT, ROW_HEIGHT)
                     x += COL_PROJECT
                     constructionPlans.forEach { plan ->
-                        val planQty = rowData.project.planQuantities[plan.id.toString()]
-                        val cellText = if (planQty != null) {
-                            "${formatNumber(planQty.totalQuantity)}${getUnitName(plan.unit)}"
-                        } else "-"
+                        val cellText = if (rowData.isExpanded) {
+                            "-"
+                        } else {
+                            val planQty = rowData.project.planQuantities[plan.id.toString()]
+                            if (planQty != null && planQty.totalQuantity > 0) {
+                                "${formatNumber(planQty.totalQuantity)}${getUnitName(plan.unit)}"
+                            } else "-"
+                        }
                         drawTextInCell(canvas, textPaint, cellText, x, y, COL_PLAN, ROW_HEIGHT)
                         x += COL_PLAN
                     }
-                    drawTextInCell(canvas, textPaint, "-", x, y, COL_TOTAL, ROW_HEIGHT)
+                    // 总额列：展开时显示"-"，未展开时显示合计金额
+                    val totalCellText = if (rowData.isExpanded) {
+                        "-"
+                    } else {
+                        val projectTotalAmount = rowData.project.planQuantities.values.sumOf { it.totalAmount }
+                        if (projectTotalAmount > 0) "¥${formatNumber(projectTotalAmount)}" else "-"
+                    }
+                    drawTextInCell(canvas, textPaint, totalCellText, x, y, COL_TOTAL, ROW_HEIGHT)
                     y += ROW_HEIGHT
                 }
 
