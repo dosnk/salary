@@ -259,10 +259,10 @@ fun StatisticsDashboardScreen(
                                 // 统计内容区域
                                 // 创建共享的横向滚动状态（结算单表格所有行共享，确保列对齐）
                                 val tableScrollState = rememberScrollState()
-                                // 计算表格固定总宽度（资料员/管理员无选择列：序号36 + 工程名100 + 方案72*n + 总额64）
-                                // 施工员有选择列：选择48 + 序号36 + 工程名100 + 方案72*n + 总额64
+                                // 计算表格固定总宽度（资料员/管理员无选择列：序号36 + 工程名130 + 方案72*n + 总额80）
+                                // 施工员有选择列：选择48 + 序号36 + 工程名130 + 方案72*n + 总额80
                                 val tableWidth = remember(constructionPlans.size, canSettle) {
-                    ((if (canSettle) 48 else 0) + 36 + 100 + 72 * constructionPlans.size + 64).dp
+                    ((if (canSettle) 48 else 0) + 36 + 130 + 72 * constructionPlans.size + 80).dp
                 }
 
                                 LazyColumn(
@@ -1081,8 +1081,8 @@ fun TableHeaderRow(
             }
         }
         // 总额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
-            Text("总额", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
+        Box(modifier = Modifier.width(80.dp), contentAlignment = Alignment.Center) {
+            Text("总额", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151), maxLines = 1, softWrap = false)
         }
     }
 }
@@ -1198,7 +1198,7 @@ fun ProjectDataRow(
         }
         // 总额
         // 子项目未展开时显示该工程的合计金额（各方案金额之和），展开时显示"-"（明细行已显示金额）
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.width(80.dp), contentAlignment = Alignment.Center) {
             if (!isExpanded) {
                 val projectTotalAmount = project.planQuantities.values.sumOf { it.totalAmount }
                 if (projectTotalAmount > 0) {
@@ -1207,7 +1207,9 @@ fun ProjectDataRow(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFF1E40AF),
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 } else {
                     Text("-", fontSize = 12.sp, color = Color(0xFF999999))
@@ -1293,7 +1295,7 @@ fun SubprojectRow(
             }
         }
         // 总额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.width(80.dp), contentAlignment = Alignment.Center) {
             Text("-", fontSize = 11.sp, color = Color(0xFFCCCCCC))
         }
     }
@@ -1340,7 +1342,7 @@ fun PriceRow(
             }
         }
         // 总额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.width(80.dp), contentAlignment = Alignment.Center) {
             Text("-", fontSize = 11.sp, color = Color(0xFF999999))
         }
     }
@@ -1397,7 +1399,7 @@ fun TotalRow(
             }
         }
         // 总额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.width(80.dp), contentAlignment = Alignment.Center) {
             Text("-", fontSize = 12.sp, color = Color(0xFF1E40AF))
         }
     }
@@ -1446,7 +1448,9 @@ fun GrandTotalRow(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF1E40AF),
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 } else {
                     Text("-", fontSize = 12.sp, color = Color(0xFF1E40AF))
@@ -1454,12 +1458,14 @@ fun GrandTotalRow(
             }
         }
         // 总额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.width(80.dp), contentAlignment = Alignment.Center) {
             Text(
                 "¥${formatNumber(grandTotal)}",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color(0xFF1E40AF)
+                color = Color(0xFF1E40AF),
+                maxLines = 1,
+                softWrap = false
             )
         }
     }
@@ -1510,12 +1516,14 @@ fun AdvanceRow(
             }
         }
         // 预支金额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.width(80.dp), contentAlignment = Alignment.Center) {
             Text(
                 "¥${formatNumber(advance.advanceAmount)}",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
-                color = Color(0xFF92400E)
+                color = Color(0xFF92400E),
+                maxLines = 1,
+                softWrap = false
             )
         }
     }
@@ -1560,12 +1568,14 @@ fun FinalTotalRow(
             }
         }
         // 最终总额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.width(80.dp), contentAlignment = Alignment.Center) {
             Text(
                 "¥${formatNumber(finalTotal)}",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color(0xFF1E40AF)
+                color = Color(0xFF1E40AF),
+                maxLines = 1,
+                softWrap = false
             )
         }
     }
@@ -2103,8 +2113,8 @@ fun HistoryHeaderRow(
             }
         }
         // 总额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
-            Text("总额", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
+        Box(modifier = Modifier.width(80.dp), contentAlignment = Alignment.Center) {
+            Text("总额", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151), maxLines = 1, softWrap = false)
         }
     }
 }
@@ -2204,7 +2214,7 @@ fun HistoryProjectDataRow(
         }
         // 总额
         // 子项目未展开时显示该工程的合计金额（各方案金额之和），展开时显示"-"（明细行已显示金额）
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.width(80.dp), contentAlignment = Alignment.Center) {
             if (!isExpanded) {
                 val projectTotalAmount = project.planQuantities.values.sumOf { it.totalAmount }
                 if (projectTotalAmount > 0) {
@@ -2213,7 +2223,9 @@ fun HistoryProjectDataRow(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFF1E40AF),
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 } else {
                     Text("-", fontSize = 12.sp, color = Color(0xFF999999))
@@ -2293,7 +2305,7 @@ fun HistorySubprojectRow(
             }
         }
         // 总额
-        Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.width(80.dp), contentAlignment = Alignment.Center) {
             Text("-", fontSize = 11.sp, color = Color(0xFFCCCCCC))
         }
     }
