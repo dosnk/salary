@@ -292,6 +292,7 @@ fun DashboardScreen(
                 }
 
                 // ===== 工程创建表单 Card =====
+                // 紧凑布局：减小内边距与控件间距，压缩整体高度
                 item {
                     Card(
                     modifier = Modifier
@@ -302,8 +303,8 @@ fun DashboardScreen(
                     elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                 ) {
                     Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         // 客户地址
                         OutlinedTextField(
@@ -447,13 +448,13 @@ fun DashboardScreen(
                             val selectedWorkers = uiState.constructors.filter {
                                 uiState.selectedConstructorIds.contains(it.id)
                             }
-                            Spacer(modifier = Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = "工日设置（每人默认1工日）",
                                 fontSize = 13.sp,
                                 color = AppColors.TextSecondary
                             )
-                            Spacer(modifier = Modifier.height(4.dp))
+                            Spacer(modifier = Modifier.height(2.dp))
                             // 总工日输入框：独立一行，占满容器宽度（位于工日设置上方）
                             // 为空时不校验；有值时校验各施工人员工日之和是否等于此值
                             Row(
@@ -532,7 +533,7 @@ fun DashboardScreen(
                                         }
                                 )
                             }
-                            Spacer(modifier = Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                             // 按每行3个分组，使用Row+weight实现等宽占满容器
                             selectedWorkers.chunked(3).forEach { rowWorkers ->
                                 Row(
@@ -615,7 +616,7 @@ fun DashboardScreen(
                                     }
                                 }
                             }
-                            Spacer(modifier = Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                         }
 
                         // 施工人员选择（方形Checkbox标签，FlowRow自动换行，一行约7个）
@@ -626,7 +627,7 @@ fun DashboardScreen(
                                     fontSize = 14.sp,
                                     color = AppColors.TextSecondary
                                 )
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Spacer(modifier = Modifier.height(2.dp))
                                 // 使用FlowRow实现自动换行，一行约7个
                                 FlowRow(
                                     modifier = Modifier.fillMaxWidth(),
@@ -706,11 +707,11 @@ fun DashboardScreen(
                                         color = Color(0xFFE6F4D0),
                                         shape = RoundedCornerShape(8.dp)
                                     )
-                                    .padding(10.dp)
+                                    .padding(8.dp)
                             ) {
                                 Text(
                                     text = "计算预览：${uiState.calculationFormula}",
-                                    fontSize = 14.sp,
+                                    fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     fontFamily = FontFamily.Monospace,
                                     color = AppColors.TextPrimary
@@ -733,32 +734,33 @@ fun DashboardScreen(
                             shape = RoundedCornerShape(8.dp)
                         )
 
-                        // 保存按钮（绿色渐变）
+                        // 保存按钮（绿色渐变，压缩高度）
                         Button(
                             onClick = { viewModel.saveProject() },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(44.dp),
+                                .height(40.dp),
                             enabled = !uiState.isSaving,
                             shape = RoundedCornerShape(24.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = AppColors.Green400,
                                 disabledContainerColor = AppColors.Green300
-                            )
+                            ),
+                            contentPadding = ButtonDefaults.ContentPadding
                         ) {
                             if (uiState.isSaving) {
                                 CircularProgressIndicator(
-                                    modifier = Modifier.size(20.dp),
+                                    modifier = Modifier.size(18.dp),
                                     color = Color.White,
                                     strokeWidth = 2.dp
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("保存中...", color = Color.White, fontSize = 16.sp)
+                                Text("保存中...", color = Color.White, fontSize = 15.sp)
                             } else {
                                 Text(
                                     text = "保存",
                                     color = Color.White,
-                                    fontSize = 16.sp,
+                                    fontSize = 15.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
@@ -1038,7 +1040,7 @@ private fun ProjectHistoryCard(
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = if (isSubprojectExpanded) "▼" else "▶",
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     color = Color.White,
                     textAlign = TextAlign.Center
                 )
@@ -1072,7 +1074,7 @@ private fun ProjectHistoryCard(
                     Spacer(modifier = Modifier.width(2.dp))
                     Text(
                         text = "查看附件 (${project.fileCount})",
-                        fontSize = 12.sp,
+                        fontSize = 13.sp,
                         color = AppColors.TextSecondary
                     )
                 }
@@ -1097,7 +1099,7 @@ private fun ProjectHistoryCard(
                         Spacer(modifier = Modifier.width(2.dp))
                         Text(
                             text = "上传附件",
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
                             color = AppColors.Green400
                         )
                     }
@@ -1121,11 +1123,11 @@ private fun ProjectHistoryCard(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(vertical = 2.dp)
             ) {
-                Text(text = "📝", fontSize = 13.sp)
+                Text(text = "📝", fontSize = 14.sp)
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = project.remark,
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
                     color = AppColors.TextTertiary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -1176,7 +1178,7 @@ private fun ProjectInfoScrollRow(
             ) {
                 Text(
                     text = "施工人员：${workerNames.joinToString("、")}",
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     color = AppColors.Green400,
                     maxLines = 1
                 )
@@ -1185,14 +1187,14 @@ private fun ProjectInfoScrollRow(
         // 创建时间（中间，纯文字灰色弱化）
         Text(
             text = "创建 ${DateFormatter.formatDate(createdAt)}",
-            fontSize = 11.sp,
+            fontSize = 12.sp,
             color = AppColors.TextTertiary,
             maxLines = 1
         )
         // 更新时间（右侧，纯文字灰色弱化）
         Text(
             text = "更新 ${DateFormatter.formatDate(updatedAt)}",
-            fontSize = 11.sp,
+            fontSize = 12.sp,
             color = AppColors.TextTertiary,
             maxLines = 1
         )
@@ -1282,7 +1284,7 @@ private fun SubprojectTable(
 private fun RowScope.TableHeaderCell(text: String, width: androidx.compose.ui.unit.Dp) {
     Text(
         text = text,
-        fontSize = 12.sp,
+        fontSize = 13.sp,
         fontWeight = FontWeight.SemiBold,
         color = AppColors.TextPrimary,
         modifier = Modifier.width(width)
@@ -1296,7 +1298,7 @@ private fun RowScope.TableHeaderCell(text: String, width: androidx.compose.ui.un
 private fun RowScope.TableCell(text: String, width: androidx.compose.ui.unit.Dp, color: Color = AppColors.TextPrimary) {
     Text(
         text = text,
-        fontSize = 12.sp,
+        fontSize = 13.sp,
         color = color,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,

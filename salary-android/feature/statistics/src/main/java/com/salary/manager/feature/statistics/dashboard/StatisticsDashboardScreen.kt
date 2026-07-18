@@ -822,7 +822,7 @@ fun StatCardItem(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = card.title,
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
                     color = Color(0xFF333842),
                     maxLines = 1,
@@ -846,7 +846,7 @@ fun StatCardItem(
                 Spacer(modifier = Modifier.width(40.dp))
                 Text(
                     text = card.amountLabel,
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     color = Color(0xFF64748B)
                 )
                 Text(
@@ -939,7 +939,7 @@ fun SettlementSheetHeader(
         if (canSettle) {
             Text(
                 text = "已选择 ${selectedProjectIds.size} 个工程，确认后将生成结算单，结算后不可修改",
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 color = AppColors.TextSecondary,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 4.dp)
@@ -1016,18 +1016,18 @@ fun TableHeaderRow(
         }
         // 序号
         Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {
-            Text("序号", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
+            Text("序号", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
         // 工程名称
         Box(modifier = Modifier.width(100.dp), contentAlignment = Alignment.Center) {
-            Text("工程名称", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
+            Text("工程名称", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
         // 各施工方案列
         constructionPlans.forEach { plan ->
             Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
                 Text(
                     plan.name,
-                    fontSize = 10.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF374151),
                     maxLines = 2,
@@ -1038,7 +1038,7 @@ fun TableHeaderRow(
         }
         // 总额
         Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
-            Text("总额", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
+            Text("总额", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
     }
 }
@@ -1081,7 +1081,7 @@ fun ProjectDataRow(
         }
         // 序号
         Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {
-            Text("${index + 1}", fontSize = 11.sp, color = Color(0xFF333333))
+            Text("${index + 1}", fontSize = 12.sp, color = Color(0xFF333333))
         }
         // 工程名称（可展开）
         Box(
@@ -1093,13 +1093,13 @@ fun ProjectDataRow(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = if (isExpanded) "▼" else "▶",
-                    fontSize = 10.sp,
+                    fontSize = 12.sp,
                     color = Color(0xFF64748B)
                 )
                 Spacer(modifier = Modifier.width(2.dp))
                 Text(
                     project.projectName,
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     color = Color(0xFF333333),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
@@ -1115,15 +1115,15 @@ fun ProjectDataRow(
                     if (planQty != null && planQty.totalQuantity > 0) {
                         Text(
                             "${formatNumber(planQty.totalQuantity)}${getUnitName(plan.unit)}",
-                            fontSize = 10.sp,
+                            fontSize = 12.sp,
                             color = Color(0xFF333333),
                             textAlign = TextAlign.Center
                         )
                     } else {
-                        Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+                        Text("-", fontSize = 12.sp, color = Color(0xFF999999))
                     }
                 } else {
-                    Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+                    Text("-", fontSize = 12.sp, color = Color(0xFF999999))
                 }
             }
         }
@@ -1135,16 +1135,16 @@ fun ProjectDataRow(
                 if (projectTotalAmount > 0) {
                     Text(
                         "¥${formatNumber(projectTotalAmount)}",
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFF1E40AF),
                         textAlign = TextAlign.Center
                     )
                 } else {
-                    Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+                    Text("-", fontSize = 12.sp, color = Color(0xFF999999))
                 }
             } else {
-                Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+                Text("-", fontSize = 12.sp, color = Color(0xFF999999))
             }
         }
     }
@@ -1180,7 +1180,7 @@ fun SubprojectRow(
         Box(modifier = Modifier.width(100.dp), contentAlignment = Alignment.CenterStart) {
             Text(
                 "${subproject.spaceTypeName} - ${subproject.planName}",
-                fontSize = 10.sp,
+                fontSize = 11.sp,
                 color = Color(0xFF64748B),
                 modifier = Modifier.padding(start = 20.dp),
                 maxLines = 3,
@@ -1194,18 +1194,18 @@ fun SubprojectRow(
                 if (subproject.planId == plan.id) {
                     Text(
                         "${String.format("%.2f", subproject.userQuantity)}${getUnitName(plan.unit)}",
-                        fontSize = 10.sp,
+                        fontSize = 11.sp,
                         color = Color(0xFF64748B),
                         textAlign = TextAlign.Center
                     )
                 } else {
-                    Text("-", fontSize = 10.sp, color = Color(0xFFCCCCCC))
+                    Text("-", fontSize = 11.sp, color = Color(0xFFCCCCCC))
                 }
             }
         }
         // 总额
         Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
-            Text("-", fontSize = 10.sp, color = Color(0xFFCCCCCC))
+            Text("-", fontSize = 11.sp, color = Color(0xFFCCCCCC))
         }
     }
 }
@@ -1230,14 +1230,14 @@ fun PriceRow(
     ) {
         // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
         Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
-            Text("单价", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color(0xFF666666))
+            Text("单价", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Color(0xFF666666))
         }
         // 各方案单价
         constructionPlans.forEach { plan ->
             Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
                 Text(
                     "¥${plan.price ?: 0}/${getUnitName(plan.unit)}",
-                    fontSize = 10.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
                     color = Color(0xFF666666),
                     textAlign = TextAlign.Center
@@ -1246,7 +1246,7 @@ fun PriceRow(
         }
         // 总额
         Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
-            Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+            Text("-", fontSize = 11.sp, color = Color(0xFF999999))
         }
     }
 }
@@ -1276,7 +1276,7 @@ fun TotalRow(
     ) {
         // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
         Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
-            Text("合计", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF))
+            Text("合计", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF))
         }
         // 各方案合计
         constructionPlans.forEach { plan ->
@@ -1285,19 +1285,19 @@ fun TotalRow(
                 if (total != null && total.totalQuantity > 0) {
                     Text(
                         "${formatNumber(total.totalQuantity)}${getUnitName(plan.unit)}",
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF1E40AF),
                         textAlign = TextAlign.Center
                     )
                 } else {
-                    Text("-", fontSize = 10.sp, color = Color(0xFF1E40AF))
+                    Text("-", fontSize = 12.sp, color = Color(0xFF1E40AF))
                 }
             }
         }
         // 总额
         Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
-            Text("-", fontSize = 10.sp, color = Color(0xFF1E40AF))
+            Text("-", fontSize = 12.sp, color = Color(0xFF1E40AF))
         }
     }
 }
@@ -1336,13 +1336,13 @@ fun GrandTotalRow(
                 if (total != null && total.totalAmount > 0) {
                     Text(
                         "¥${formatNumber(total.totalAmount)}",
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF1E40AF),
                         textAlign = TextAlign.Center
                     )
                 } else {
-                    Text("-", fontSize = 10.sp, color = Color(0xFF1E40AF))
+                    Text("-", fontSize = 12.sp, color = Color(0xFF1E40AF))
                 }
             }
         }
@@ -1350,7 +1350,7 @@ fun GrandTotalRow(
         Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
             Text(
                 "¥${formatNumber(grandTotal)}",
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF1E40AF)
             )
@@ -1385,7 +1385,7 @@ fun AdvanceRow(
         Box(modifier = Modifier.width(if (canSettle) 184.dp else 136.dp), contentAlignment = Alignment.CenterStart) {
             Text(
                 "${formatAdvanceDate(advance.advanceDate)}预支",
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 color = Color(0xFF92400E)
             )
@@ -1393,14 +1393,14 @@ fun AdvanceRow(
         // 各方案列（显示-）
         repeat(planCount) {
             Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
-                Text("-", fontSize = 10.sp, color = Color(0xFF92400E))
+                Text("-", fontSize = 12.sp, color = Color(0xFF92400E))
             }
         }
         // 预支金额
         Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
             Text(
                 "¥${formatNumber(advance.advanceAmount)}",
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 color = Color(0xFF92400E)
             )
@@ -1437,14 +1437,14 @@ fun FinalTotalRow(
         // 各方案列（显示-）
         repeat(planCount) {
             Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
-                Text("-", fontSize = 10.sp, color = Color(0xFF1E40AF))
+                Text("-", fontSize = 12.sp, color = Color(0xFF1E40AF))
             }
         }
         // 最终总额
         Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
             Text(
                 "¥${formatNumber(finalTotal)}",
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF1E40AF)
             )
@@ -1619,7 +1619,7 @@ private fun SettlementHistoryTitleBar(
             // 展开/折叠指示箭头
             Text(
                 text = if (isExpanded) "▼" else "▶",
-                fontSize = 10.sp,
+                fontSize = 12.sp,
                 color = Color.White,
                 textAlign = TextAlign.Center
             )
@@ -1640,7 +1640,7 @@ private fun SettlementHistoryTitleBar(
                 // 第二行：结算时间段
                 Text(
                     text = "结算时间段：$periodText",
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     color = Color(0xCCFFFFFF),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -1663,7 +1663,7 @@ private fun SettlementHistoryTitleBar(
         ) {
             Text(
                 text = if (isExporting) "导出中" else "导出",
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1
             )
@@ -1956,18 +1956,18 @@ fun HistoryHeaderRow(
     ) {
         // 序号
         Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {
-            Text("序号", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
+            Text("序号", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
         // 工程名称（宽度148dp，与TotalRow等合并宽度184dp对齐：36+148=184）
         Box(modifier = Modifier.width(148.dp), contentAlignment = Alignment.Center) {
-            Text("工程名称", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
+            Text("工程名称", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
         // 各施工方案列
         constructionPlans.forEach { plan ->
             Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
                 Text(
                     plan.name,
-                    fontSize = 10.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF374151),
                     maxLines = 2,
@@ -1978,7 +1978,7 @@ fun HistoryHeaderRow(
         }
         // 总额
         Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
-            Text("总额", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
+            Text("总额", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
         }
     }
 }
@@ -2007,7 +2007,7 @@ fun HistoryProjectDataRow(
     ) {
         // 序号
         Box(modifier = Modifier.width(36.dp), contentAlignment = Alignment.Center) {
-            Text("${index + 1}", fontSize = 11.sp, color = Color(0xFF333333))
+            Text("${index + 1}", fontSize = 12.sp, color = Color(0xFF333333))
         }
         // 工程名称（可展开，宽度148dp与表头一致）
         Box(
@@ -2019,13 +2019,13 @@ fun HistoryProjectDataRow(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = if (isExpanded) "▼" else "▶",
-                    fontSize = 10.sp,
+                    fontSize = 12.sp,
                     color = Color(0xFF64748B)
                 )
                 Spacer(modifier = Modifier.width(2.dp))
                 Text(
                     project.projectName,
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     color = Color(0xFF333333),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
@@ -2041,15 +2041,15 @@ fun HistoryProjectDataRow(
                     if (planQty != null && planQty.totalQuantity > 0) {
                         Text(
                             "${formatNumber(planQty.totalQuantity)}${getUnitName(plan.unit)}",
-                            fontSize = 10.sp,
+                            fontSize = 12.sp,
                             color = Color(0xFF333333),
                             textAlign = TextAlign.Center
                         )
                     } else {
-                        Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+                        Text("-", fontSize = 12.sp, color = Color(0xFF999999))
                     }
                 } else {
-                    Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+                    Text("-", fontSize = 12.sp, color = Color(0xFF999999))
                 }
             }
         }
@@ -2061,16 +2061,16 @@ fun HistoryProjectDataRow(
                 if (projectTotalAmount > 0) {
                     Text(
                         "¥${formatNumber(projectTotalAmount)}",
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFF1E40AF),
                         textAlign = TextAlign.Center
                     )
                 } else {
-                    Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+                    Text("-", fontSize = 12.sp, color = Color(0xFF999999))
                 }
             } else {
-                Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+                Text("-", fontSize = 12.sp, color = Color(0xFF999999))
             }
         }
     }
@@ -2101,7 +2101,7 @@ fun HistorySubprojectRow(
         Box(modifier = Modifier.width(148.dp), contentAlignment = Alignment.CenterStart) {
             Text(
                 "${subproject.spaceTypeName} - ${subproject.planName}",
-                fontSize = 10.sp,
+                fontSize = 11.sp,
                 color = Color(0xFF64748B),
                 modifier = Modifier.padding(start = 20.dp),
                 maxLines = 3,
@@ -2115,18 +2115,18 @@ fun HistorySubprojectRow(
                 if (subproject.planId == plan.id) {
                     Text(
                         "${String.format("%.2f", subproject.userQuantity)}${getUnitName(plan.unit)}",
-                        fontSize = 10.sp,
+                        fontSize = 11.sp,
                         color = Color(0xFF64748B),
                         textAlign = TextAlign.Center
                     )
                 } else {
-                    Text("-", fontSize = 10.sp, color = Color(0xFFCCCCCC))
+                    Text("-", fontSize = 11.sp, color = Color(0xFFCCCCCC))
                 }
             }
         }
         // 总额
         Box(modifier = Modifier.width(64.dp), contentAlignment = Alignment.Center) {
-            Text("-", fontSize = 10.sp, color = Color(0xFFCCCCCC))
+            Text("-", fontSize = 11.sp, color = Color(0xFFCCCCCC))
         }
     }
 }
