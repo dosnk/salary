@@ -1107,16 +1107,21 @@ fun ProjectDataRow(
             }
         }
         // 各施工方案列
+        // 子项目未展开时显示该工程在该方案下的合计数量，展开时显示"-"（明细行已显示各自数量）
         constructionPlans.forEach { plan ->
             Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
-                val planQty = project.planQuantities[plan.id.toString()]
-                if (planQty != null && planQty.totalQuantity > 0) {
-                    Text(
-                        "${formatNumber(planQty.totalQuantity)}${getUnitName(plan.unit)}",
-                        fontSize = 10.sp,
-                        color = Color(0xFF333333),
-                        textAlign = TextAlign.Center
-                    )
+                if (!isExpanded) {
+                    val planQty = project.planQuantities[plan.id.toString()]
+                    if (planQty != null && planQty.totalQuantity > 0) {
+                        Text(
+                            "${formatNumber(planQty.totalQuantity)}${getUnitName(plan.unit)}",
+                            fontSize = 10.sp,
+                            color = Color(0xFF333333),
+                            textAlign = TextAlign.Center
+                        )
+                    } else {
+                        Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+                    }
                 } else {
                     Text("-", fontSize = 10.sp, color = Color(0xFF999999))
                 }
@@ -2028,16 +2033,21 @@ fun HistoryProjectDataRow(
             }
         }
         // 各施工方案列
+        // 子项目未展开时显示该工程在该方案下的合计数量，展开时显示"-"（明细行已显示各自数量）
         constructionPlans.forEach { plan ->
             Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
-                val planQty = project.planQuantities[plan.id.toString()]
-                if (planQty != null && planQty.totalQuantity > 0) {
-                    Text(
-                        "${formatNumber(planQty.totalQuantity)}${getUnitName(plan.unit)}",
-                        fontSize = 10.sp,
-                        color = Color(0xFF333333),
-                        textAlign = TextAlign.Center
-                    )
+                if (!isExpanded) {
+                    val planQty = project.planQuantities[plan.id.toString()]
+                    if (planQty != null && planQty.totalQuantity > 0) {
+                        Text(
+                            "${formatNumber(planQty.totalQuantity)}${getUnitName(plan.unit)}",
+                            fontSize = 10.sp,
+                            color = Color(0xFF333333),
+                            textAlign = TextAlign.Center
+                        )
+                    } else {
+                        Text("-", fontSize = 10.sp, color = Color(0xFF999999))
+                    }
                 } else {
                     Text("-", fontSize = 10.sp, color = Color(0xFF999999))
                 }
