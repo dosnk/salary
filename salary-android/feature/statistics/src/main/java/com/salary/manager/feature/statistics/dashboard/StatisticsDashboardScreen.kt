@@ -1058,7 +1058,7 @@ fun TableHeaderRow(
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF374151),
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center
                 )
@@ -1069,7 +1069,14 @@ fun TableHeaderRow(
             modifier = Modifier.weight(1.5f),
             contentAlignment = Alignment.Center
         ) {
-            Text("总额", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
+            Text(
+                "总额",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF374151),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -1164,6 +1171,8 @@ fun ProjectDataRow(
                             "${formatNumber(planQty.totalQuantity)}${getUnitName(plan.unit)}",
                             fontSize = 12.sp,
                             color = Color(0xFF333333),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             textAlign = TextAlign.Center
                         )
                     } else {
@@ -1188,6 +1197,8 @@ fun ProjectDataRow(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFF1E40AF),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Center
                     )
                 } else {
@@ -1202,7 +1213,7 @@ fun ProjectDataRow(
 
 /**
  * 子项目明细行
- * 名称列允许多行显示，避免"空间类型 - 施工方案"较长时被省略号截断显示不完整
+ * 名称列单行省略显示，保持表格行高一致
  * @param canSettle 是否可结算（施工员才有选择列，资料员/管理员无选择列需动态调整列宽对齐）
  */
 @Composable
@@ -1226,7 +1237,7 @@ fun SubprojectRow(
         }
         // 空序号
         Box(modifier = Modifier.weight(1f).rightBorder())
-        // 子项目名称（允许多行显示，完整展示内容）
+        // 子项目名称（单行省略，保持行高一致）
         Box(
             modifier = Modifier.weight(2f).rightBorder(),
             contentAlignment = Alignment.CenterStart
@@ -1236,9 +1247,8 @@ fun SubprojectRow(
                 fontSize = 11.sp,
                 color = Color(0xFF64748B),
                 modifier = Modifier.padding(start = 20.dp),
-                maxLines = 3,
-                overflow = TextOverflow.Visible,
-                softWrap = true
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
         // 各施工方案列
@@ -1252,6 +1262,8 @@ fun SubprojectRow(
                         "${String.format("%.2f", subproject.userQuantity)}${getUnitName(plan.unit)}",
                         fontSize = 11.sp,
                         color = Color(0xFF64748B),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Center
                     )
                 } else {
@@ -1302,6 +1314,8 @@ fun PriceRow(
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
                     color = Color(0xFF666666),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center
                 )
             }
@@ -1356,6 +1370,8 @@ fun TotalRow(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF1E40AF),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Center
                     )
                 } else {
@@ -1413,6 +1429,8 @@ fun GrandTotalRow(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF1E40AF),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Center
                     )
                 } else {
@@ -1426,7 +1444,9 @@ fun GrandTotalRow(
                 "¥${formatNumber(grandTotal)}",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color(0xFF1E40AF)
+                color = Color(0xFF1E40AF),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -1463,7 +1483,9 @@ fun AdvanceRow(
                 "${formatAdvanceDate(advance.advanceDate)}预支",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
-                color = Color(0xFF92400E)
+                color = Color(0xFF92400E),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
         // 各方案列（显示-）
@@ -1481,7 +1503,9 @@ fun AdvanceRow(
                 "¥${formatNumber(advance.advanceAmount)}",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
-                color = Color(0xFF92400E)
+                color = Color(0xFF92400E),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -1531,7 +1555,9 @@ fun FinalTotalRow(
                 "¥${formatNumber(finalTotal)}",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color(0xFF1E40AF)
+                color = Color(0xFF1E40AF),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -2062,7 +2088,7 @@ fun HistoryHeaderRow(
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF374151),
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center
                 )
@@ -2070,7 +2096,14 @@ fun HistoryHeaderRow(
         }
         // 总额
         Box(modifier = Modifier.weight(1.5f), contentAlignment = Alignment.Center) {
-            Text("总额", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
+            Text(
+                "总额",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF374151),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -2142,6 +2175,8 @@ fun HistoryProjectDataRow(
                             "${formatNumber(planQty.totalQuantity)}${getUnitName(plan.unit)}",
                             fontSize = 12.sp,
                             color = Color(0xFF333333),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             textAlign = TextAlign.Center
                         )
                     } else {
@@ -2163,6 +2198,8 @@ fun HistoryProjectDataRow(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFF1E40AF),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Center
                     )
                 } else {
@@ -2178,7 +2215,7 @@ fun HistoryProjectDataRow(
 /**
  * 历史子项目明细行（无选择列）
  * 前2列合并宽度 = 36 + 148 = 184dp，与 TotalRow/GrandTotalRow/PriceRow 对齐
- * 名称列允许多行显示，避免"空间类型 - 施工方案"较长时被省略号截断显示不完整
+ * 名称列单行省略显示，保持表格行高一致
  */
 @Composable
 fun HistorySubprojectRow(
@@ -2196,7 +2233,7 @@ fun HistorySubprojectRow(
     ) {
         // 空序号
         Box(modifier = Modifier.weight(1f).rightBorder())
-        // 子项目名称（weight=3与工程名称列对齐；允许多行显示，完整展示内容）
+        // 子项目名称（weight=3与工程名称列对齐；单行省略，保持行高一致）
         Box(
             modifier = Modifier.weight(3f).rightBorder(),
             contentAlignment = Alignment.CenterStart
@@ -2206,9 +2243,8 @@ fun HistorySubprojectRow(
                 fontSize = 11.sp,
                 color = Color(0xFF64748B),
                 modifier = Modifier.padding(start = 20.dp),
-                maxLines = 3,
-                overflow = TextOverflow.Visible,
-                softWrap = true
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
         // 各施工方案列
@@ -2222,6 +2258,8 @@ fun HistorySubprojectRow(
                         "${String.format("%.2f", subproject.userQuantity)}${getUnitName(plan.unit)}",
                         fontSize = 11.sp,
                         color = Color(0xFF64748B),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Center
                     )
                 } else {
