@@ -45,6 +45,9 @@ object NetworkModule {
         ignoreUnknownKeys = true
         coerceInputValues = true
         isLenient = true
+        // 启用 @JsonNames 别名支持，用于兼容后端不同接口返回的字段格式差异
+        // 例如：结算单预览返回 snake_case，结算历史从快照反序列化返回驼峰
+        useAlternativeNames = true
     }
 
     /**
