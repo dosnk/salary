@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -61,6 +62,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -78,6 +80,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import com.salary.core.design.component.GreenTopNavBar
 import com.salary.core.design.theme.AppColors
@@ -132,6 +136,8 @@ fun StatisticsDashboardScreen(
     val successMessage by viewModel.successMessage.collectAsStateWithLifecycle()
     val statsProjectListState by viewModel.statsProjectListState.collectAsStateWithLifecycle()
     val statsPopupTitle by viewModel.statsPopupTitle.collectAsStateWithLifecycle()
+    val statsLoadingMore by viewModel.statsLoadingMore.collectAsStateWithLifecycle()
+    val statsHasMore by viewModel.statsHasMore.collectAsStateWithLifecycle()
     val exportingId by viewModel.exportingId.collectAsStateWithLifecycle()
 
     // 当前用户角色（资料员/管理员隐藏结算按钮和Checkbox，仅constructor可结算）
@@ -646,15 +652,36 @@ fun StatisticsDashboardScreen(
                     }
                     is ListUiState.Success -> {
                         val projects = (statsProjectListState as ListUiState.Success<ProjectDto>).items
+                        val listState = rememberLazyListState()
+                        // 滚动到底部自动加载下一页：当倒数第二个可见项索引 >= 总数-2 时触发
+                        // 倒数第二个而非最后一个，给用户更平滑的预加载体验
+                        LaunchedEffect(listState, projects.size, statsHasMore, statsLoadingMore) {
+                            snapshotFlow {
+                                val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                                lastVisible >= projects.size - 2 // 倒数第二个可见时触发
+                            }
+                                .distinctUntilChanged()
+                                .filter { it && statsHasMore && !statsLoadingMore }
+                                .collect {
+                                    viewModel.loadMoreStatsProjects()
+                                }
+                        }
                         LazyColumn(
+                            state = listState,
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             items(projects, key = { it.id }) { project ->
                                 StatsProjectCard(project = project)
                             }
-                            // 底部间距
-                            item { Spacer(modifier = Modifier.height(32.dp)) }
+                            // 底部加载指示器
+                            item(key = "footer") {
+                                StatsLoadMoreFooter(
+                                    loadingMore = statsLoadingMore,
+                                    hasMore = statsHasMore,
+                                    itemCount = projects.size
+                                )
+                            }
                         }
                     }
                     is ListUiState.Error -> {
@@ -2388,6 +2415,65 @@ fun ProjectNameDetailDialog(
 }
 
 // ========== 统计卡片弹窗工程列表 ==========
+
+/**
+ * 统计弹窗底部加载更多指示器
+ *
+ * 三种显示状态：
+ * - loadingMore=true: 转圈 + "加载中..."
+ * - loadingMore=false && hasMore=true: "上滑加载更多"
+ * - loadingMore=false && hasMore=false: "没有更多了"
+ *
+ * @param itemCount 当前已加载的工程总数，用于避免数据为空时显示"没有更多"
+ */
+@Composable
+private fun StatsLoadMoreFooter(
+    loadingMore: Boolean,
+    hasMore: Boolean,
+    itemCount: Int
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 16.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        when {
+            loadingMore -> {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = AppColors.Green400
+                    )
+                    Text(
+                        "加载中...",
+                        fontSize = 12.sp,
+                        color = AppColors.TextSecondary
+                    )
+                }
+            }
+            hasMore -> {
+                Text(
+                    "上滑加载更多",
+                    fontSize = 12.sp,
+                    color = AppColors.TextTertiary
+                )
+            }
+            itemCount > 0 -> {
+                Text(
+                    "没有更多了",
+                    fontSize = 12.sp,
+                    color = AppColors.TextTertiary
+                )
+            }
+            // itemCount == 0 && !hasMore：不显示任何内容（避免空列表时多余提示）
+        }
+    }
+}
 
 /**
  * 统计卡片弹窗中的工程卡片 - 简洁展示

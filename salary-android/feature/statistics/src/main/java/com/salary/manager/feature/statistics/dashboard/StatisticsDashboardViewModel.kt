@@ -113,12 +113,27 @@ class StatisticsDashboardViewModel @Inject constructor(
     private val _statsPopupTitle = MutableStateFlow("")
     val statsPopupTitle: StateFlow<String> = _statsPopupTitle.asStateFlow()
 
+    // ===== 统计弹窗分页加载状态 =====
+    /** 当前弹窗使用的筛选类型（settling/settled/其他），用于 loadMore 时复用 */
+    private val _statsFilterType = MutableStateFlow("")
+    val statsFilterType: StateFlow<String> = _statsFilterType.asStateFlow()
+
+    /** 是否正在加载下一页（防抖，避免重复触发 loadMore） */
+    private val _statsLoadingMore = MutableStateFlow(false)
+    val statsLoadingMore: StateFlow<Boolean> = _statsLoadingMore.asStateFlow()
+
+    /** 是否还有更多数据可加载（基于后端 hasNext） */
+    private val _statsHasMore = MutableStateFlow(false)
+    val statsHasMore: StateFlow<Boolean> = _statsHasMore.asStateFlow()
+
     /** 正在导出的结算单ID，null表示未在导出 */
     private val _exportingId = MutableStateFlow<Int?>(null)
     val exportingId: StateFlow<Int?> = _exportingId.asStateFlow()
 
     private companion object {
         const val TAG = "StatisticsDashboardVM"
+        /** 统计弹窗每页大小（与后端 /v1/projects 的 size 上限100对齐） */
+        const val STATS_PAGE_SIZE = 50
     }
 
     init {
@@ -374,17 +389,22 @@ class StatisticsDashboardViewModel @Inject constructor(
     }
 
     /**
-     * 加载统计卡片对应的工程列表
-     * @param filterType 筛选类型：settling/advance/settled
+     * 加载统计卡片对应的工程列表（首次加载/重置）
      *
      * 卡片与filterType对应关系：
      * - "待结算工程"卡片 → settling → 查询已完工且结算状态为settling的工程（个人维度）
      * - "预支金额"卡片 → advance → 切换到预支Tab（不加载工程列表）
      * - "今年工程量"卡片 → settled → 查询今年已结算工程（工程总额）
      * - "月均收入"卡片 → settled → 查询今年已结算工程（与今年工程量共用）
+     *
+     * 分页：首次加载第1页，后续滚动到底部由 loadMoreStatsProjects() 追加
      */
     fun loadStatsProjectList(filterType: String) {
         viewModelScope.launch {
+            // 重置分页状态
+            _statsFilterType.value = filterType
+            _statsLoadingMore.value = false
+            _statsHasMore.value = false
             _statsProjectListState.value = ListUiState.Loading
             _statsPopupTitle.value = when (filterType) {
                 "settling" -> "待结算工程"
@@ -392,47 +412,28 @@ class StatisticsDashboardViewModel @Inject constructor(
                 else -> "工程列表"
             }
             try {
-                val now = java.time.LocalDate.now()
-                val response = when (filterType) {
-                    "settling" -> projectApi.getProjects(
-                        page = 1, size = 50,
-                        status = "completed",
-                        settlementStatus = "settling"
-                    )
-                    "settled" -> projectApi.getProjects(
-                        // 后端 /v1/projects 校验 size 最大100，超过会报"size值太大"
-                        // 今年已结算工程/月均收入卡片均走此分支，按后端上限取100
-                        page = 1, size = 100,
-                        status = "completed",
-                        settlementStatus = "settled"
-                    )
-                    else -> projectApi.getProjects(page = 1, size = 50)
-                }
+                val response = fetchStatsPage(filterType, page = 1)
                 if (response.code == 200) {
                     val pageData = response.data
                     if (pageData == null || pageData.list.isEmpty()) {
                         _statsProjectListState.value = ListUiState.Error("暂无符合条件的工程")
                     } else {
-                        // 已结算工程按年份过滤今年的
-                        val filtered = if (filterType == "settled") {
-                            pageData.list.filter { dto ->
-                                try {
-                                    dto.createdAt.substring(0, 4).toInt() == now.year
-                                } catch (_: Exception) {
-                                    false
-                                }
-                            }
-                        } else {
-                            pageData.list
-                        }
-                        if (filtered.isEmpty()) {
+                        // settled 分支：前端按 createdAt 过滤今年的工程
+                        val filtered = filterByCurrentYear(filterType, pageData.list)
+                        _statsHasMore.value = pageData.hasNext
+                        if (filtered.isEmpty() && !pageData.hasNext) {
+                            // 首页过滤后为空且无更多数据，提示无今年工程
                             _statsProjectListState.value = ListUiState.Error("暂无今年的已结算工程")
                         } else {
                             _statsProjectListState.value = ListUiState.Success(
                                 items = filtered,
-                                hasMore = false,
+                                hasMore = pageData.hasNext,
                                 page = 1
                             )
+                            // 首页过滤后为空但后端还有更多数据时，自动加载下一页（避免页面空让用户手动滑）
+                            if (filtered.isEmpty() && pageData.hasNext) {
+                                loadMoreStatsProjects()
+                            }
                         }
                     }
                 } else {
@@ -444,6 +445,104 @@ class StatisticsDashboardViewModel @Inject constructor(
                 _statsProjectListState.value = ListUiState.Error(
                     NetworkErrorHandler.translate(e, "加载工程列表失败")
                 )
+            }
+        }
+    }
+
+    /**
+     * 加载下一页工程列表（滚动到底部时自动触发）
+     *
+     * 仅当 hasMore=true 且当前未在加载时执行，追加到现有列表末尾。
+     * settled 分支会按年份过滤今年的工程，过滤后若本页为空但仍有更多数据，自动继续加载下一页。
+     */
+    fun loadMoreStatsProjects() {
+        // 防抖：正在加载或没有更多数据时直接返回
+        if (_statsLoadingMore.value || !_statsHasMore.value) return
+        // 仅在 Success 状态下追加（避免初始 Loading/Error 状态触发）
+        val current = _statsProjectListState.value
+        if (current !is ListUiState.Success) return
+
+        viewModelScope.launch {
+            _statsLoadingMore.value = true
+            try {
+                val filterType = _statsFilterType.value
+                val nextPage = current.page + 1
+                val response = fetchStatsPage(filterType, page = nextPage)
+                if (response.code == 200) {
+                    val pageData = response.data
+                    if (pageData == null || pageData.list.isEmpty()) {
+                        // 后端返回空，认为没有更多
+                        _statsHasMore.value = false
+                        _statsProjectListState.value = current.copy(hasMore = false)
+                    } else {
+                        val filtered = filterByCurrentYear(filterType, pageData.list)
+                        // 累积新数据到现有列表（去重，避免分页边界重复）
+                        val existingIds = current.items.map { it.id }.toHashSet()
+                        val merged = current.items + filtered.filter { it.id !in existingIds }
+                        _statsHasMore.value = pageData.hasNext
+                        _statsProjectListState.value = ListUiState.Success(
+                            items = merged,
+                            hasMore = pageData.hasNext,
+                            page = nextPage
+                        )
+                        // 本页过滤后为空但仍有更多数据时，自动继续加载下一页
+                        if (filtered.isEmpty() && pageData.hasNext) {
+                            // 递归加载下一页（_statsLoadingMore 会在本次 return 后被重置）
+                            // 但需先释放 loadingMore 标志，避免递归调用被防抖拦截
+                            _statsLoadingMore.value = false
+                            loadMoreStatsProjects()
+                            return@launch
+                        }
+                    }
+                } else {
+                    // 加载失败：保留已有数据，提示错误（通过 errorMessage 流，不打断列表）
+                    _errorMessage.value = NetworkErrorHandler.translateServerError(response.msg, "加载更多失败")
+                    // 失败时也保留 hasMore，允许用户再次触发重试
+                }
+            } catch (e: Exception) {
+                _errorMessage.value = NetworkErrorHandler.translate(e, "加载更多失败")
+            } finally {
+                _statsLoadingMore.value = false
+            }
+        }
+    }
+
+    /**
+     * 拉取指定页的工程数据（按 filterType 构造请求参数）
+     * @param filterType settling/settled/其他
+     * @param page 页码（从1开始）
+     */
+    private suspend fun fetchStatsPage(
+        filterType: String,
+        page: Int
+    ): com.salary.core.network.dto.ApiResponse<com.salary.core.network.dto.PageResponse<ProjectDto>> {
+        return when (filterType) {
+            "settling" -> projectApi.getProjects(
+                page = page, size = STATS_PAGE_SIZE,
+                status = "completed",
+                settlementStatus = "settling"
+            )
+            "settled" -> projectApi.getProjects(
+                page = page, size = STATS_PAGE_SIZE,
+                status = "completed",
+                settlementStatus = "settled"
+            )
+            else -> projectApi.getProjects(page = page, size = STATS_PAGE_SIZE)
+        }
+    }
+
+    /**
+     * settled 分支按 createdAt 字段过滤今年的工程
+     * 其他分支原样返回
+     */
+    private fun filterByCurrentYear(filterType: String, items: List<ProjectDto>): List<ProjectDto> {
+        if (filterType != "settled") return items
+        val currentYear = java.time.LocalDate.now().year
+        return items.filter { dto ->
+            try {
+                dto.createdAt.length >= 4 && dto.createdAt.substring(0, 4).toInt() == currentYear
+            } catch (_: Exception) {
+                false
             }
         }
     }
