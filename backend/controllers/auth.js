@@ -273,9 +273,10 @@ const register = async (ctx) => {
     const saltRounds = 12;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    // 创建用户
+    // 创建用户（同步设置 password_changed_at，标记用户已主动设置过密码）
+    // 这样后续 init-db.js --reset-passwords 默认会跳过该用户，避免覆盖用户注册时设置的密码
     const result = await pool.query(
-      'INSERT INTO users (username, password, phone, nickname, role) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      'INSERT INTO users (username, password, phone, nickname, role, password_changed_at) VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP) RETURNING *',
       [username, hashedPassword, phone, nickname || username, 'constructor']
     );
 

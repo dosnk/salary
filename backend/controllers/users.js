@@ -272,9 +272,10 @@ const changePassword = async (ctx) => {
     const saltRounds = 12;
     const hashedPassword = await bcrypt.hash(new_password, saltRounds);
 
-    // 更新密码
+    // 更新密码（同步设置 password_changed_at，标记用户已主动修改过密码）
+    // 这样后续 init-db.js --reset-passwords 默认会跳过该用户，避免覆盖用户改过的密码
     await pool.query(
-      'UPDATE users SET password = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      'UPDATE users SET password = $1, password_changed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
       [hashedPassword, userId]
     );
 
@@ -318,7 +319,7 @@ const createUser = async (ctx) => {
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
     const result = await pool.query(
-      'INSERT INTO users (username, password, nickname, phone, role) VALUES ($1, $2, $3, $4, $5) RETURNING id, username, nickname, phone, role, TO_CHAR(created_at, \'YYYY-MM-DD HH24:MI\') as created_at',
+      'INSERT INTO users (username, password, nickname, phone, role, password_changed_at) VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP) RETURNING id, username, nickname, phone, role, TO_CHAR(created_at, \'YYYY-MM-DD HH24:MI\') as created_at',
       [username, hashedPassword, nickname || null, phone || null, role || 'constructor']
     );
 
@@ -347,8 +348,10 @@ const resetPassword = async (ctx) => {
     const saltRounds = 12;
     const hashedPassword = await bcrypt.hash(new_password, saltRounds);
 
+    // 重置密码（同步设置 password_changed_at，标记用户已主动修改过密码）
+    // 这样后续 init-db.js --reset-passwords 默认会跳过该用户，避免覆盖用户改过的密码
     await pool.query(
-      'UPDATE users SET password = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      'UPDATE users SET password = $1, password_changed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
       [hashedPassword, id]
     );
 

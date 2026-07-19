@@ -998,6 +998,21 @@ const MIGRATIONS = [
       ALTER TABLE projects DROP COLUMN IF EXISTS remark;
     `,
     tables: ['projects']
+  },
+  {
+    version: 'V2.1',
+    description: 'users 表添加 password_changed_at 字段，记录密码修改时间（用于区分默认密码与用户主动修改的密码）',
+    up: `
+      -- 添加 password_changed_at 列：
+      -- NULL 表示从未修改过密码（即仍使用 init-db.js 插入的默认密码 990066）
+      -- 非 NULL 表示用户已主动修改过密码（register/createUser/changePassword/resetPassword 均会设置）
+      -- 用途：node scripts/init-db.js --reset-passwords 默认只重置 NULL 的用户，避免覆盖用户改过的密码
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ;
+    `,
+    down: `
+      ALTER TABLE users DROP COLUMN IF EXISTS password_changed_at;
+    `,
+    tables: ['users']
   }
 ];
 
@@ -1158,10 +1173,16 @@ const runMigrations = async () => {
 
 // ===================== 8. 插入默认用户 =====================
 
-// 命令行参数：--reset-passwords 强制重置所有默认用户密码为 DEFAULT_PASSWORD
-// 用于修复历史 bug（早期 init-db.js 默认 hash 不对应 990066 导致无法登录）
-// 用法: node scripts/init-db.js --reset-passwords
-const FORCE_RESET_PASSWORDS = process.argv.includes('--reset-passwords');
+// 命令行参数解析：
+// --reset-passwords       重置默认用户密码为 DEFAULT_PASSWORD（仅重置 password_changed_at IS NULL 的用户，
+//                          即从未改过密码的用户，保护用户主动修改过的密码）
+// --reset-passwords --force  强制重置所有默认用户密码（包括用户主动修改过的，谨慎使用）
+// 用法示例:
+//   node scripts/init-db.js                          普通迁移，不重置密码
+//   node scripts/init-db.js --reset-passwords        重置未改过密码的默认用户
+//   node scripts/init-db.js --reset-passwords --force  强制重置所有默认用户
+const RESET_PASSWORDS = process.argv.includes('--reset-passwords');
+const FORCE_RESET_ALL = process.argv.includes('--force');
 
 const insertDefaultUsers = async (client) => {
   if (DEFAULT_USERS.length === 0) {
@@ -1171,23 +1192,26 @@ const insertDefaultUsers = async (client) => {
   log.info('检查默认用户...');
   let insertedCount = 0;
   let resetCount = 0;
+  let skippedCount = 0;
 
-  // 强制重置模式：直接把所有默认用户的密码重置为默认密码
-  // 适用于"初始化后登录不上"的修复场景，显式执行避免误操作
-  if (FORCE_RESET_PASSWORDS) {
-    log.warn(`[强制重置模式] 将所有默认用户密码重置为: ${DEFAULT_PASSWORD}`);
+  // 重置密码模式
+  if (RESET_PASSWORDS) {
+    if (FORCE_RESET_ALL) {
+      log.warn(`[强制重置模式] 将所有默认用户密码重置为: ${DEFAULT_PASSWORD}（包括已修改过的密码）`);
+    } else {
+      log.warn(`[重置模式] 将未修改过密码的默认用户重置为: ${DEFAULT_PASSWORD}（已修改过密码的用户将被跳过）`);
+    }
+
     for (const user of DEFAULT_USERS) {
       try {
-        const result = await client.query(
-          `UPDATE users SET password = $1, updated_at = CURRENT_TIMESTAMP
-           WHERE username = $2 RETURNING username`,
-          [DEFAULT_PASSWORD_HASH, user.username]
+        // 查询用户是否存在及 password_changed_at 状态
+        const existResult = await client.query(
+          'SELECT id, password_changed_at FROM users WHERE username = $1',
+          [user.username]
         );
-        if (result.rows.length > 0) {
-          resetCount++;
-          log.warn(`  - 已重置密码: ${user.username}`);
-        } else {
-          // 用户不存在，直接插入
+
+        if (existResult.rows.length === 0) {
+          // 用户不存在，直接插入（password_changed_at 默认 NULL，表示使用默认密码）
           await client.query(
             `INSERT INTO users (username, password, nickname, phone, role)
              VALUES ($1, $2, $3, $4, $5)
@@ -1196,13 +1220,36 @@ const insertDefaultUsers = async (client) => {
           );
           insertedCount++;
           log.info(`  - 创建用户: ${user.username} (${user.role})`);
+          continue;
         }
+
+        const passwordChangedAt = existResult.rows[0].password_changed_at;
+
+        // 非 --force 模式：跳过已修改过密码的用户（password_changed_at IS NOT NULL）
+        if (!FORCE_RESET_ALL && passwordChangedAt !== null) {
+          skippedCount++;
+          log.warn(`  - 跳过: ${user.username}（用户已于 ${passwordChangedAt.toISOString().replace('T', ' ').substring(0, 19)} 修改过密码）`);
+          continue;
+        }
+
+        // 重置密码：同时将 password_changed_at 设为 NULL（恢复为默认密码状态）
+        await client.query(
+          `UPDATE users SET password = $1, password_changed_at = NULL, updated_at = CURRENT_TIMESTAMP
+           WHERE username = $2`,
+          [DEFAULT_PASSWORD_HASH, user.username]
+        );
+        resetCount++;
+        log.warn(`  - 已重置密码: ${user.username}`);
       } catch (error) {
         log.warn(`  - 用户 ${user.username} 重置失败: ${error.message}`);
       }
     }
+
     if (resetCount > 0) {
       log.success(`密码重置完成，共重置 ${resetCount} 个用户`);
+    }
+    if (skippedCount > 0) {
+      log.info(`跳过 ${skippedCount} 个已修改过密码的用户（如需强制重置请加 --force 参数）`);
     }
     if (insertedCount > 0) {
       log.success(`默认用户创建完成，新增 ${insertedCount} 个用户`);
@@ -1212,7 +1259,7 @@ const insertDefaultUsers = async (client) => {
 
   // 默认模式：仅插入不存在的用户；已存在的用户用 bcrypt 检测密码是否为 990066
   // 若否，仅提示不自动重置（避免覆盖用户主动修改过的密码）
-  // 如需强制重置，请使用: node scripts/init-db.js --reset-passwords
+  // 如需重置，请使用: node scripts/init-db.js --reset-passwords
   for (const user of DEFAULT_USERS) {
     try {
       const result = await client.query(
@@ -1221,7 +1268,7 @@ const insertDefaultUsers = async (client) => {
       );
 
       if (result.rows.length === 0) {
-        // 用户不存在，插入
+        // 用户不存在，插入（password_changed_at 默认 NULL，表示使用默认密码）
         await client.query(
           `INSERT INTO users (username, password, nickname, phone, role)
            VALUES ($1, $2, $3, $4, $5)

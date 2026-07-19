@@ -18,8 +18,10 @@ const resetPassword = async (ctx) => {
     const saltRounds = 12;
     const passwordHash = await bcrypt.hash(newPassword, saltRounds);
     
+    // 重置密码（同步设置 password_changed_at，标记用户已主动修改过密码）
+    // 这样后续 init-db.js --reset-passwords 默认会跳过该用户，避免覆盖用户改过的密码
     const result = await pool.query(
-      'UPDATE users SET password = $1 WHERE username = $2',
+      'UPDATE users SET password = $1, password_changed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE username = $2',
       [passwordHash, username]
     );
     
