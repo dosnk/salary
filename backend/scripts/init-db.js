@@ -1,5 +1,6 @@
 const { Pool } = require('pg');
 const path = require('path');
+const bcrypt = require('bcryptjs');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 
 // ===================== 日志工具函数 =====================
@@ -1157,11 +1158,10 @@ const runMigrations = async () => {
 
 // ===================== 8. 插入默认用户 =====================
 
-// 历史 bug 记录：早期 init-db.js 使用的默认 hash 实际不对应密码 990066
-// 此处维护错误 hash 列表，insertDefaultUsers 会自动检测并修复为正确 hash
-const LEGACY_INVALID_PASSWORD_HASHES = [
-  '$2b$10$P3wghHsPlXTX.IGPrxMmAeKNyeTHFBG6CKkpNFHnT1oPv.pFTHFpS'
-];
+// 命令行参数：--reset-passwords 强制重置所有默认用户密码为 DEFAULT_PASSWORD
+// 用于修复历史 bug（早期 init-db.js 默认 hash 不对应 990066 导致无法登录）
+// 用法: node scripts/init-db.js --reset-passwords
+const FORCE_RESET_PASSWORDS = process.argv.includes('--reset-passwords');
 
 const insertDefaultUsers = async (client) => {
   if (DEFAULT_USERS.length === 0) {
@@ -1170,33 +1170,58 @@ const insertDefaultUsers = async (client) => {
 
   log.info('检查默认用户...');
   let insertedCount = 0;
+  let resetCount = 0;
 
-  // 自动修复历史错误 hash：将旧默认 hash 更新为当前正确 hash
-  // 这样已部署但无法登录的环境只需重新运行 init-db 即可修复，无需手动 SQL
-  try {
-    const fixResult = await client.query(
-      `UPDATE users
-       SET password = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE password = ANY($2::text[])
-       RETURNING username`,
-      [DEFAULT_PASSWORD_HASH, LEGACY_INVALID_PASSWORD_HASHES]
-    );
-    if (fixResult.rows.length > 0) {
-      log.warn(`检测到 ${fixResult.rows.length} 个用户使用旧错误hash，已自动修复为默认密码 ${DEFAULT_PASSWORD}：`);
-      fixResult.rows.forEach(row => log.warn(`  - ${row.username}`));
+  // 强制重置模式：直接把所有默认用户的密码重置为默认密码
+  // 适用于"初始化后登录不上"的修复场景，显式执行避免误操作
+  if (FORCE_RESET_PASSWORDS) {
+    log.warn(`[强制重置模式] 将所有默认用户密码重置为: ${DEFAULT_PASSWORD}`);
+    for (const user of DEFAULT_USERS) {
+      try {
+        const result = await client.query(
+          `UPDATE users SET password = $1, updated_at = CURRENT_TIMESTAMP
+           WHERE username = $2 RETURNING username`,
+          [DEFAULT_PASSWORD_HASH, user.username]
+        );
+        if (result.rows.length > 0) {
+          resetCount++;
+          log.warn(`  - 已重置密码: ${user.username}`);
+        } else {
+          // 用户不存在，直接插入
+          await client.query(
+            `INSERT INTO users (username, password, nickname, phone, role)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (username) DO NOTHING`,
+            [user.username, DEFAULT_PASSWORD_HASH, user.nickname, user.phone, user.role]
+          );
+          insertedCount++;
+          log.info(`  - 创建用户: ${user.username} (${user.role})`);
+        }
+      } catch (error) {
+        log.warn(`  - 用户 ${user.username} 重置失败: ${error.message}`);
+      }
     }
-  } catch (error) {
-    log.warn(`  - 修复历史错误hash失败: ${error.message}`);
+    if (resetCount > 0) {
+      log.success(`密码重置完成，共重置 ${resetCount} 个用户`);
+    }
+    if (insertedCount > 0) {
+      log.success(`默认用户创建完成，新增 ${insertedCount} 个用户`);
+    }
+    return;
   }
 
+  // 默认模式：仅插入不存在的用户；已存在的用户用 bcrypt 检测密码是否为 990066
+  // 若否，仅提示不自动重置（避免覆盖用户主动修改过的密码）
+  // 如需强制重置，请使用: node scripts/init-db.js --reset-passwords
   for (const user of DEFAULT_USERS) {
     try {
       const result = await client.query(
-        'SELECT 1 FROM users WHERE username = $1',
+        'SELECT password FROM users WHERE username = $1',
         [user.username]
       );
 
       if (result.rows.length === 0) {
+        // 用户不存在，插入
         await client.query(
           `INSERT INTO users (username, password, nickname, phone, role)
            VALUES ($1, $2, $3, $4, $5)
@@ -1205,6 +1230,15 @@ const insertDefaultUsers = async (client) => {
         );
         insertedCount++;
         log.info(`  - 创建用户: ${user.username} (${user.role})`);
+      } else {
+        // 用户已存在，用 bcrypt 验证密码是否为默认密码 990066
+        const currentHash = result.rows[0].password;
+        const isDefaultPassword = await bcrypt.compare(DEFAULT_PASSWORD, currentHash);
+        if (!isDefaultPassword) {
+          // 密码不是 990066：可能是历史错误 hash 或用户已主动修改
+          // 不自动重置（避免覆盖用户改过的密码），仅提示
+          log.warn(`  - 用户 ${user.username} 密码不是默认密码 ${DEFAULT_PASSWORD}（可能已修改或为历史错误hash），如需重置请使用 --reset-passwords 参数`);
+        }
       }
     } catch (error) {
       log.warn(`  - 用户 ${user.username} 处理失败: ${error.message}`);
