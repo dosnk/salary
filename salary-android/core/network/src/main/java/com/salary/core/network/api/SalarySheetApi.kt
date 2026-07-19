@@ -3,6 +3,7 @@ package com.salary.core.network.api
 import com.salary.core.network.dto.ApiResponse
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonNames
 import okhttp3.ResponseBody
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -137,9 +138,14 @@ data class PlanQuantityDto(
 /** 方案总计 */
 @Serializable
 data class PlanTotalDto(
+    // 后端存在两种格式：结算单预览接口返回 snake_case（total_quantity/total_amount），
+    // 结算历史接口从快照反序列化返回驼峰（totalQuantity/totalAmount）。
+    // 使用 @JsonNames 同时兼容两种格式，主名 @SerialName 用 snake_case 对齐预览接口。
     @SerialName("total_quantity")
+    @JsonNames("totalQuantity")
     val totalQuantity: Double = 0.0,
     @SerialName("total_amount")
+    @JsonNames("totalAmount")
     val totalAmount: Double = 0.0
 )
 
