@@ -92,8 +92,9 @@ const testConnection = async () => {
 
 // ===================== 3. 默认用户配置（从环境变量读取） =====================
 // 默认密码与旧程序保持一致：990066（6位纯数字）
-// 对应 bcrypt hash（10轮加密），与旧库 users.password 字段一致，迁移后用户可用旧密码直接登录
-const DEFAULT_PASSWORD_HASH = process.env.DEFAULT_PASSWORD_HASH || '$2b$10$P3wghHsPlXTX.IGPrxMmAeKNyeTHFBG6CKkpNFHnT1oPv.pFTHFpS';
+// 使用 bcryptjs 12轮加密生成（与项目规范 SALT_ROUNDS=12 一致）
+// 注意：原hash值 $2b$10$P3wghHsPlXTX.IGPrxMmAeKNyeTHFBG6CKkpNFHnT1oPv.pFTHFpS 实际不对应990066，已修复
+const DEFAULT_PASSWORD_HASH = process.env.DEFAULT_PASSWORD_HASH || '$2b$12$cUtNFBFtlBUKiq4psDFMx.uX7VLde5vWUdg3VTPzBy2.cIGA/eFRG';
 const DEFAULT_PASSWORD = process.env.DEFAULT_PASSWORD || '990066';
 
 // 默认用户列表（可从环境变量覆盖）
@@ -1155,6 +1156,13 @@ const runMigrations = async () => {
 };
 
 // ===================== 8. 插入默认用户 =====================
+
+// 历史 bug 记录：早期 init-db.js 使用的默认 hash 实际不对应密码 990066
+// 此处维护错误 hash 列表，insertDefaultUsers 会自动检测并修复为正确 hash
+const LEGACY_INVALID_PASSWORD_HASHES = [
+  '$2b$10$P3wghHsPlXTX.IGPrxMmAeKNyeTHFBG6CKkpNFHnT1oPv.pFTHFpS'
+];
+
 const insertDefaultUsers = async (client) => {
   if (DEFAULT_USERS.length === 0) {
     return;
@@ -1162,6 +1170,24 @@ const insertDefaultUsers = async (client) => {
 
   log.info('检查默认用户...');
   let insertedCount = 0;
+
+  // 自动修复历史错误 hash：将旧默认 hash 更新为当前正确 hash
+  // 这样已部署但无法登录的环境只需重新运行 init-db 即可修复，无需手动 SQL
+  try {
+    const fixResult = await client.query(
+      `UPDATE users
+       SET password = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE password = ANY($2::text[])
+       RETURNING username`,
+      [DEFAULT_PASSWORD_HASH, LEGACY_INVALID_PASSWORD_HASHES]
+    );
+    if (fixResult.rows.length > 0) {
+      log.warn(`检测到 ${fixResult.rows.length} 个用户使用旧错误hash，已自动修复为默认密码 ${DEFAULT_PASSWORD}：`);
+      fixResult.rows.forEach(row => log.warn(`  - ${row.username}`));
+    }
+  } catch (error) {
+    log.warn(`  - 修复历史错误hash失败: ${error.message}`);
+  }
 
   for (const user of DEFAULT_USERS) {
     try {
@@ -1172,7 +1198,7 @@ const insertDefaultUsers = async (client) => {
 
       if (result.rows.length === 0) {
         await client.query(
-          `INSERT INTO users (username, password, nickname, phone, role) 
+          `INSERT INTO users (username, password, nickname, phone, role)
            VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (username) DO NOTHING`,
           [user.username, DEFAULT_PASSWORD_HASH, user.nickname, user.phone, user.role]
