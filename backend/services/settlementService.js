@@ -247,18 +247,20 @@ const createSettlementSnapshot = async (settlementId, currentUserId, client = nu
         });
 
         // 累加施工方案汇总
+        // 字段名统一使用 snake_case（total_quantity/total_amount），
+        // 与 controllers/salarySheet.js 读取快照逻辑保持一致，避免前端解析失败
         const planIdStr = String(planId);
         if (!planTotals[planIdStr]) {
           planTotals[planIdStr] = {
-            totalQuantity: 0,
-            totalAmount: 0
+            total_quantity: 0,
+            total_amount: 0
           };
         }
-        planTotals[planIdStr].totalQuantity += userQuantity;
+        planTotals[planIdStr].total_quantity += userQuantity;
         // 修复金额差异Bug：改用 wd.amount 直接累加（NUMERIC(14,4) 高精度且已经是最终分摊金额）
         // 原代码 userQuantity * wd.price 会因 wage_distributions.quantity 为 NUMERIC(10,2)
         // 存储时被四舍五入丢失精度，累积后与工程管理页人均工费出现差异（如27.52元）
-        planTotals[planIdStr].totalAmount += parseFloat(wd.user_amount) || 0;
+        planTotals[planIdStr].total_amount += parseFloat(wd.user_amount) || 0;
       }
     }
 
@@ -294,7 +296,7 @@ const createSettlementSnapshot = async (settlementId, currentUserId, client = nu
     const advancesSnapshot = advancesResult.rows;
 
     // 5. 计算结果快照
-    const grandTotal = Object.values(planTotals).reduce((sum, pt) => sum + pt.totalAmount, 0);
+    const grandTotal = Object.values(planTotals).reduce((sum, pt) => sum + pt.total_amount, 0);
 
     // 计算当前用户的预支金额
     const userAdvancesSnapshot = advancesSnapshot.filter(a => a.user_id === currentUserId);

@@ -1303,17 +1303,19 @@ fun SubprojectRow(
 
 /**
  * 单价行 - 灰色背景
- * @param canSettle 是否可结算（控制合并列宽度：施工员含选择列184dp，资料员/管理员无选择列136dp）
+ * @param canSettle 是否可结算（控制合并列宽度：施工员含选择列214dp，资料员/管理员无选择列166dp）
+ * @param historyMode 是否结算历史模式（合并列宽206dp，与历史表头36+170对齐）
  */
 @Composable
 fun PriceRow(
     constructionPlans: List<ConstructionPlanDto>,
     canSettle: Boolean = true,
+    historyMode: Boolean = false,
     getUnitName: (String?) -> String
 ) {
     // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
     val columnWidths = buildList {
-        add(if (canSettle) 214.dp else 166.dp)
+        add(if (historyMode) 206.dp else if (canSettle) 214.dp else 166.dp)
         constructionPlans.forEach { add(72.dp) }
     }
     Row(
@@ -1326,7 +1328,7 @@ fun PriceRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
-        Box(modifier = Modifier.width(if (canSettle) 214.dp else 166.dp), contentAlignment = Alignment.CenterStart) {
+        Box(modifier = Modifier.width(if (historyMode) 206.dp else if (canSettle) 214.dp else 166.dp), contentAlignment = Alignment.CenterStart) {
             Text("单价", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Color(0xFF666666))
         }
         // 各方案单价
@@ -1350,13 +1352,15 @@ fun PriceRow(
 
 /**
  * 合计行 - 蓝色渐变背景
- * @param canSettle 是否可结算（控制合并列宽度：施工员含选择列184dp，资料员/管理员无选择列136dp）
+ * @param canSettle 是否可结算（控制合并列宽度：施工员含选择列214dp，资料员/管理员无选择列166dp）
+ * @param historyMode 是否结算历史模式（合并列宽206dp，与历史表头36+170对齐）
  */
 @Composable
 fun TotalRow(
     constructionPlans: List<ConstructionPlanDto>,
     planTotals: Map<String, PlanTotalDto>,
     canSettle: Boolean = true,
+    historyMode: Boolean = false,
     getUnitName: (String?) -> String,
     formatNumber: (Double?) -> String
 ) {
@@ -1365,7 +1369,7 @@ fun TotalRow(
     )
     // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
     val columnWidths = buildList {
-        add(if (canSettle) 214.dp else 166.dp)
+        add(if (historyMode) 206.dp else if (canSettle) 214.dp else 166.dp)
         constructionPlans.forEach { add(72.dp) }
     }
     Row(
@@ -1378,7 +1382,7 @@ fun TotalRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
-        Box(modifier = Modifier.width(if (canSettle) 214.dp else 166.dp), contentAlignment = Alignment.CenterStart) {
+        Box(modifier = Modifier.width(if (historyMode) 206.dp else if (canSettle) 214.dp else 166.dp), contentAlignment = Alignment.CenterStart) {
             Text("合计", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF))
         }
         // 各方案合计
@@ -1407,7 +1411,8 @@ fun TotalRow(
 
 /**
  * 总计行 - 绿色渐变背景
- * @param canSettle 是否可结算（控制合并列宽度：施工员含选择列184dp，资料员/管理员无选择列136dp）
+ * @param canSettle 是否可结算（控制合并列宽度：施工员含选择列214dp，资料员/管理员无选择列166dp）
+ * @param historyMode 是否结算历史模式（合并列宽206dp，与历史表头36+170对齐）
  */
 @Composable
 fun GrandTotalRow(
@@ -1415,6 +1420,7 @@ fun GrandTotalRow(
     planTotals: Map<String, PlanTotalDto>,
     grandTotal: Double,
     canSettle: Boolean = true,
+    historyMode: Boolean = false,
     formatNumber: (Double?) -> String
 ) {
     val greenGradientRow = Brush.horizontalGradient(
@@ -1422,7 +1428,7 @@ fun GrandTotalRow(
     )
     // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
     val columnWidths = buildList {
-        add(if (canSettle) 214.dp else 166.dp)
+        add(if (historyMode) 206.dp else if (canSettle) 214.dp else 166.dp)
         constructionPlans.forEach { add(72.dp) }
     }
     Row(
@@ -1435,7 +1441,7 @@ fun GrandTotalRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
-        Box(modifier = Modifier.width(if (canSettle) 214.dp else 166.dp), contentAlignment = Alignment.CenterStart) {
+        Box(modifier = Modifier.width(if (historyMode) 206.dp else if (canSettle) 214.dp else 166.dp), contentAlignment = Alignment.CenterStart) {
             Text("总计", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF))
         }
         // 各方案总计金额
@@ -1473,13 +1479,15 @@ fun GrandTotalRow(
 
 /**
  * 预支行 - 黄色渐变背景
- * @param canSettle 是否可结算（控制合并列宽度：施工员含选择列184dp，资料员/管理员无选择列136dp）
+ * @param canSettle 是否可结算（控制合并列宽度：施工员含选择列214dp，资料员/管理员无选择列166dp）
+ * @param historyMode 是否结算历史模式（合并列宽206dp，与历史表头36+170对齐）
  */
 @Composable
 fun AdvanceRow(
     advance: AdvanceDataDto,
     planCount: Int,
     canSettle: Boolean = true,
+    historyMode: Boolean = false,
     formatNumber: (Double?) -> String
 ) {
     val yellowGradient = Brush.horizontalGradient(
@@ -1487,7 +1495,7 @@ fun AdvanceRow(
     )
     // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
     val columnWidths = buildList {
-        add(if (canSettle) 214.dp else 166.dp)
+        add(if (historyMode) 206.dp else if (canSettle) 214.dp else 166.dp)
         repeat(planCount) { add(72.dp) }
     }
     Row(
@@ -1501,7 +1509,7 @@ fun AdvanceRow(
     ) {
         // 日期+预支标签（格式：2026.06.22预支）
         // 合并前3列（施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
-        Box(modifier = Modifier.width(if (canSettle) 214.dp else 166.dp), contentAlignment = Alignment.CenterStart) {
+        Box(modifier = Modifier.width(if (historyMode) 206.dp else if (canSettle) 214.dp else 166.dp), contentAlignment = Alignment.CenterStart) {
             Text(
                 "${formatAdvanceDate(advance.advanceDate)}预支",
                 fontSize = 12.sp,
@@ -1531,13 +1539,15 @@ fun AdvanceRow(
 
 /**
  * 总额行 - 粉色渐变背景
- * @param canSettle 是否可结算（控制合并列宽度：施工员含选择列184dp，资料员/管理员无选择列136dp）
+ * @param canSettle 是否可结算（控制合并列宽度：施工员含选择列214dp，资料员/管理员无选择列166dp）
+ * @param historyMode 是否结算历史模式（合并列宽206dp，与历史表头36+170对齐）
  */
 @Composable
 fun FinalTotalRow(
     finalTotal: Double,
     planCount: Int,
     canSettle: Boolean = true,
+    historyMode: Boolean = false,
     formatNumber: (Double?) -> String
 ) {
     val pinkGradient = Brush.horizontalGradient(
@@ -1545,7 +1555,7 @@ fun FinalTotalRow(
     )
     // 各列宽度（用于绘制内竖线）：合并列(184或136)+各方案72
     val columnWidths = buildList {
-        add(if (canSettle) 214.dp else 166.dp)
+        add(if (historyMode) 206.dp else if (canSettle) 214.dp else 166.dp)
         repeat(planCount) { add(72.dp) }
     }
     Row(
@@ -1558,7 +1568,7 @@ fun FinalTotalRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 总额标签（合并前3列：施工员: 48+36+100=184dp，资料员/管理员: 36+100=136dp）
-        Box(modifier = Modifier.width(if (canSettle) 214.dp else 166.dp), contentAlignment = Alignment.CenterStart) {
+        Box(modifier = Modifier.width(if (historyMode) 206.dp else if (canSettle) 214.dp else 166.dp), contentAlignment = Alignment.CenterStart) {
             Text("总额", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF))
         }
         // 各方案列（显示-）
@@ -2023,6 +2033,7 @@ fun SettlementHistoryTable(
                 constructionPlans = constructionPlans,
                 planTotals = settlement.planTotals,
                 canSettle = false,
+                historyMode = true,
                 getUnitName = getUnitName,
                 formatNumber = formatNumber
             )
@@ -2031,6 +2042,7 @@ fun SettlementHistoryTable(
             PriceRow(
                 constructionPlans = constructionPlans,
                 canSettle = false,
+                historyMode = true,
                 getUnitName = getUnitName
             )
 
@@ -2040,6 +2052,7 @@ fun SettlementHistoryTable(
                 planTotals = settlement.planTotals,
                 grandTotal = settlement.grandTotal,
                 canSettle = false,
+                historyMode = true,
                 formatNumber = formatNumber
             )
 
@@ -2049,6 +2062,7 @@ fun SettlementHistoryTable(
                     advance = advance,
                     planCount = constructionPlans.size,
                     canSettle = false,
+                    historyMode = true,
                     formatNumber = formatNumber
                 )
             }
@@ -2058,6 +2072,7 @@ fun SettlementHistoryTable(
                 finalTotal = settlement.finalTotal,
                 planCount = constructionPlans.size,
                 canSettle = false,
+                historyMode = true,
                 formatNumber = formatNumber
             )
         }

@@ -762,10 +762,15 @@ const getSettlementHistory = async (ctx) => {
       const planTotals = calculation.planTotals || {};
 
       // 将planTotals中的数值转换为数字类型
+      // 兼容两种字段名：新快照为 snake_case（total_quantity/total_amount），
+      // 旧快照为驼峰（totalQuantity/totalAmount），统一归一化为 snake_case
       for (const planId in planTotals) {
         if (planTotals[planId]) {
-          planTotals[planId].total_quantity = parseFloat(planTotals[planId].total_quantity) || 0;
-          planTotals[planId].total_amount = parseFloat(planTotals[planId].total_amount) || 0;
+          const pt = planTotals[planId];
+          const quantity = parseFloat(pt.total_quantity ?? pt.totalQuantity) || 0;
+          const amount = parseFloat(pt.total_amount ?? pt.totalAmount) || 0;
+          pt.total_quantity = quantity;
+          pt.total_amount = amount;
         }
       }
 
