@@ -85,7 +85,9 @@ const validation = (schema, options = {}) => {
         amount: '金额',
         quantity: '数量',
         length: '长度',
-        width: '宽度'
+        width: '宽度',
+        page: '页码',
+        size: '每页数量'
       };
       
       // 将字段名转换为中文

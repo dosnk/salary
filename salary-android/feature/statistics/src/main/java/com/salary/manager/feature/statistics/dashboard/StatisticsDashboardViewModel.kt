@@ -400,7 +400,9 @@ class StatisticsDashboardViewModel @Inject constructor(
                         settlementStatus = "settling"
                     )
                     "settled" -> projectApi.getProjects(
-                        page = 1, size = 200,
+                        // 后端 /v1/projects 校验 size 最大100，超过会报"size值太大"
+                        // 今年已结算工程/月均收入卡片均走此分支，按后端上限取100
+                        page = 1, size = 100,
                         status = "completed",
                         settlementStatus = "settled"
                     )
