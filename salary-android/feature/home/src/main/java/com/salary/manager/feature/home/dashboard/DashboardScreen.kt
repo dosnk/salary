@@ -84,6 +84,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -100,7 +101,6 @@ import com.salary.core.design.theme.AppColors
 import com.salary.core.network.dto.FileDto
 import com.salary.core.network.interceptor.LatencyTracker
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -292,21 +292,22 @@ fun DashboardScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
-                // ===== 工程创建表单 Card =====
-                // 紧凑布局：减小内边距与控件间距，压缩整体高度
-                item(key = "form_card") {
-                    Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                // ===== 工程创建表单（拆分为3个item，减少单个item体积，避免进出视口时卡顿）=====
+                // 3个Surface视觉上连续：顶部圆角 + 无圆角中间 + 底部圆角，看起来像一个Card
+                // form_card_basic：客户地址、空间类型、施工方案、长度、宽度
+                item(key = "form_card_basic") {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp),
+                        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+                        color = Color.White,
+                        shadowElevation = 1.dp
                     ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                         // 客户地址
                         OutlinedTextField(
                             value = uiState.customerAddress,
@@ -414,6 +415,23 @@ fun DashboardScreen(
                             shape = RoundedCornerShape(8.dp)
                         )
 
+                        } // end of form_card_basic Column
+                    } // end of form_card_basic Surface
+                } // end of form_card_basic item
+
+                // form_card_distribution：分配方式、工日设置、施工人员
+                item(key = "form_card_distribution") {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp),
+                        shape = RectangleShape,
+                        color = Color.White
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                         // 分配方式（单选：平均/按工日）
                         Column {
                             Text(
@@ -694,6 +712,24 @@ fun DashboardScreen(
                             }
                         }
 
+                        } // end of form_card_distribution Column
+                    } // end of form_card_distribution Surface
+                } // end of form_card_distribution item
+
+                // form_card_action：计算预览、备注、保存按钮
+                item(key = "form_card_action") {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp),
+                        shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp),
+                        color = Color.White,
+                        shadowElevation = 1.dp
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                         // 计算预览公式（浅绿背景+绿色边框）
                         if (uiState.calculationFormula.isNotBlank()) {
                             Box(
@@ -768,7 +804,7 @@ fun DashboardScreen(
                         }
                     }
                 }
-                } // end of form Card item
+                } // end of form_card_action item
 
                 item(key = "form_bottom_spacer") {
                     Spacer(modifier = Modifier.height(8.dp))
@@ -866,12 +902,20 @@ fun DashboardScreen(
                 } else {
                     // 工程卡片列表（LazyColumn懒加载，仅组合可见项）
                     items(uiState.projects, key = { it.id }) { project ->
+                        // 用 remember 包装 lambda，避免每次重组创建新实例，
+                        // 让 ProjectHistoryCard 在参数未变时可被跳过重组
+                        val openAttachmentList = remember(project.id) {
+                            { viewModel.openAttachmentList(project.id) }
+                        }
+                        val openFilePicker = remember(project.id) {
+                            { viewModel.openFilePickerForProject(project.id) }
+                        }
                         ProjectHistoryCard(
                             project = project,
                             // 仅施工员可上传附件（admin/documenter 只读）
                             canUploadFile = userRole == "constructor",
-                            onOpenAttachmentList = { viewModel.openAttachmentList(project.id) },
-                            onOpenFilePicker = { viewModel.openFilePickerForProject(project.id) }
+                            onOpenAttachmentList = openAttachmentList,
+                            onOpenFilePicker = openFilePicker
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                     }
@@ -998,22 +1042,11 @@ private fun ProjectHistoryCard(
     onOpenFilePicker: () -> Unit
 ) {
     // 子项目表格展开/折叠状态
-    // 优化：初始始终折叠（避免 LazyColumn 预取时一次性组合大量表格行导致滚动卡顿），
-    //       滚动稳定后通过 LaunchedEffect 延迟自动展开（仅子项目≤30个且用户未手动操作时）。
-    //       >30个时保持折叠，由用户手动点击展开。
+    // 优化：初始始终折叠，仅用户手动点击展开。
+    // 原因：SubprojectTable 用 forEachIndexed 渲染所有行（非懒加载），
+    //       自动展开会在滚动时一次性组合大量行导致卡顿。
     var isSubprojectExpanded by remember(project.id) {
         mutableStateOf(false)
-    }
-    // 标记用户是否手动切换过展开状态，手动操作后不再自动展开
-    var hasUserToggled by remember(project.id) {
-        mutableStateOf(false)
-    }
-    // 延迟自动展开：卡片组合后等待 150ms 再展开，避开 LazyColumn 预取的高峰期
-    LaunchedEffect(project.id) {
-        if (!hasUserToggled && project.subprojects.size in 1..30) {
-            delay(150)
-            isSubprojectExpanded = true
-        }
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -1025,8 +1058,6 @@ private fun ProjectHistoryCard(
                 .background(AppColors.Green400, RoundedCornerShape(8.dp))
                 .clickable {
                     if (project.subprojects.isNotEmpty()) {
-                        // 标记用户已手动操作，防止 LaunchedEffect 的延迟自动展开覆盖用户选择
-                        hasUserToggled = true
                         isSubprojectExpanded = !isSubprojectExpanded
                     }
                 }
