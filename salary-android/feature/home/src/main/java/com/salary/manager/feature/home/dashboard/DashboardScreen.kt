@@ -100,6 +100,7 @@ import com.salary.core.design.theme.AppColors
 import com.salary.core.network.dto.FileDto
 import com.salary.core.network.interceptor.LatencyTracker
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -287,13 +288,13 @@ fun DashboardScreen(
                     .background(AppColors.Background),
                 contentPadding = PaddingValues(horizontal = 4.dp)
             ) {
-                item {
+                item(key = "top_spacer") {
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
                 // ===== 工程创建表单 Card =====
                 // 紧凑布局：减小内边距与控件间距，压缩整体高度
-                item {
+                item(key = "form_card") {
                     Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -769,12 +770,12 @@ fun DashboardScreen(
                 }
                 } // end of form Card item
 
-                item {
+                item(key = "form_bottom_spacer") {
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
                 // ===== 工程历史区域标题 =====
-                item {
+                item(key = "history_header") {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -840,7 +841,7 @@ fun DashboardScreen(
 
                 // 工程列表：加载中/空状态/懒加载列表
                 if (uiState.isLoadingProjects) {
-                    item {
+                    item(key = "loading_projects") {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -852,7 +853,7 @@ fun DashboardScreen(
                     }
                 } else if (uiState.projects.isEmpty()) {
                     // 空状态
-                    item {
+                    item(key = "empty_projects") {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -896,7 +897,7 @@ fun DashboardScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(16.dp),
-                                contentAlignment = Alignment.Center
+                                    contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     "上滑加载更多",
@@ -908,13 +909,13 @@ fun DashboardScreen(
                     }
                 }
 
-                item {
+                item(key = "footer_top_spacer") {
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
                 // ===== 底部版权 + 服务器状态（版权左，状态右对齐）=====
                 // 补偿4dp水平padding，保持与表单Card一致的视觉边距
-                item {
+                item(key = "footer") {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -933,7 +934,7 @@ fun DashboardScreen(
                 }
                 } // end of footer item
 
-                item {
+                item(key = "bottom_spacer") {
                     Spacer(modifier = Modifier.height(16.dp))
                 }
             }
@@ -997,9 +998,22 @@ private fun ProjectHistoryCard(
     onOpenFilePicker: () -> Unit
 ) {
     // 子项目表格展开/折叠状态
-    // 优化：子项目≤30个时默认展开（不影响性能），>30个时默认折叠（减少渲染量）
+    // 优化：初始始终折叠（避免 LazyColumn 预取时一次性组合大量表格行导致滚动卡顿），
+    //       滚动稳定后通过 LaunchedEffect 延迟自动展开（仅子项目≤30个且用户未手动操作时）。
+    //       >30个时保持折叠，由用户手动点击展开。
     var isSubprojectExpanded by remember(project.id) {
-        mutableStateOf(project.subprojects.size <= 30)
+        mutableStateOf(false)
+    }
+    // 标记用户是否手动切换过展开状态，手动操作后不再自动展开
+    var hasUserToggled by remember(project.id) {
+        mutableStateOf(false)
+    }
+    // 延迟自动展开：卡片组合后等待 150ms 再展开，避开 LazyColumn 预取的高峰期
+    LaunchedEffect(project.id) {
+        if (!hasUserToggled && project.subprojects.size in 1..30) {
+            delay(150)
+            isSubprojectExpanded = true
+        }
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -1011,6 +1025,8 @@ private fun ProjectHistoryCard(
                 .background(AppColors.Green400, RoundedCornerShape(8.dp))
                 .clickable {
                     if (project.subprojects.isNotEmpty()) {
+                        // 标记用户已手动操作，防止 LaunchedEffect 的延迟自动展开覆盖用户选择
+                        hasUserToggled = true
                         isSubprojectExpanded = !isSubprojectExpanded
                     }
                 }
