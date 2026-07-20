@@ -217,6 +217,127 @@ function buildInsertStatement(tableName, columns, values) {
   };
 }
 
+/**
+ * 解析 INSERT INTO 语句，提取表名、列名和值
+ *
+ * 支持格式：
+ *   INSERT INTO table (col1, col2) VALUES (val1, val2);
+ *   INSERT INTO table VALUES (val1, val2);
+ *   INSERT INTO table (col1, col2) VALUES (val1, val2), (val3, val4);
+ *
+ * 值解析支持：数字、单引号字符串（含 '' 转义）、NULL、布尔值
+ *
+ * @param {string} sql - 完整的 INSERT 语句
+ * @returns {{tableName: string|null, columns: string[]|null, valueGroups: Array<Array>|null}}
+ *          解析失败返回 {tableName, columns: null, valueGroups: null}
+ */
+function parseInsertStatement(sql) {
+  // 提取表名
+  const tableMatch = sql.match(/INSERT\s+INTO\s+(?:public\.)?(\w+)/i);
+  const tableName = tableMatch ? tableMatch[1] : null;
+
+  // 提取列名（可选，在 VALUES 关键字之前的括号内）
+  let columns = null;
+  const columnsMatch = sql.match(/INSERT\s+INTO\s+(?:public\.)?\w+\s*\(([^)]+)\)\s*VALUES/i);
+  if (columnsMatch) {
+    columns = columnsMatch[1].split(',').map(c => c.trim());
+  }
+
+  // 提取 VALUES 部分（可能有多个值组，用逗号分隔）
+  const valuesMatch = sql.match(/VALUES\s+(.+?);?\s*$/i);
+  if (!valuesMatch) {
+    return { tableName, columns, valueGroups: null };
+  }
+
+  const valuesPart = valuesMatch[1].trim();
+  const valueGroups = [];
+  let currentGroup = [];
+  let current = '';
+  let inString = false;
+  let i = 0;
+
+  // 状态机解析 VALUES 内容
+  while (i < valuesPart.length) {
+    const char = valuesPart[i];
+
+    if (!inString) {
+      if (char === "'") {
+        // 进入字符串
+        inString = true;
+        current += char;
+        i++;
+      } else if (char === '(') {
+        // 值组开始，清空当前值
+        current = '';
+        i++;
+      } else if (char === ')') {
+        // 值组结束，先保存最后一个值
+        currentGroup.push(parseSqlValue(current.trim()));
+        current = '';
+        valueGroups.push(currentGroup);
+        currentGroup = [];
+        i++;
+      } else if (char === ',') {
+        // 值分隔符（在值组内）或值组分隔符（在值组外，但值组外应该是 ),）
+        // 由于 ) 已经清空 currentGroup，这里的 , 是值组之间的分隔符
+        if (currentGroup.length > 0 || current.trim() !== '') {
+          // 值组内的逗号
+          currentGroup.push(parseSqlValue(current.trim()));
+          current = '';
+        }
+        i++;
+      } else {
+        current += char;
+        i++;
+      }
+    } else {
+      // 字符串内
+      if (char === "'" && valuesPart[i + 1] === "'") {
+        // 转义的单引号
+        current += "''";
+        i += 2;
+      } else if (char === "'") {
+        // 字符串结束
+        inString = false;
+        current += char;
+        i++;
+      } else {
+        current += char;
+        i++;
+      }
+    }
+  }
+
+  return { tableName, columns, valueGroups };
+}
+
+/**
+ * 解析单个 SQL 值字面量
+ *
+ * @param {string} raw - 原始字符串（已 trim）
+ * @returns {string|null|number|boolean} 解析后的值
+ */
+function parseSqlValue(raw) {
+  if (raw === '' || raw.toUpperCase() === 'NULL') {
+    return null;
+  }
+  // 单引号字符串
+  if (raw.startsWith("'") && raw.endsWith("'")) {
+    // 去掉首尾单引号，还原 '' 为 '
+    return raw.slice(1, -1).replace(/''/g, "'");
+  }
+  // 布尔值
+  if (raw.toUpperCase() === 'TRUE') return true;
+  if (raw.toUpperCase() === 'FALSE') return false;
+  // 数字
+  const num = parseFloat(raw);
+  if (!isNaN(num) && /^-?\d*\.?\d+([eE][+-]?\d+)?$/.test(raw)) {
+    return num;
+  }
+  // 其他（如数组、表达式）原样返回
+  return raw;
+}
+
 // ===================== SQL 文件解析 =====================
 /**
  * 解析 SQL 导出文件，提取所有数据操作
@@ -303,13 +424,29 @@ function parseSqlFile(content) {
       const tableMatch = fullStatement.match(/INSERT\s+INTO\s+(?:public\.)?(\w+)/i);
       const tableName = tableMatch ? tableMatch[1] : 'unknown';
 
-      inserts.push({
-        text: fullStatement.replace(/\s+/g, ' ').trim(),
-        values: null, // INSERT 语句无需参数化（已含字面值）
-        table: tableName
-      });
-      stats.insertStatements++;
-      stats.tables[tableName] = (stats.tables[tableName] || 0) + 1;
+      // 解析 INSERT 语句并应用字段转换（如 subprojects.length/width 单位换算）
+      // 这样 pg_dump --column-inserts 格式的导出文件也会做单位换算
+      const parsed = parseInsertStatement(fullStatement);
+      if (parsed.tableName && parsed.valueGroups && parsed.valueGroups.length > 0) {
+        // 成功解析，按值组生成参数化 INSERT（应用 transformValues）
+        let addedRows = 0;
+        for (const values of parsed.valueGroups) {
+          const insert = buildInsertStatement(parsed.tableName, parsed.columns, values);
+          inserts.push({ ...insert, table: parsed.tableName });
+          addedRows++;
+        }
+        stats.insertStatements += addedRows;
+        stats.tables[parsed.tableName] = (stats.tables[parsed.tableName] || 0) + addedRows;
+      } else {
+        // 解析失败（如含复杂表达式、数组等），回退到原始 SQL
+        inserts.push({
+          text: fullStatement.replace(/\s+/g, ' ').trim(),
+          values: null,
+          table: tableName
+        });
+        stats.insertStatements++;
+        stats.tables[tableName] = (stats.tables[tableName] || 0) + 1;
+      }
       i++;
       continue;
     }
