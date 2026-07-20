@@ -70,6 +70,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -1042,11 +1043,10 @@ private fun ProjectHistoryCard(
     onOpenFilePicker: () -> Unit
 ) {
     // 子项目表格展开/折叠状态
-    // 优化：初始始终折叠，仅用户手动点击展开。
-    // 原因：SubprojectTable 用 forEachIndexed 渲染所有行（非懒加载），
-    //       自动展开会在滚动时一次性组合大量行导致卡顿。
+    // 优化：子项目≤30个时默认展开（用户体验优先），>30个时默认折叠（减少渲染量）
+    // 卡顿问题已通过拆分 form_card 为多个 item + SubprojectTable 行级 key 复用解决
     var isSubprojectExpanded by remember(project.id) {
-        mutableStateOf(false)
+        mutableStateOf(project.subprojects.size <= 30)
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -1292,33 +1292,36 @@ private fun SubprojectTable(
         }
 
         // 表体（与表头对齐，相同列宽）- 每行底部加浅灰水平线
+        // 用 key(sub.id) 包裹每行，让 Compose 在重组时能复用已组合的行，避免重复组合
         subprojects.forEachIndexed { index, sub ->
-            val isLastRow = index == subprojects.lastIndex
-            Row(
-                modifier = Modifier
-                    .width(tableWidth)
-                    .drawBehind {
-                        // 数据行底部水平边框线：行间用浅灰，末行用中灰收尾
-                        drawLine(
-                            color = if (isLastRow) AppColors.Outline else AppColors.OutlineVariant,
-                            start = Offset(0f, size.height),
-                            end = Offset(size.width, size.height),
-                            strokeWidth = 1.dp.toPx()
-                        )
-                    }
-                    .padding(vertical = 6.dp, horizontal = 2.dp)
-            ) {
-                TableCell("${index + 1}", 40.dp)
-                TableCell(sub.spaceTypeName, 80.dp)
-                TableCell(sub.constructionPlanName, 100.dp)
-                // 数据库存储厘米，UI显示时除以100转为米（与表头"尺寸(米)"单位一致）
-                TableCell("${formatNumber(sub.length / 100.0)} × ${formatNumber(sub.width / 100.0)}", 110.dp)
-                TableCell(
-                    "${formatNumber(sub.quantity)} ${sub.unitDisplayName}",
-                    90.dp
-                )
-                // sub.amount 已由 AmountFormatter.format 格式化为 "¥12,345.00" 格式，直接显示即可
-                TableCell(sub.amount, 90.dp, color = AppColors.Green400)
+            key(sub.id) {
+                val isLastRow = index == subprojects.lastIndex
+                Row(
+                    modifier = Modifier
+                        .width(tableWidth)
+                        .drawBehind {
+                            // 数据行底部水平边框线：行间用浅灰，末行用中灰收尾
+                            drawLine(
+                                color = if (isLastRow) AppColors.Outline else AppColors.OutlineVariant,
+                                start = Offset(0f, size.height),
+                                end = Offset(size.width, size.height),
+                                strokeWidth = 1.dp.toPx()
+                            )
+                        }
+                        .padding(vertical = 6.dp, horizontal = 2.dp)
+                ) {
+                    TableCell("${index + 1}", 40.dp)
+                    TableCell(sub.spaceTypeName, 80.dp)
+                    TableCell(sub.constructionPlanName, 100.dp)
+                    // 数据库存储厘米，UI显示时除以100转为米（与表头"尺寸(米)"单位一致）
+                    TableCell("${formatNumber(sub.length / 100.0)} × ${formatNumber(sub.width / 100.0)}", 110.dp)
+                    TableCell(
+                        "${formatNumber(sub.quantity)} ${sub.unitDisplayName}",
+                        90.dp
+                    )
+                    // sub.amount 已由 AmountFormatter.format 格式化为 "¥12,345.00" 格式，直接显示即可
+                    TableCell(sub.amount, 90.dp, color = AppColors.Green400)
+                }
             }
         }
     }
