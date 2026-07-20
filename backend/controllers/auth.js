@@ -318,12 +318,9 @@ const register = async (ctx) => {
 const getUserInfo = async (ctx) => {
   const userId = ctx.state.user.id;
 
-  logger.info('获取用户信息:', { userId, state: ctx.state.user });
-
   try {
     const result = await pool.query('SELECT id, username, nickname, phone, role, created_at FROM users WHERE id = $1', [userId]);
-    logger.info('查询用户结果:', { rowCount: result.rowCount });
-    
+
     if (result.rows.length === 0) {
       ctx.fail(2004);
       return;

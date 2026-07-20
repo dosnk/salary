@@ -3,7 +3,7 @@ package com.salary.core.network.api
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
-import android.util.Log
+import com.salary.core.common.util.AppLog
 import com.salary.core.network.dto.ApiResponse
 import com.salary.core.network.dto.FileRecordDto
 import com.salary.core.network.dto.ProjectFileRequest
@@ -145,7 +145,7 @@ class UploadManager @Inject constructor(
                 // 后端返回失败，直接使用后端的错误消息（已包含具体的中文提示）
                 // 如"不支持的文件类型（.apk），仅支持图片、文档、视频、音频"
                 val errorMsg = response.msg.ifBlank { "上传附件失败" }
-                Log.w(TAG, "上传附件被后端拒绝: code=${response.code}, msg=${response.msg}")
+                AppLog.w(TAG, "上传附件被后端拒绝: code=${response.code}, msg=${response.msg}")
                 return UploadOutcome.Error(errorMsg)
             }
 
@@ -166,7 +166,7 @@ class UploadManager @Inject constructor(
                 projectApi.uploadFile(projectId, fileRequest)
 
             if (recordResponse.code != 200) {
-                Log.e(
+                AppLog.e(
                     TAG,
                     "文件已上传但写入数据库失败: projectId=$projectId, url=$fileUrl, ${recordResponse.msg}"
                 )
@@ -175,7 +175,7 @@ class UploadManager @Inject constructor(
 
             UploadOutcome.Success(uploadResult)
         } catch (e: Exception) {
-            Log.e(TAG, "上传附件异常: ${e.javaClass.simpleName}: ${e.message}", e)
+            AppLog.e(TAG, "上传附件异常: ${e.javaClass.simpleName}: ${e.message}", e)
             UploadOutcome.Error("上传附件失败，请检查网络后重试")
         }
     }
@@ -238,7 +238,7 @@ class UploadManager @Inject constructor(
                     failedCount++
                     failedFileNames.add(fileName)
                     failedDetails.add(FailedFileDetail(fileName, outcome.message))
-                    Log.w(TAG, "批量上传第${index + 1}个文件失败: ${outcome.message}")
+                    AppLog.w(TAG, "批量上传第${index + 1}个文件失败: ${outcome.message}")
                 }
             }
         }
@@ -290,7 +290,7 @@ class UploadManager @Inject constructor(
             val inputStream = contentResolver.openInputStream(uri) ?: return null
             inputStream.use { it.readBytes() }
         } catch (e: Exception) {
-            Log.w(TAG, "读取文件字节失败: ${e.message}")
+            AppLog.w(TAG, "读取文件字节失败: ${e.message}")
             null
         }
     }
@@ -321,7 +321,7 @@ class UploadManager @Inject constructor(
             val requestBody = bytes.toRequestBody(mediaType)
             MultipartBody.Part.createFormData("file", fileName, requestBody)
         } catch (e: Exception) {
-            Log.w(TAG, "Uri 转 Multipart 失败: ${e.message}")
+            AppLog.w(TAG, "Uri 转 Multipart 失败: ${e.message}")
             null
         }
     }

@@ -114,6 +114,28 @@ module.exports.logRequest = (ctx, startTime) => {
   }
 };
 
+// 敏感字段列表（记录错误日志时需要脱敏的字段名，小写匹配）
+const SENSITIVE_FIELDS = ['password', 'old_password', 'new_password', 'phone', 'mobile', 'id_card', 'token', 'secret', 'api_key', 'apikey'];
+
+/**
+ * 脱敏请求体中的敏感字段
+ * 将 password/phone 等字段值替换为 ***，避免敏感信息写入日志文件
+ * @param {object} body - 原始请求体
+ * @returns {object} 脱敏后的请求体副本
+ */
+function sanitizeBody(body) {
+  if (!body || typeof body !== 'object') return body;
+  const sanitized = {};
+  for (const key of Object.keys(body)) {
+    if (SENSITIVE_FIELDS.includes(key.toLowerCase())) {
+      sanitized[key] = '***';
+    } else {
+      sanitized[key] = body[key];
+    }
+  }
+  return sanitized;
+}
+
 // 错误日志记录
 module.exports.logError = (error, ctx = null) => {
   const logData = {
@@ -126,7 +148,8 @@ module.exports.logError = (error, ctx = null) => {
     logData.request = {
       method: ctx.method,
       url: ctx.url,
-      body: ctx.request.body,
+      // 脱敏处理：剔除 password/phone 等敏感字段，避免明文写入日志文件
+      body: sanitizeBody(ctx.request.body),
       params: ctx.params,
       query: ctx.query,
       userId: ctx.state.user?.id || 'unauthenticated'

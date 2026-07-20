@@ -1,8 +1,8 @@
 package com.salary.manager.feature.home.detail
 
-import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.salary.core.common.util.AppLog
 import com.salary.core.common.util.NetworkErrorHandler
 import com.salary.core.data.local.ServerConfig
 import com.salary.core.data.local.UserStorage
@@ -191,12 +191,12 @@ class ProjectDetailViewModel @Inject constructor(
                         )
                     )
                 } else {
-                    Log.w(TAG, "加载工程详情失败: projectId=$projectId, code=${response.code}, msg=${response.msg}")
+                    AppLog.w(TAG, "加载工程详情失败: projectId=$projectId, code=${response.code}, msg=${response.msg}")
                     _state.value = UiState.Error(NetworkErrorHandler.translateServerError(response.msg, "加载工程详情失败"))
                 }
             } catch (e: Exception) {
                 // 记录详细异常信息便于诊断（如反序列化失败、网络超时等）
-                Log.e(TAG, "加载工程详情异常: projectId=$projectId, ${e.javaClass.simpleName}: ${e.message}", e)
+                AppLog.e(TAG, "加载工程详情异常: projectId=$projectId, ${e.javaClass.simpleName}: ${e.message}", e)
                 _state.value = UiState.Error(NetworkErrorHandler.translate(e, "加载工程详情失败"))
             }
         }
@@ -287,7 +287,7 @@ class ProjectDetailViewModel @Inject constructor(
                     _errorMessage.value = NetworkErrorHandler.translateServerError(response.msg, "保存子项目失败")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "更新子项目异常: subprojectId=$subprojectId, ${e.javaClass.simpleName}: ${e.message}", e)
+                AppLog.e(TAG, "更新子项目异常: subprojectId=$subprojectId, ${e.javaClass.simpleName}: ${e.message}", e)
                 _errorMessage.value = NetworkErrorHandler.translate(e, "保存子项目失败")
             } finally {
                 _savingSubproject.value = false
@@ -317,7 +317,7 @@ class ProjectDetailViewModel @Inject constructor(
                     _errorMessage.value = NetworkErrorHandler.translateServerError(response.msg, "删除附件失败")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "删除附件异常: fileId=$fileId, ${e.javaClass.simpleName}: ${e.message}", e)
+                AppLog.e(TAG, "删除附件异常: fileId=$fileId, ${e.javaClass.simpleName}: ${e.message}", e)
                 _errorMessage.value = NetworkErrorHandler.translate(e, "删除附件失败")
             }
         }
@@ -334,7 +334,7 @@ class ProjectDetailViewModel @Inject constructor(
                     _constructors.value = response.data ?: emptyList()
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "加载施工人员列表异常: ${e.message}", e)
+                AppLog.e(TAG, "加载施工人员列表异常: ${e.message}", e)
             }
         }
     }
@@ -395,7 +395,7 @@ class ProjectDetailViewModel @Inject constructor(
                     _errorMessage.value = NetworkErrorHandler.translateServerError(response.msg, "保存工程失败")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "更新工程异常: projectId=$projectId, ${e.javaClass.simpleName}: ${e.message}", e)
+                AppLog.e(TAG, "更新工程异常: projectId=$projectId, ${e.javaClass.simpleName}: ${e.message}", e)
                 _errorMessage.value = NetworkErrorHandler.translate(e, "保存工程失败")
             } finally {
                 _savingProject.value = false

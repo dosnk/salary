@@ -7,8 +7,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.salary.core.common.util.AppLog
 import com.salary.core.common.util.NetworkErrorHandler
 import com.salary.core.data.local.UserStorage
 import com.salary.core.network.api.CalculateRequest
@@ -48,6 +50,9 @@ class StatisticsDashboardViewModel @Inject constructor(
     private val projectApi: ProjectApi,
     private val statisticsApi: StatisticsApi,
     private val userStorage: UserStorage,
+    // SavedStateHandle 用于在进程被系统杀死重建后恢复关键状态（如已选工程列表），
+    // 避免用户在结算页勾选多个工程后被系统杀进程导致全部丢失
+    private val savedStateHandle: SavedStateHandle,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -71,8 +76,10 @@ class StatisticsDashboardViewModel @Inject constructor(
     private val _settlementHistory = MutableStateFlow<List<SettlementHistoryDto>>(emptyList())
     val settlementHistory: StateFlow<List<SettlementHistoryDto>> = _settlementHistory.asStateFlow()
 
-    /** 已选择的工程ID列表 */
-    private val _selectedProjectIds = MutableStateFlow<List<Int>>(emptyList())
+    /** 已选择的工程ID列表（进程被杀后可从 SavedStateHandle 恢复，避免用户重新勾选） */
+    private val _selectedProjectIds = MutableStateFlow(
+        savedStateHandle.get<List<Int>>(KEY_SELECTED_PROJECT_IDS) ?: emptyList()
+    )
     val selectedProjectIds: StateFlow<List<Int>> = _selectedProjectIds.asStateFlow()
 
     /** 计算结果 */
@@ -134,6 +141,8 @@ class StatisticsDashboardViewModel @Inject constructor(
         const val TAG = "StatisticsDashboardVM"
         /** 统计弹窗每页大小（与后端 /v1/projects 的 size 上限100对齐） */
         const val STATS_PAGE_SIZE = 50
+        /** SavedStateHandle 键：已选工程ID列表（进程被杀后恢复用户勾选状态） */
+        const val KEY_SELECTED_PROJECT_IDS = "selected_project_ids"
     }
 
     init {
@@ -222,7 +231,7 @@ class StatisticsDashboardViewModel @Inject constructor(
                     try {
                         loadDashboardStats()
                     } catch (e: Exception) {
-                        android.util.Log.e(TAG, "加载仪表盘统计失败", e)
+                        AppLog.e(TAG, "加载仪表盘统计失败", e)
                         _errorMessage.value = NetworkErrorHandler.translate(e, "加载统计数据失败")
                     }
                 }
@@ -241,13 +250,8 @@ class StatisticsDashboardViewModel @Inject constructor(
      */
     private suspend fun loadDashboardStats() {
         val response = statisticsApi.getDashboard()
-        android.util.Log.d(TAG, "仪表盘统计: code=${response.code}, data=${response.data != null}")
         if (response.code == 200 && response.data != null) {
             val d = response.data!!
-            android.util.Log.d(TAG, "仪表盘数据: unsettled=${d.unsettledProjectCount}/${d.unsettledAmount}, " +
-                "advance=${d.advanceCount}/${d.advanceTotal}, " +
-                "yearProject=${d.yearProjectCount}/${d.yearProjectAmount}, " +
-                "monthlyAvg=${d.monthlyAvgCount}/${d.monthlyAvgAmount}")
             _settlementSummary.update { current ->
                 current.copy(
                     // 卡片1：待结算工程（份数工程级，金额个人级）
@@ -289,7 +293,7 @@ class StatisticsDashboardViewModel @Inject constructor(
         } else if (!selected) {
             current.remove(projectId)
         }
-        _selectedProjectIds.value = current
+        updateSelectedProjectIds(current)
         // 选择变化后重新计算
         calculateSettlement()
     }
@@ -299,11 +303,20 @@ class StatisticsDashboardViewModel @Inject constructor(
         val currentSelected = _selectedProjectIds.value
         val allIds = _projectData.value.map { it.id }
         if (currentSelected.size == allIds.size && allIds.isNotEmpty()) {
-            _selectedProjectIds.value = emptyList()
+            updateSelectedProjectIds(emptyList())
         } else {
-            _selectedProjectIds.value = allIds
+            updateSelectedProjectIds(allIds)
         }
         calculateSettlement()
+    }
+
+    /**
+     * 更新已选工程ID列表并同步到 SavedStateHandle
+     * SavedStateHandle 会随进程状态保存，进程被系统杀死重建后可恢复用户勾选状态
+     */
+    private fun updateSelectedProjectIds(ids: List<Int>) {
+        _selectedProjectIds.value = ids
+        savedStateHandle[KEY_SELECTED_PROJECT_IDS] = ids
     }
 
     /** 计算结算金额 */
@@ -339,7 +352,7 @@ class StatisticsDashboardViewModel @Inject constructor(
                 if (response.code == 200 && response.data != null) {
                     val data = response.data!!
                     _successMessage.value = "结算成功！单号：${data.settlementNo}"
-                    _selectedProjectIds.value = emptyList()
+                    updateSelectedProjectIds(emptyList())
                     _calculationResult.value = CalculateResultDto()
                     // 刷新数据
                     loadSalarySheetData()

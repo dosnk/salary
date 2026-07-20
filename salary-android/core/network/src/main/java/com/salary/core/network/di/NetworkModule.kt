@@ -73,7 +73,10 @@ object NetworkModule {
                 return@Logger
             }
             // 使用系统println输出到logcat，便于调试时查看
-            println("[Network] $message")
+            // 仅DEBUG构建输出，RELEASE构建静默避免泄露网络请求细节
+            if (com.salary.core.common.BuildConfig.DEBUG) {
+                println("[Network] $message")
+            }
         }
         return HttpLoggingInterceptor(logger).apply {
             level = if (com.salary.core.network.BuildConfig.DEBUG) {

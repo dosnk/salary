@@ -152,27 +152,65 @@ class AuthInterceptor @Inject constructor(
             }
         }
 
-        // 刷新失败，清除token和用户信息并通知退出登录
-        // 写操作必须用runBlocking
-        runBlocking {
-            if (tokenStorage.isLoggedIn()) {
-                tokenStorage.clearTokens()
-                userStorage.clearUserInfo()
+        // 刷新失败处理：区分"网络异常"和"刷新接口明确拒绝"两种场景
+        // - 网络异常（SocketTimeoutException/ConnectException/UnknownHostException 等）：
+        //   保留 token，让用户在网络恢复后可继续操作，避免弱网误退出登录
+        // - 刷新接口明确返回业务失败（code != 200，如 refresh token 过期）：
+        //   清除 token 和用户信息，让 UI 跳转登录页重新登录
+        when (lastRefreshResult) {
+            // SUCCESS 状态理论上不会走到这里（成功分支已提前 return），
+            // 为满足 Kotlin when 穷尽性要求而补充，按保留 token 处理
+            RefreshResult.SUCCESS, RefreshResult.NetworkError -> {
+                // 网络异常：不清除 token，返回原 401 响应让上层显示"网络错误"提示
+                // 用户网络恢复后可正常重试，token 仍有效（可能已过期但 refresh token 仍可用）
+            }
+            RefreshResult.InvalidGrant, RefreshResult.UnknownFailure -> {
+                // 刷新接口明确拒绝或解析失败：清除 token 和用户信息并通知退出登录
+                runBlocking {
+                    if (tokenStorage.isLoggedIn()) {
+                        tokenStorage.clearTokens()
+                        userStorage.clearUserInfo()
+                    }
+                }
             }
         }
         return response
     }
 
     /**
+     * token 刷新结果状态
+     * 用于区分网络异常和业务失败，避免弱网场景下误清除 token 导致用户被强制退出登录
+     */
+    private enum class RefreshResult {
+        /** 成功 */
+        SUCCESS,
+        /** 网络异常（超时、连接失败、DNS 解析失败等），token 可能仍有效 */
+        NetworkError,
+        /** 刷新接口明确拒绝（refresh token 过期/无效），必须重新登录 */
+        InvalidGrant,
+        /** 其他未知失败（响应解析失败等），保守按 InvalidGrant 处理 */
+        UnknownFailure
+    }
+
+    /** 最近一次 token 刷新的结果，用于 401 处理时判断是否应清除 token */
+    private var lastRefreshResult: RefreshResult = RefreshResult.UnknownFailure
+
+    /**
      * 执行token刷新请求
      * 使用独立的OkHttpClient直接调用刷新接口，避免循环依赖
-     * @return 新的(accessToken, refreshToken)对，失败返回null
+     * @return 新的(accessToken, refreshToken)对，失败返回null（失败原因记录在 lastRefreshResult）
      */
     private fun performTokenRefresh(): Pair<String, String>? {
         return try {
             // 同步读取refreshToken和baseUrl，避免runBlocking
-            val refreshToken = tokenStorage.getRefreshTokenSync() ?: return null
-            val baseUrl = serverConfig.getServerUrlSync().ifEmpty { return null }
+            val refreshToken = tokenStorage.getRefreshTokenSync() ?: run {
+                lastRefreshResult = RefreshResult.InvalidGrant
+                return null
+            }
+            val baseUrl = serverConfig.getServerUrlSync().ifEmpty {
+                lastRefreshResult = RefreshResult.UnknownFailure
+                return null
+            }
 
             // 构建请求体JSON
             val requestBody = """{"refreshToken":"$refreshToken"}"""
@@ -184,22 +222,64 @@ class AuthInterceptor @Inject constructor(
                 .build()
 
             val refreshResponse = refreshClient.newCall(refreshRequest).execute()
-            val bodyString = refreshResponse.body?.string() ?: return null
+            val bodyString = refreshResponse.body?.string() ?: run {
+                lastRefreshResult = RefreshResult.UnknownFailure
+                return null
+            }
             refreshResponse.close()
 
             // 解析响应JSON
             val jsonElement = Json.parseToJsonElement(bodyString)
             val jsonObj = jsonElement.jsonObject
-            val code = jsonObj["code"]?.jsonPrimitive?.int ?: return null
+            val code = jsonObj["code"]?.jsonPrimitive?.int ?: run {
+                lastRefreshResult = RefreshResult.UnknownFailure
+                return null
+            }
 
-            if (code != 200) return null
+            if (code != 200) {
+                // 刷新接口明确返回业务失败（如 refresh token 过期/无效）
+                lastRefreshResult = RefreshResult.InvalidGrant
+                return null
+            }
 
-            val data = jsonObj["data"]?.jsonObject ?: return null
-            val newAccessToken = data["accessToken"]?.jsonPrimitive?.content ?: return null
-            val newRefreshToken = data["refreshToken"]?.jsonPrimitive?.content ?: return null
+            val data = jsonObj["data"]?.jsonObject ?: run {
+                lastRefreshResult = RefreshResult.UnknownFailure
+                return null
+            }
+            val newAccessToken = data["accessToken"]?.jsonPrimitive?.content ?: run {
+                lastRefreshResult = RefreshResult.UnknownFailure
+                return null
+            }
+            val newRefreshToken = data["refreshToken"]?.jsonPrimitive?.content ?: run {
+                lastRefreshResult = RefreshResult.UnknownFailure
+                return null
+            }
 
+            lastRefreshResult = RefreshResult.SUCCESS
             Pair(newAccessToken, newRefreshToken)
+        } catch (e: java.net.SocketTimeoutException) {
+            // 网络超时：弱网场景，保留 token 避免误退出
+            lastRefreshResult = RefreshResult.NetworkError
+            null
+        } catch (e: java.net.ConnectException) {
+            // 连接被拒绝/无法连接：弱网或服务不可用，保留 token
+            lastRefreshResult = RefreshResult.NetworkError
+            null
+        } catch (e: java.net.UnknownHostException) {
+            // DNS 解析失败：网络不可用，保留 token
+            lastRefreshResult = RefreshResult.NetworkError
+            null
+        } catch (e: javax.net.ssl.SSLException) {
+            // SSL 握手失败：网络问题或证书问题，保留 token
+            lastRefreshResult = RefreshResult.NetworkError
+            null
+        } catch (e: java.io.IOException) {
+            // 其他 IO 异常：按网络异常处理，保留 token
+            lastRefreshResult = RefreshResult.NetworkError
+            null
         } catch (_: Exception) {
+            // 其他非 IO 异常（如 JSON 解析）：按未知失败处理
+            lastRefreshResult = RefreshResult.UnknownFailure
             null
         }
     }

@@ -1,6 +1,6 @@
 package com.salary.manager.feature.ai.data
 
-import android.util.Log
+import com.salary.core.common.util.AppLog
 import com.salary.core.common.util.NetworkErrorHandler
 import com.salary.core.data.local.ServerConfig
 import com.salary.core.data.local.TokenStorage
@@ -129,14 +129,14 @@ class AiRepository @Inject constructor(
                             }
                         }
                     } catch (e: Exception) {
-                        Log.w(TAG, "解析SSE数据失败: $data", e)
+                        AppLog.w(TAG, "解析SSE数据失败: $data", e)
                     }
                 }
             } finally {
                 reader.close()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "SSE连接失败", e)
+            AppLog.e(TAG, "SSE连接失败", e)
             emit(SseEvent.Error(NetworkErrorHandler.translate(e, "连接失败")))
         }
     }.flowOn(Dispatchers.IO)

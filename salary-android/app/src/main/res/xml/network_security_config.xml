@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    网络安全配置
+    - 默认禁止明文 HTTP 流量，强制使用 HTTPS
+    - 仅调试域名（模拟器 10.0.2.2 和本机 localhost）允许明文流量，用于本地开发调试
+    - 生产环境必须使用 HTTPS，防止中间人攻击窃听 API 流量
+-->
+<network-security-config>
+    <!-- 全局默认配置：禁止明文流量 -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <!-- 调试专用配置：仅允许本地开发服务器的明文流量 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- Android 模拟器访问宿主机本地服务 -->
+        <domain includeSubdomains="true">10.0.2.2</domain>
+        <!-- 物理设备通过 USB/WiFi 调试本机服务 -->
+        <domain includeSubdomains="true">localhost</domain>
+    </domain-config>
+</network-security-config>

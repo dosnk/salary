@@ -80,19 +80,11 @@ const execute = async (args, user) => {
       query += ` AND TO_CHAR(ws.end_month, 'YYYY-MM') >= $${paramIndex}`;
       params.push(normalizedMonth);
       paramIndex++;
-      logger.info('query_settlements 月份过滤', { month: normalizedMonth });
     }
 
     query += ` ORDER BY ws.settled_at DESC NULLS LAST LIMIT 10`;
 
-    logger.info('query_settlements SQL', { query, params: JSON.stringify(params) });
-
     const result = await pool.query(query, params);
-
-    logger.info('query_settlements 查询结果', {
-      rowCount: result.rowCount,
-      firstRow: result.rows[0] ? JSON.stringify(result.rows[0]).substring(0, 200) : 'null',
-    });
 
     // 关联查询工程名称（project_ids 是JSONB数组，需单独查询工程名）
     // 避免在主查询中用 jsonb_array_elements_text 导致行数膨胀影响分页

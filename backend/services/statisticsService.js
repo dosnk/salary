@@ -851,7 +851,6 @@ module.exports = {
       monthly_avg_count: monthlyAvgCount,
       monthly_avg_amount: Math.round(monthlyAvgAmount * 100) / 100
     };
-    logger.info(`[getDashboard] result for user ${userId}: ${JSON.stringify(result)}`);
     return result;
   },
 

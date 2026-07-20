@@ -106,18 +106,11 @@ const uploadController = {
     
     try {
       const userId = ctx.state.user?.id;
-      
+
       if (!userId) {
         ctx.fail(4001, '请先登录');
         return;
       }
-
-      logger.info('文件上传请求开始', {
-        hasFiles: !!ctx.request.files,
-        filesKeys: ctx.request.files ? Object.keys(ctx.request.files) : [],
-        body: ctx.request.body,
-        userId
-      });
 
       if (isRedisAvailable()) {
         try {

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.salary.core.common.util.NetworkErrorHandler
 import com.salary.core.common.util.NetworkUtil
 import com.salary.core.common.util.AmountFormatter
+import com.salary.core.common.util.AppLog
 import com.salary.core.data.local.DashboardCache
 import com.salary.core.data.local.ServerConfig
 import com.salary.core.data.local.UserStorage
@@ -1213,7 +1214,7 @@ class DashboardViewModel @Inject constructor(
                     )
                 }
             } catch (e: Exception) {
-                android.util.Log.e(TAG, "加载附件列表失败: projectId=$projectId, ${e.message}", e)
+                AppLog.e(TAG, "加载附件列表失败: projectId=$projectId, ${e.message}", e)
                 _uiState.value = _uiState.value.copy(
                     viewingFiles = emptyList(),
                     isLoadingFiles = false,
