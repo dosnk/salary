@@ -257,9 +257,18 @@ const listWithFilters = async (filters) => {
     paramIndex++;
   }
 
-  // 关键词搜索
+  // 关键词搜索：匹配工程名称、描述，以及参与该工程的施工员昵称
+  // 施工员昵称用 EXISTS 子查询匹配，避免 JOIN project_workers 导致结果行重复
   if (keyword) {
-    conditions.push(`(p.name ILIKE $${paramIndex} OR p.description ILIKE $${paramIndex})`);
+    conditions.push(`(
+      p.name ILIKE $${paramIndex}
+      OR p.description ILIKE $${paramIndex}
+      OR EXISTS (
+        SELECT 1 FROM project_workers pwk
+        JOIN users uk ON pwk.user_id = uk.id
+        WHERE pwk.project_id = p.id AND uk.nickname ILIKE $${paramIndex}
+      )
+    )`);
     params.push(`%${keyword}%`);
     paramIndex++;
   }
@@ -378,9 +387,18 @@ const listWithFilters = async (filters) => {
     countParamIndex++;
   }
 
-  // 关键词搜索
+  // 关键词搜索：匹配工程名称、描述，以及参与该工程的施工员昵称
+  // 与数据查询保持一致，施工员昵称用 EXISTS 子查询，避免总数与列表不一致
   if (keyword) {
-    countConditions.push(`(p.name ILIKE $${countParamIndex} OR p.description ILIKE $${countParamIndex})`);
+    countConditions.push(`(
+      p.name ILIKE $${countParamIndex}
+      OR p.description ILIKE $${countParamIndex}
+      OR EXISTS (
+        SELECT 1 FROM project_workers pwk
+        JOIN users uk ON pwk.user_id = uk.id
+        WHERE pwk.project_id = p.id AND uk.nickname ILIKE $${countParamIndex}
+      )
+    )`);
     countParams.push(`%${keyword}%`);
     countParamIndex++;
   }

@@ -152,7 +152,10 @@ class ProjectListViewModel @Inject constructor(
                     keyword = currentKeyword,
                     status = filter.status ?: _selectedStatus.value,
                     settlementStatus = filter.settlementStatus,
-                    yearMonth = filter.month?.let { "${filter.year ?: java.time.LocalDate.now().year}-${String.format("%02d", it)}" }
+                    yearMonth = filter.month?.let { "${filter.year ?: java.time.LocalDate.now().year}-${String.format("%02d", it)}" },
+                    // 日期范围筛选：将高级筛选的开始/结束日期传给后端（空白转null，避免传空字符串）
+                    startDate = filter.startDate?.ifBlank { null },
+                    endDate = filter.endDate?.ifBlank { null }
                 )
 
                 if (response.code == 200) {

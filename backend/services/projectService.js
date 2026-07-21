@@ -284,6 +284,7 @@ module.exports = {
     const sizeNum = parseInt(size, 10) || 10;
 
     // 构建缓存键
+    // 需包含所有影响查询结果的筛选参数，否则不同筛选条件会错误命中同一缓存
     const cacheKeyStr = cache.cacheKey(
       'projects',
       userId,
@@ -295,7 +296,11 @@ module.exports = {
       year || '',
       keyword || '',
       status || '',
-      settlementStatus || ''
+      settlementStatus || '',
+      creatorNickname || '',
+      workerNickname || '',
+      startDate || '',
+      endDate || ''
     );
 
     // 尝试从缓存获取

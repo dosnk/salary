@@ -25,7 +25,11 @@ interface ProjectApi {
         @Query("status") status: String? = null,
         @Query("settlementStatus") settlementStatus: String? = null,
         /** 年月筛选，格式：2026-06，对应后端yearMonth参数 */
-        @Query("yearMonth") yearMonth: String? = null
+        @Query("yearMonth") yearMonth: String? = null,
+        /** 开始日期筛选，格式：yyyy-MM-dd，对应后端startDate参数 */
+        @Query("startDate") startDate: String? = null,
+        /** 结束日期筛选，格式：yyyy-MM-dd，对应后端endDate参数 */
+        @Query("endDate") endDate: String? = null
     ): ApiResponse<PageResponse<ProjectDto>>
 
     @GET("v1/projects/{id}")
