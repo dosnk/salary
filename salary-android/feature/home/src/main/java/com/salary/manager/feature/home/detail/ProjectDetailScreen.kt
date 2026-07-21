@@ -706,6 +706,7 @@ fun StatusCellRow(status: String) {
 
 /**
  * 时间Cell行 - 浅绿背景，对齐Vue前端time-cell样式
+ * 两侧均分宽度避免窄屏挤压；长文本单行省略号
  */
 @Composable
 fun TimeCellRow(createdAt: String, updatedAt: String) {
@@ -718,32 +719,44 @@ fun TimeCellRow(createdAt: String, updatedAt: String) {
                 )
             )
             .padding(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // 创建时间
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // 创建时间（占一半宽度，长文本省略）
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f)
+        ) {
             Text(
                 text = "创建：",
                 fontSize = 12.sp,
-                color = AppColors.TextTertiary
+                color = AppColors.TextTertiary,
+                maxLines = 1
             )
             Text(
                 text = DateFormatter.formatDate(createdAt),
                 fontSize = 12.sp,
-                color = AppColors.TextPrimary
+                color = AppColors.TextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
-        // 更新时间
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // 更新时间（占一半宽度，长文本省略）
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f)
+        ) {
             Text(
                 text = "更新：",
                 fontSize = 12.sp,
-                color = AppColors.TextTertiary
+                color = AppColors.TextTertiary,
+                maxLines = 1
             )
             Text(
                 text = DateFormatter.formatDate(updatedAt),
                 fontSize = 12.sp,
-                color = AppColors.TextPrimary
+                color = AppColors.TextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -1137,28 +1150,36 @@ fun SubprojectEditDialog(
     val widthValue = width.toDoubleOrNull() ?: 0.0
     val area = lengthValue * widthValue
 
-    AlertDialog(
+    // 使用 Dialog + usePlatformDefaultWidth=false，宽度自适应屏幕（窄屏不被截断）
+    Dialog(
         onDismissRequest = onDismiss,
-        containerColor = Color.White,
-        shape = RoundedCornerShape(12.dp),
-        title = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "编辑子项目",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = AppColors.TextPrimary
-                )
-            }
-        },
-        text = {
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(0.92f),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        ) {
             Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                // 标题
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "编辑子项目",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = AppColors.TextPrimary
+                    )
+                }
                 // 空间类型（只读展示）
                 OutlinedTextField(
                     value = spaceType,
@@ -1208,49 +1229,55 @@ fun SubprojectEditDialog(
                         fontWeight = FontWeight.Medium
                     )
                 }
-                // 备注
+                // 备注（自适应高度，最多200dp避免占用过多屏幕）
                 OutlinedTextField(
                     value = remark,
                     onValueChange = { remark = it },
                     label = { Text("备注") },
-                    modifier = Modifier.fillMaxWidth(),
-                    maxLines = 3
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 200.dp),
+                    minLines = 1
                 )
-            }
-        },
-        confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onDismiss, enabled = !saving) {
-                    Text("取消")
-                }
-                Button(
-                    onClick = {
-                        // 备注为空时传空字符串而非 null
-                        // 原因：kotlinx.serialization 默认 encodeDefaults=false，
-                        // null 字段不会被序列化到 JSON，导致后端 updates.remark === undefined 不更新备注
-                        // 传空字符串确保 JSON 中包含 remark 字段，后端将空字符串转为 null 存储
-                        onConfirm(lengthValue, widthValue, remark.trim().ifBlank { "" })
-                    },
-                    // 长度和宽度都必须大于0（面积型方案需要两个维度都有有效值）
-                    enabled = !saving && lengthValue > 0 && widthValue > 0,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = AppColors.Green400,
-                        contentColor = Color.White
-                    )
+                // 操作按钮（右对齐，取消在左保存在右）
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (saving) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            color = Color.White,
-                            strokeWidth = 2.dp
+                    OutlinedButton(onClick = onDismiss, enabled = !saving) {
+                        Text("取消")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            // 备注为空时传空字符串而非 null
+                            // 原因：kotlinx.serialization 默认 encodeDefaults=false，
+                            // null 字段不会被序列化到 JSON，导致后端 updates.remark === undefined 不更新备注
+                            // 传空字符串确保 JSON 中包含 remark 字段，后端将空字符串转为 null 存储
+                            onConfirm(lengthValue, widthValue, remark.trim().ifBlank { "" })
+                        },
+                        // 长度和宽度都必须大于0（面积型方案需要两个维度都有有效值）
+                        enabled = !saving && lengthValue > 0 && widthValue > 0,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AppColors.Green400,
+                            contentColor = Color.White
                         )
-                    } else {
-                        Text("保存")
+                    ) {
+                        if (saving) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text("保存")
+                        }
                     }
                 }
             }
         }
-    )
+    }
 }
 
 /**

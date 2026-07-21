@@ -15,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.salary.core.design.theme.AppColors
@@ -138,7 +139,14 @@ private fun UserCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(user.nickname, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AppColors.TextPrimary)
+                Text(
+                    user.nickname,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = AppColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Surface(
@@ -166,7 +174,13 @@ private fun UserCard(
                     }
                     val phone = user.phone
                     if (!phone.isNullOrBlank()) {
-                        Text(phone, fontSize = 13.sp, color = AppColors.TextTertiary)
+                        Text(
+                            phone,
+                            fontSize = 13.sp,
+                            color = AppColors.TextTertiary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }

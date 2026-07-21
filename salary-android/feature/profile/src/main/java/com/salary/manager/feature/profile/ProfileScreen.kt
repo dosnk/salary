@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -162,7 +163,14 @@ private fun MenuItem(item: MenuItemData, showDivider: Boolean) {
         ) {
             Icon(item.icon, contentDescription = null, tint = AppColors.TextSecondary)
             Spacer(modifier = Modifier.width(12.dp))
-            Text(item.title, fontSize = 15.sp, color = AppColors.TextPrimary, modifier = Modifier.weight(1f))
+            Text(
+                item.title,
+                fontSize = 15.sp,
+                color = AppColors.TextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
             if (item.showArrow) {
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = AppColors.TextTertiary)
             }

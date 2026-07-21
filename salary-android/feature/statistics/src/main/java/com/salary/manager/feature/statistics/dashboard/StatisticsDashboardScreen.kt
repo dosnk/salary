@@ -30,7 +30,6 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -80,6 +79,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
@@ -592,11 +593,29 @@ fun StatisticsDashboardScreen(
 
     // 结算确认对话框
     if (showSettleConfirm) {
-        AlertDialog(
+        // 使用 Dialog + usePlatformDefaultWidth=false，宽度自适应屏幕（窄屏不被截断）
+        Dialog(
             onDismissRequest = { showSettleConfirm = false },
-            title = { Text("确认结算") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Card(
+                modifier = Modifier.fillMaxWidth(0.92f),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        "确认结算",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = AppColors.TextPrimary
+                    )
                     Text("已选择 ${selectedProjectIds.size} 个工程")
                     Text("确认后将生成结算单，结算后不可修改", color = AppColors.TextSecondary, fontSize = 13.sp)
                     // 备注输入框：可选，用于在结算单底部显示备注信息
@@ -613,24 +632,28 @@ fun StatisticsDashboardScreen(
                         singleLine = false,
                         minLines = 1
                     )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showSettleConfirm = false
-                        viewModel.handleSettle(settleRemark.trim())
+                    // 操作按钮右对齐（取消在左，确认在右）
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { showSettleConfirm = false }) {
+                            Text("取消", color = AppColors.TextSecondary)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        TextButton(
+                            onClick = {
+                                showSettleConfirm = false
+                                viewModel.handleSettle(settleRemark.trim())
+                            }
+                        ) {
+                            Text("确认结算", color = AppColors.Green400)
+                        }
                     }
-                ) {
-                    Text("确认结算", color = AppColors.Green400)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSettleConfirm = false }) {
-                    Text("取消", color = AppColors.TextSecondary)
                 }
             }
-        )
+        }
     }
 
     // 统计卡片点击弹窗 - 展示对应条件的工程列表
@@ -1880,6 +1903,7 @@ private fun SettlementHistoryTitleBar(
 /**
  * 导出类型选择弹窗
  * 提供两种导出选项：导出表格文件（Excel）、导出图片结算单（PNG）
+ * 使用 Dialog + usePlatformDefaultWidth=false 实现宽度自适应屏幕
  */
 @Composable
 private fun ExportTypeDialog(
@@ -1887,11 +1911,28 @@ private fun ExportTypeDialog(
     onExportExcel: () -> Unit,
     onExportImage: () -> Unit
 ) {
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text("选择导出方式", fontWeight = FontWeight.SemiBold) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(0.92f),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    "选择导出方式",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AppColors.TextPrimary
+                )
                 // 导出表格文件
                 Surface(
                     onClick = onExportExcel,
@@ -1907,17 +1948,21 @@ private fun ExportTypeDialog(
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Text("📊", fontSize = 20.sp)
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 "导出表格文件",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium,
-                                color = AppColors.TextPrimary
+                                color = AppColors.TextPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 "Excel格式，可编辑",
                                 fontSize = 11.sp,
-                                color = AppColors.TextTertiary
+                                color = AppColors.TextTertiary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -1937,30 +1982,37 @@ private fun ExportTypeDialog(
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Text("🖼️", fontSize = 20.sp)
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 "导出图片结算单",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium,
-                                color = AppColors.TextPrimary
+                                color = AppColors.TextPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 "PNG格式，样式与程序一致",
                                 fontSize = 11.sp,
-                                color = AppColors.TextTertiary
+                                color = AppColors.TextTertiary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
                 }
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消", color = AppColors.TextSecondary)
+                // 取消按钮右对齐
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("取消", color = AppColors.TextSecondary)
+                    }
+                }
             }
         }
-    )
+    }
 }
 
 /**
@@ -2431,47 +2483,60 @@ fun ProjectNameDetailDialog(
     onDismiss: () -> Unit,
     onCopy: () -> Unit
 ) {
-    AlertDialog(
+    // 使用 Dialog + usePlatformDefaultWidth=false 实现宽度自适应屏幕
+    Dialog(
         onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = "工程名称",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = AppColors.TextPrimary
-            )
-        },
-        text = {
-            // 工程名可能极长，使用 verticalScroll 支持滚动查看完整内容
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(0.92f),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 60.dp, max = 280.dp)
-                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = projectName,
-                    fontSize = 15.sp,
-                    color = AppColors.TextPrimary,
-                    lineHeight = 22.sp
+                    text = "工程名称",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AppColors.TextPrimary
                 )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    onCopy()
+                // 工程名可能极长，使用 verticalScroll 支持滚动查看完整内容
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 60.dp, max = 280.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        text = projectName,
+                        fontSize = 15.sp,
+                        color = AppColors.TextPrimary,
+                        lineHeight = 22.sp
+                    )
                 }
-            ) {
-                Text("复制", color = AppColors.Green400, fontWeight = FontWeight.Medium)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("关闭", color = AppColors.TextSecondary)
+                // 操作按钮右对齐
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("关闭", color = AppColors.TextSecondary)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    TextButton(onClick = { onCopy() }) {
+                        Text("复制", color = AppColors.Green400, fontWeight = FontWeight.Medium)
+                    }
+                }
             }
         }
-    )
+    }
 }
 
 // ========== 统计卡片弹窗工程列表 ==========

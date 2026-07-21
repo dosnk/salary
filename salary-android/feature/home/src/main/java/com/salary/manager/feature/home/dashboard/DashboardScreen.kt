@@ -94,6 +94,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.salary.core.common.util.DateFormatter
 import com.salary.core.design.component.GreenTopNavBar
@@ -1093,10 +1094,13 @@ private fun ProjectHistoryCard(
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 // project.totalAmount 已由 AmountFormatter.format 格式化为 "¥12,345.00" 格式，直接显示即可
+                // 加 maxLines=1 + Ellipsis 防止极端长金额换行破坏标题栏
                 text = project.totalAmount,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             // 展开/折叠指示箭头（仅有子项目时显示）
             if (project.subprojects.isNotEmpty()) {
@@ -1243,7 +1247,8 @@ private fun ProjectInfoScrollRow(
                     text = "施工人员：${workerNames.joinToString("、")}",
                     fontSize = 12.sp,
                     color = AppColors.Green400,
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -1438,13 +1443,16 @@ private fun SimplePickerDialog(
     val dividerColor = AppColors.Divider
     val unselectedBorderColor = AppColors.DisabledBorder
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Surface(
             shape = RoundedCornerShape(22.dp),
             color = bgColor,
             shadowElevation = 8.dp,
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxWidth(0.92f)
                 .wrapContentHeight()
         ) {
             Column(

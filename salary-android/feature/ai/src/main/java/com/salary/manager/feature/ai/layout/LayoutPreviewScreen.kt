@@ -32,6 +32,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -195,11 +197,26 @@ fun LayoutPreviewScreen(
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("材料总计", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    Text("\u00A5${result.totalAmount}", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text(
+                        "材料总计",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        maxLines = 1
+                    )
+                    Text(
+                        "\u00A5${result.totalAmount}",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
 
@@ -225,33 +242,68 @@ private fun LegendItem(label: String, color: Color) {
 }
 
 /**
- * 信息行
+ * 信息行 - 左标签右值，长内容单行省略号
  */
 @Composable
 private fun InfoRow(label: String, value: String) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, fontSize = 14.sp, color = AppColors.TextSecondary)
-        Text(value, fontSize = 14.sp, color = AppColors.TextPrimary, fontWeight = FontWeight.Medium)
+        Text(
+            label,
+            fontSize = 14.sp,
+            color = AppColors.TextSecondary,
+            maxLines = 1
+        )
+        Text(
+            value,
+            fontSize = 14.sp,
+            color = AppColors.TextPrimary,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 
 /**
- * 材料项行
+ * 材料项行 - 名称、数量、金额三列布局，长内容单行省略号
  */
 @Composable
 private fun MaterialItemRow(name: String, quantity: String, amount: String) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(name, fontSize = 14.sp, color = AppColors.TextPrimary, modifier = Modifier.weight(1f))
-        Text(quantity, fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.weight(1f))
+        Text(
+            name,
+            fontSize = 14.sp,
+            color = AppColors.TextPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            quantity,
+            fontSize = 13.sp,
+            color = AppColors.TextSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
         if (amount.isNotEmpty()) {
-            Text(amount, fontSize = 14.sp, color = AppColors.Green500, fontWeight = FontWeight.Bold)
+            Text(
+                amount,
+                fontSize = 14.sp,
+                color = AppColors.Green500,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
         }
     }
 }

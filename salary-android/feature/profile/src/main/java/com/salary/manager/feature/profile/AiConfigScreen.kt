@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -30,7 +31,7 @@ import com.salary.core.network.api.AiProviderConfigDto
  *
  * 仅管理员可访问，配置AI提供商、API Key和模型
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun AiConfigScreen(
     onBack: () -> Unit = {},
@@ -161,6 +162,8 @@ fun AiConfigScreen(
                                 fontSize = 15.sp,
                                 color = if (isSelected) AppColors.Green400 else AppColors.TextPrimary,
                                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
                             )
                             // API Key状态指示
@@ -292,6 +295,7 @@ fun AiConfigScreen(
 /**
  * 单个提供商配置卡片
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProviderConfigCard(
     providerKey: String,
@@ -323,10 +327,12 @@ private fun ProviderConfigCard(
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = AppColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
                 if (config.hasApiKey) {
-                    Text("已配置Key", fontSize = 12.sp, color = AppColors.Green400)
+                    Text("已配置Key", fontSize = 12.sp, color = AppColors.Green400, maxLines = 1)
                 }
             }
 
@@ -392,26 +398,31 @@ private fun ProviderConfigCard(
                 )
             )
 
-            // 服务地址（只读）
+            // 服务地址（只读，长URL省略号显示）
             Text(
                 text = "服务地址: ${config.baseUrl}",
                 fontSize = 12.sp,
-                color = AppColors.TextTertiary
+                color = AppColors.TextTertiary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
 
-            // 参数信息（只读）
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(24.dp)
+            // 参数信息（只读，使用FlowRow避免窄屏挤压）
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
                     text = "最大Token: ${config.maxTokens}",
                     fontSize = 12.sp,
-                    color = AppColors.TextTertiary
+                    color = AppColors.TextTertiary,
+                    maxLines = 1
                 )
                 Text(
                     text = "温度: ${config.temperature}",
                     fontSize = 12.sp,
-                    color = AppColors.TextTertiary
+                    color = AppColors.TextTertiary,
+                    maxLines = 1
                 )
             }
         }

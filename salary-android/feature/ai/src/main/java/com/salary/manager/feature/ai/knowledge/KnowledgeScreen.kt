@@ -63,6 +63,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -537,13 +538,16 @@ private fun MaterialCard(
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = AppColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
                 Text(
                     "¥${material.unitPrice}/${material.unit}",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
-                    color = AppColors.Green500
+                    color = AppColors.Green500,
+                    maxLines = 1
                 )
                 // admin显示编辑/删除按钮
                 if (isAdmin) {
@@ -562,7 +566,9 @@ private fun MaterialCard(
                 Text(
                     material.specification!!,
                     fontSize = 13.sp,
-                    color = AppColors.TextTertiary
+                    color = AppColors.TextTertiary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
 
@@ -627,6 +633,8 @@ private fun MaterialDetailDialog(
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     color = AppColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -667,16 +675,31 @@ private fun MaterialDetailDialog(
 }
 
 /**
- * 详情行
+ * 详情行 - 左标签右值，长内容单行省略号
  */
 @Composable
 private fun DetailRow(label: String, value: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, fontSize = 14.sp, color = AppColors.TextSecondary)
-        Text(value, fontSize = 14.sp, color = AppColors.TextPrimary, fontWeight = FontWeight.Medium)
+        Text(
+            label,
+            fontSize = 14.sp,
+            color = AppColors.TextSecondary,
+            maxLines = 1
+        )
+        Text(
+            value,
+            fontSize = 14.sp,
+            color = AppColors.TextPrimary,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 
@@ -1114,7 +1137,9 @@ private fun KnowledgeCard(
                     text = item.title.ifEmpty { "无标题" },
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    color = AppColors.TextPrimary
+                    color = AppColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1179,6 +1204,8 @@ private fun KnowledgeDetailDialog(
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = AppColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
                 IconButton(onClick = onDelete) {
