@@ -600,15 +600,18 @@ fun StatisticsDashboardScreen(
                     Text("已选择 ${selectedProjectIds.size} 个工程")
                     Text("确认后将生成结算单，结算后不可修改", color = AppColors.TextSecondary, fontSize = 13.sp)
                     // 备注输入框：可选，用于在结算单底部显示备注信息
+                    // 高度根据输入内容自适应：minLines=1 起始单行，无 maxLines 限制可无限增高
+                    // heightIn(max=200.dp) 兜底防止内容过多导致弹窗过高超出屏幕
                     OutlinedTextField(
                         value = settleRemark,
                         onValueChange = { settleRemark = it },
                         label = { Text("备注（可选）") },
                         placeholder = { Text("请输入结算备注") },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 200.dp),
                         singleLine = false,
-                        minLines = 1,
-                        maxLines = 3
+                        minLines = 1
                     )
                 }
             },
