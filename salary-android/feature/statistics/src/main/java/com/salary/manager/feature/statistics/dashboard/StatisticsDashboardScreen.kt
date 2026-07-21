@@ -2028,6 +2028,11 @@ fun SettlementHistoryTable(
     formatNumber: (Double?) -> String
 ) {
     val scrollState = rememberScrollState()
+    // 历史结算单表格总宽度：序号36 + 工程名170 + 各方案72*planCount + 总额80
+    // 与 HistoryHeaderRow/TotalRow/GrandTotalRow/FinalTotalRow 等行的列宽保持一致
+    val tableWidth = remember(constructionPlans.size) {
+        (206 + 72 * constructionPlans.size + 80).dp
+    }
 
     Column(
         modifier = Modifier
@@ -2125,32 +2130,29 @@ fun SettlementHistoryTable(
             )
 
             // 结算单底部备注：紧接总额行下方显示，仅当结算时有备注内容才显示
+            // 使用固定 tableWidth 与表格行对齐，避免 fillMaxWidth 在 horizontalScroll 中只取视口宽度导致表格变形
             // 样式："备注：xxx"（灰色文字，与表格等宽对齐）
             val remarkText = settlement.remark
             if (!remarkText.isNullOrBlank()) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = Color(0xFFFAFAFA)
+                Row(
+                    modifier = Modifier
+                        .width(tableWidth)
+                        .background(color = Color(0xFFFAFAFA))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.Top
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        Text(
-                            text = "备注：",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = AppColors.TextSecondary
-                        )
-                        Text(
-                            text = remarkText,
-                            fontSize = 13.sp,
-                            color = AppColors.TextPrimary,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
+                    Text(
+                        text = "备注：",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = AppColors.TextSecondary
+                    )
+                    Text(
+                        text = remarkText,
+                        fontSize = 13.sp,
+                        color = AppColors.TextPrimary,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
         }
