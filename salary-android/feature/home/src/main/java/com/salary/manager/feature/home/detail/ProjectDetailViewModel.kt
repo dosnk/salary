@@ -252,14 +252,14 @@ class ProjectDetailViewModel @Inject constructor(
      * @param subprojectId 子项目ID
      * @param lengthMeter 长度（米）
      * @param widthMeter 宽度（米）
-     * @param remark 备注
+     * @param remark 备注（空字符串表示删除备注，后端会转为 null 存储）
      */
     fun updateSubproject(
         projectId: Int,
         subprojectId: Int,
         lengthMeter: Double,
         widthMeter: Double,
-        remark: String?
+        remark: String
     ) {
         viewModelScope.launch {
             _savingSubproject.value = true
@@ -346,7 +346,7 @@ class ProjectDetailViewModel @Inject constructor(
      *
      * @param projectId 工程ID
      * @param name 工程名称（null表示不更新）
-     * @param remark 工程备注（null表示不更新）
+     * @param remark 工程备注（空字符串表示删除备注，后端会转为 null 存储）
      * @param status 工程状态（null表示不更新）
      * @param salaryDistribution 工资分配方式（null表示不更新）
      * @param constructorIds 选中的施工人员ID列表
@@ -355,7 +355,7 @@ class ProjectDetailViewModel @Inject constructor(
     fun updateProject(
         projectId: Int,
         name: String?,
-        remark: String?,
+        remark: String,
         status: String?,
         salaryDistribution: String?,
         constructorIds: List<Int>,

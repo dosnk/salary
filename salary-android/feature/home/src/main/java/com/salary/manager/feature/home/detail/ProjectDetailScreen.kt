@@ -1071,7 +1071,7 @@ fun SubprojectEditDialog(
     subproject: SubprojectUiModel,
     saving: Boolean,
     onDismiss: () -> Unit,
-    onConfirm: (lengthMeter: Double, widthMeter: Double, remark: String?) -> Unit
+    onConfirm: (lengthMeter: Double, widthMeter: Double, remark: String) -> Unit
 ) {
     // 表单状态（数据库存厘米，弹窗显示米，需除以100）
     var spaceType by remember { mutableStateOf(subproject.spaceTypeName) }
@@ -1173,7 +1173,11 @@ fun SubprojectEditDialog(
                 }
                 Button(
                     onClick = {
-                        onConfirm(lengthValue, widthValue, remark.ifBlank { null })
+                        // 备注为空时传空字符串而非 null
+                        // 原因：kotlinx.serialization 默认 encodeDefaults=false，
+                        // null 字段不会被序列化到 JSON，导致后端 updates.remark === undefined 不更新备注
+                        // 传空字符串确保 JSON 中包含 remark 字段，后端将空字符串转为 null 存储
+                        onConfirm(lengthValue, widthValue, remark.trim().ifBlank { "" })
                     },
                     // 长度和宽度都必须大于0（面积型方案需要两个维度都有有效值）
                     enabled = !saving && lengthValue > 0 && widthValue > 0,
@@ -1539,7 +1543,7 @@ fun EditProjectDialog(
     onDismiss: () -> Unit,
     onConfirm: (
         name: String,
-        remark: String?,
+        remark: String,
         status: String,
         salaryDistribution: String,
         constructorIds: List<Int>,
@@ -1953,9 +1957,13 @@ fun EditProjectDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
+                            // 备注为空时传空字符串而非 null
+                            // 原因：kotlinx.serialization 默认 encodeDefaults=false，
+                            // null 字段不会被序列化到 JSON，导致后端 updates.remark === undefined 不更新备注
+                            // 传空字符串确保 JSON 中包含 remark 字段，后端将空字符串转为 null 存储
                             onConfirm(
                                 name.trim(),
-                                remark.trim().ifBlank { null },
+                                remark.trim().ifBlank { "" },
                                 status,
                                 salaryDistribution,
                                 selectedConstructorIds.toList(),

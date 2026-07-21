@@ -475,8 +475,9 @@ module.exports = {
       updateFields.totalWorkDays = updates.totalWorkDays;
     }
     // 工程备注字段后端使用 remark（数据库列名也是 remark，直接透传）
+    // 空字符串转为 null 存储，保持数据库中无备注时统一为 null（避免 null/空字符串混用）
     if (updates.remark !== undefined) {
-      updateFields.remark = updates.remark;
+      updateFields.remark = updates.remark === '' ? null : updates.remark;
     }
 
     // 检查是否有可更新的内容
@@ -658,8 +659,9 @@ module.exports = {
     }
 
     // 备注
+    // 空字符串转为 null 存储，保持数据库中无备注时统一为 null（避免 null/空字符串混用）
     if (updates.remark !== undefined) {
-      updateFields.remark = updates.remark;
+      updateFields.remark = updates.remark === '' ? null : updates.remark;
     }
 
     // 检查是否有可更新的内容
