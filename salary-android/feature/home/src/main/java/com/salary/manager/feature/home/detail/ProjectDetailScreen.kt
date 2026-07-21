@@ -1024,16 +1024,29 @@ fun SubprojectTable(
                     }
                 }
             }
-            // 子项目备注：非空时在数据行下方显示（左侧备注标签 + 右侧备注内容）
-            // 让用户能直观看到子项目备注内容，编辑保存后立即刷新
+        }
+
+        // ===== 子项目备注汇总区：所有有备注的子项目集中显示在表格最下方 =====
+        // 不再分散在子项目行之间，避免打断表格视觉连续性
+        // 每条备注以"序号. 空间-方案"作为前缀标识所属子项目
+        val remarkList = subprojects.mapIndexedNotNull { index, sub ->
             if (!sub.remark.isNullOrBlank()) {
+                index to sub
+            } else {
+                null
+            }
+        }
+        if (remarkList.isNotEmpty()) {
+            // 备注区与末行表格保持间距，避免视觉粘连
+            Spacer(modifier = Modifier.height(8.dp))
+            remarkList.forEach { (index, sub) ->
                 Row(
                     modifier = Modifier
                         .width(tableWidth)
-                        .padding(start = 42.dp, top = 2.dp, bottom = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(start = 4.dp, top = 2.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.Top
                 ) {
-                    // 备注标签：浅绿底+绿字小标签，固定宽度不压缩
+                    // 备注标签：浅绿底+绿字小标签
                     Text(
                         text = "备注",
                         fontSize = 10.sp,
@@ -1048,12 +1061,13 @@ fun SubprojectTable(
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    // 备注内容：灰色小字，单行省略，占满剩余空间
+                    // 备注内容：灰色小字，带序号标识，单行省略
+                    // 格式："序号. 空间-方案：备注内容"，让用户能定位到具体子项目
                     Text(
-                        text = sub.remark,
+                        text = "${index + 1}. ${sub.spaceTypeName}-${sub.constructionPlanName}：${sub.remark}",
                         fontSize = 11.sp,
                         color = AppColors.TextTertiary,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
