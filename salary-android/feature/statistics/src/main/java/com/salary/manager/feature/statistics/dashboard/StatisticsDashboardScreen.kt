@@ -2123,34 +2123,34 @@ fun SettlementHistoryTable(
                 historyMode = true,
                 formatNumber = formatNumber
             )
-        }
 
-        // 结算单底部备注：仅当结算时有备注内容才显示
-        // 样式："备注：xxx"（灰色文字，与表格等宽对齐）
-        val remarkText = settlement.remark
-        if (!remarkText.isNullOrBlank()) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = Color(0xFFFAFAFA)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.Top
+            // 结算单底部备注：紧接总额行下方显示，仅当结算时有备注内容才显示
+            // 样式："备注：xxx"（灰色文字，与表格等宽对齐）
+            val remarkText = settlement.remark
+            if (!remarkText.isNullOrBlank()) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color(0xFFFAFAFA)
                 ) {
-                    Text(
-                        text = "备注：",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = AppColors.TextSecondary
-                    )
-                    Text(
-                        text = remarkText,
-                        fontSize = 13.sp,
-                        color = AppColors.TextPrimary,
-                        modifier = Modifier.weight(1f)
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(
+                            text = "备注：",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = AppColors.TextSecondary
+                        )
+                        Text(
+                            text = remarkText,
+                            fontSize = 13.sp,
+                            color = AppColors.TextPrimary,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
             }
         }
