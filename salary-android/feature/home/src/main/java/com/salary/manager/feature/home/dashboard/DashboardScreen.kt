@@ -83,7 +83,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
@@ -135,6 +134,10 @@ fun DashboardScreen(
     var showSchemeDialog by remember { mutableStateOf(false) }
     var showMonthDialog by remember { mutableStateOf(false) }
 
+    // 年月选择器点击回调：用 remember 包装避免每次重组创建新 lambda 实例，
+    // 让 HistoryHeader 子组件在参数未变时可被跳过重组
+    val onMonthDialogClick = remember { { showMonthDialog = true } }
+
     // 文件选择器：监听pendingUploadProjectId变化触发，支持多选
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetMultipleContents()
@@ -164,11 +167,6 @@ fun DashboardScreen(
             viewModel.clearMessage()
         }
     }
-
-    // 绿色渐变画刷
-    val greenGradientBrush = Brush.horizontalGradient(
-        colors = listOf(AppColors.Green400, AppColors.Green500)
-    )
 
     // 用于启动 Intent 打开附件 URL
     val context = LocalContext.current
@@ -732,8 +730,14 @@ fun DashboardScreen(
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                         // 计算预览公式（浅绿背景+绿色边框）
+                        // 优化：直接用 Text + Modifier 修饰，去掉外层 Box 容器
                         if (uiState.calculationFormula.isNotBlank()) {
-                            Box(
+                            Text(
+                                text = "计算预览：${uiState.calculationFormula}",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                fontFamily = FontFamily.Monospace,
+                                color = AppColors.TextPrimary,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .background(
@@ -746,15 +750,7 @@ fun DashboardScreen(
                                         shape = RoundedCornerShape(8.dp)
                                     )
                                     .padding(8.dp)
-                            ) {
-                                Text(
-                                    text = "计算预览：${uiState.calculationFormula}",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = AppColors.TextPrimary
-                                )
-                            }
+                            )
                         }
 
                         // 工程备注（压缩高度：限制最多2行，减少垂直占用）
@@ -812,68 +808,13 @@ fun DashboardScreen(
                 }
 
                 // ===== 工程历史区域标题 =====
+                // 抽成独立子组件：隔离 selectedYearMonth 状态读取，
+                // 避免年月变化或整页 uiState 重组时波及其他 item
                 item(key = "history_header") {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp)
-                    ) {
-                    // 标题行：工程历史（深色大字+下方绿色短线，建立区域权威感）
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "工程历史",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = AppColors.TextPrimary
-                        )
-                        // 年月选择器：胶囊按钮（浅绿底+绿描边+日历图标+绿色文字+下拉箭头，三重视觉提示可点击）
-                        Surface(
-                            onClick = { showMonthDialog = true },
-                            shape = RoundedCornerShape(20.dp),
-                            color = AppColors.Green50,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, AppColors.Green200)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.DateRange,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = AppColors.Green400
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = formatYearMonth(uiState.selectedYearMonth),
-                                    color = AppColors.Green400,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Spacer(modifier = Modifier.width(2.dp))
-                                Icon(
-                                    imageVector = Icons.Default.KeyboardArrowDown,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = AppColors.Green400
-                                )
-                            }
-                        }
-                    }
-
-                    // 区域标题下方绿色短线，强化区域标识
-                    Box(
-                        modifier = Modifier
-                            .padding(top = 4.dp, bottom = 8.dp)
-                            .width(32.dp)
-                            .height(2.dp)
-                            .background(AppColors.Green400, RoundedCornerShape(1.dp))
+                    HistoryHeader(
+                        selectedYearMonth = uiState.selectedYearMonth,
+                        onMonthClick = onMonthDialogClick
                     )
-                    } // end of header item
                 }
 
                 // 工程列表：加载中/空状态/懒加载列表
@@ -1024,6 +965,81 @@ fun DashboardScreen(
                 showMonthDialog = false
             },
             onDismiss = { showMonthDialog = false }
+        )
+    }
+}
+
+/**
+ * 工程历史区域标题
+ *
+ * 独立子组件目的：
+ * - 隔离 selectedYearMonth 状态读取，年月变化只触发本组件重组，不波及其他 item
+ * - onMonthClick 由父级 remember 包装，lambda 实例稳定，Surface 内部子组件可被跳过重组
+ */
+@Composable
+private fun HistoryHeader(
+    selectedYearMonth: String,
+    onMonthClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+    ) {
+        // 标题行：工程历史（深色大字+下方绿色短线，建立区域权威感）
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "工程历史",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = AppColors.TextPrimary
+            )
+            // 年月选择器：胶囊按钮（浅绿底+绿描边+日历图标+绿色文字+下拉箭头，三重视觉提示可点击）
+            Surface(
+                onClick = onMonthClick,
+                shape = RoundedCornerShape(20.dp),
+                color = AppColors.Green50,
+                border = androidx.compose.foundation.BorderStroke(1.dp, AppColors.Green200)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DateRange,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = AppColors.Green400
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = formatYearMonth(selectedYearMonth),
+                        color = AppColors.Green400,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = AppColors.Green400
+                    )
+                }
+            }
+        }
+
+        // 区域标题下方绿色短线，强化区域标识
+        Box(
+            modifier = Modifier
+                .padding(top = 4.dp, bottom = 8.dp)
+                .width(32.dp)
+                .height(2.dp)
+                .background(AppColors.Green400, RoundedCornerShape(1.dp))
         )
     }
 }
