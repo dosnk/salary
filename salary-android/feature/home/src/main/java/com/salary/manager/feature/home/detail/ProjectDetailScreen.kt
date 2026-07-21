@@ -1230,14 +1230,17 @@ fun SubprojectEditDialog(
                     )
                 }
                 // 备注（自适应高度，最多200dp避免占用过多屏幕）
+                // 样式与编辑工程弹窗的"工程备注"保持一致：label在框内 + placeholder + 自适应高度
                 OutlinedTextField(
                     value = remark,
                     onValueChange = { remark = it },
                     label = { Text("备注") },
+                    placeholder = { Text("请输入备注（可选）") },
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 200.dp),
-                    minLines = 1
+                    minLines = 1,
+                    shape = RoundedCornerShape(8.dp)
                 )
                 // 操作按钮（右对齐，取消在左保存在右）
                 Row(
@@ -1766,19 +1769,18 @@ fun EditProjectDialog(
                         }
                     }
 
-                    // ===== 工程备注 =====
-                    Column {
-                        Text("工程备注", fontSize = 13.sp, color = AppColors.TextSecondary)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        OutlinedTextField(
-                            value = remark,
-                            onValueChange = { remark = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            maxLines = 3,
-                            shape = RoundedCornerShape(8.dp),
-                            placeholder = { Text("请输入工程备注（可选）", fontSize = 14.sp) }
-                        )
-                    }
+                    // ===== 工程备注（与子项目编辑弹窗样式统一：label在框内 + 自适应高度） =====
+                    OutlinedTextField(
+                        value = remark,
+                        onValueChange = { remark = it },
+                        label = { Text("工程备注") },
+                        placeholder = { Text("请输入工程备注（可选）") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 200.dp),
+                        minLines = 1,
+                        shape = RoundedCornerShape(8.dp)
+                    )
 
                     // ===== 工资分配方式 =====
                     Column {
