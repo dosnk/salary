@@ -2130,29 +2130,47 @@ fun SettlementHistoryTable(
             )
 
             // 结算单底部备注：紧接总额行下方显示，仅当结算时有备注内容才显示
-            // 使用固定 tableWidth 与表格行对齐，避免 fillMaxWidth 在 horizontalScroll 中只取视口宽度导致表格变形
-            // 样式："备注：xxx"（灰色文字，与表格等宽对齐）
+            // 使用固定 tableWidth 与表格行对齐，添加外边框+内竖线+浅灰背景，溶入主表格
+            // 样式："备注：xxx"（标签在前2列宽度内，内容跨剩余列）
             val remarkText = settlement.remark
             if (!remarkText.isNullOrBlank()) {
+                // 内竖线列宽：与 FinalTotalRow 一致（合并列206dp + 各方案72dp）
+                val remarkColumnWidths = buildList {
+                    add(206.dp)
+                    repeat(constructionPlans.size) { add(72.dp) }
+                }
                 Row(
                     modifier = Modifier
                         .width(tableWidth)
-                        .background(color = Color(0xFFFAFAFA))
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                        .background(color = Color(0xFFF9FAFB))
+                        .border(width = 0.5.dp, color = Color(0xFF9CA3AF))
+                        .drawVerticalLines(remarkColumnWidths)
+                        .padding(vertical = 8.dp, horizontal = 4.dp),
                     verticalAlignment = Alignment.Top
                 ) {
-                    Text(
-                        text = "备注：",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = AppColors.TextSecondary
-                    )
-                    Text(
-                        text = remarkText,
-                        fontSize = 13.sp,
-                        color = AppColors.TextPrimary,
-                        modifier = Modifier.weight(1f)
-                    )
+                    // "备注："标签：占合并前2列宽度（206dp），与表格行第一列对齐
+                    Box(
+                        modifier = Modifier.width(206.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Text(
+                            text = "备注：",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = AppColors.TextSecondary
+                        )
+                    }
+                    // 备注内容：占剩余所有列（各方案列+总额列）
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Text(
+                            text = remarkText,
+                            fontSize = 13.sp,
+                            color = AppColors.TextPrimary
+                        )
+                    }
                 }
             }
         }
