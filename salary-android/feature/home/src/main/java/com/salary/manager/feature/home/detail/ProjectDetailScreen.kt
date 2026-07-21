@@ -1908,14 +1908,15 @@ fun EditProjectDialog(
                                 )
                             }
                             Spacer(modifier = Modifier.height(6.dp))
-                            // 按每行3个分组，使用Row+weight实现等宽占满容器
-                            selectedWorkers.chunked(3).forEach { rowWorkers ->
+                            // 按每行2个分组（窄屏适配），使用Row+weight实现等宽占满容器
+                            // 改为2列+纵向布局（姓名在上、输入框在下），避免320dp窄屏下3列布局挤压姓名
+                            selectedWorkers.chunked(2).forEach { rowWorkers ->
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     rowWorkers.forEach { worker ->
-                                        // 每个施工人员一个等宽标签：姓名 + 工日输入框
+                                        // 每个施工人员一个等宽卡片：姓名（上）+ 工日输入框（下）
                                         Surface(
                                             shape = RoundedCornerShape(8.dp),
                                             color = AppColors.Green50,
@@ -1925,13 +1926,13 @@ fun EditProjectDialog(
                                             ),
                                             modifier = Modifier.weight(1f)
                                         ) {
-                                            Row(
+                                            Column(
                                                 modifier = Modifier.padding(
-                                                    horizontal = 6.dp,
+                                                    horizontal = 8.dp,
                                                     vertical = 6.dp
-                                                ),
-                                                verticalAlignment = Alignment.CenterVertically
+                                                )
                                             ) {
+                                                // 第一行：姓名（单行省略）
                                                 Text(
                                                     text = worker.nickname,
                                                     fontSize = 12.sp,
@@ -1939,54 +1940,59 @@ fun EditProjectDialog(
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                                // 工日输入框：仅允许数字和小数点
-                                                val workdayValue = workerWorkdays[worker.id] ?: ""
-                                                OutlinedTextField(
-                                                    value = workdayValue,
-                                                    onValueChange = { value ->
-                                                        // 仅允许数字和小数点
-                                                        val filtered = value.filter { it.isDigit() || it == '.' }
-                                                        workerWorkdays = workerWorkdays + (worker.id to filtered)
-                                                        validateWorkdays()
-                                                    },
-                                                    placeholder = {
-                                                        Text(
-                                                            "1",
-                                                            fontSize = 12.sp,
-                                                            color = AppColors.TextTertiary
-                                                        )
-                                                    },
-                                                    singleLine = true,
-                                                    keyboardOptions = KeyboardOptions(
-                                                        keyboardType = KeyboardType.Decimal
-                                                    ),
-                                                    modifier = Modifier
-                                                        .width(56.dp)
-                                                        .heightIn(min = 48.dp),
-                                                    textStyle = androidx.compose.ui.text.TextStyle(
-                                                        fontSize = 14.sp,
-                                                        textAlign = TextAlign.Center
-                                                    ),
-                                                    colors = OutlinedTextFieldDefaults.colors(
-                                                        focusedContainerColor = Color.White,
-                                                        unfocusedContainerColor = Color.White,
-                                                        focusedBorderColor = AppColors.Green400,
-                                                        unfocusedBorderColor = AppColors.Green200
-                                                    ),
-                                                    shape = RoundedCornerShape(6.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(2.dp))
-                                                Text(
-                                                    text = "天",
-                                                    fontSize = 11.sp,
-                                                    color = AppColors.TextTertiary
-                                                )
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                // 第二行：工日输入框 + "天"（水平排列）
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    // 工日输入框：仅允许数字和小数点
+                                                    val workdayValue = workerWorkdays[worker.id] ?: ""
+                                                    OutlinedTextField(
+                                                        value = workdayValue,
+                                                        onValueChange = { value ->
+                                                            // 仅允许数字和小数点
+                                                            val filtered = value.filter { it.isDigit() || it == '.' }
+                                                            workerWorkdays = workerWorkdays + (worker.id to filtered)
+                                                            validateWorkdays()
+                                                        },
+                                                        placeholder = {
+                                                            Text(
+                                                                "1",
+                                                                fontSize = 12.sp,
+                                                                color = AppColors.TextTertiary
+                                                            )
+                                                        },
+                                                        singleLine = true,
+                                                        keyboardOptions = KeyboardOptions(
+                                                            keyboardType = KeyboardType.Decimal
+                                                        ),
+                                                        modifier = Modifier
+                                                            .weight(1f)
+                                                            .heightIn(min = 48.dp),
+                                                        textStyle = androidx.compose.ui.text.TextStyle(
+                                                            fontSize = 14.sp,
+                                                            textAlign = TextAlign.Center
+                                                        ),
+                                                        colors = OutlinedTextFieldDefaults.colors(
+                                                            focusedContainerColor = Color.White,
+                                                            unfocusedContainerColor = Color.White,
+                                                            focusedBorderColor = AppColors.Green400,
+                                                            unfocusedBorderColor = AppColors.Green200
+                                                        ),
+                                                        shape = RoundedCornerShape(6.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text(
+                                                        text = "天",
+                                                        fontSize = 11.sp,
+                                                        color = AppColors.TextTertiary
+                                                    )
+                                                }
                                             }
                                         }
                                     }
-                                    // 不足3个时用空占位填充，保持每行等宽对齐
-                                    repeat(3 - rowWorkers.size) {
+                                    // 不足2个时用空占位填充，保持每行等宽对齐
+                                    repeat(2 - rowWorkers.size) {
                                         Spacer(modifier = Modifier.weight(1f))
                                     }
                                 }
@@ -2100,7 +2106,7 @@ fun HistoryItem(item: HistoryUiModel) {
         Column(
             modifier = Modifier.weight(1f)
         ) {
-            // 头部：操作类型 + 时间
+            // 头部：操作类型 + 时间（操作类型单行省略，时间固定宽度右对齐）
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -2110,12 +2116,17 @@ fun HistoryItem(item: HistoryUiModel) {
                     text = item.actionName.ifBlank { item.action },
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = AppColors.TextPrimary
+                    color = AppColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
                 )
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = DateFormatter.formatDate(item.createdAt),
                     fontSize = 11.sp,
-                    color = AppColors.TextTertiary
+                    color = AppColors.TextTertiary,
+                    maxLines = 1
                 )
             }
             Spacer(modifier = Modifier.height(2.dp))
@@ -2123,16 +2134,20 @@ fun HistoryItem(item: HistoryUiModel) {
             Text(
                 text = "操作人：${item.nickname.ifBlank { item.username }}",
                 fontSize = 12.sp,
-                color = AppColors.TextSecondary
+                color = AppColors.TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
-            // 描述
+            // 描述（最多3行省略，防止长描述撑高行高）
             if (item.description.isNotBlank()) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = item.description,
                     fontSize = 12.sp,
                     color = AppColors.Green400,
-                    lineHeight = 18.sp
+                    lineHeight = 18.sp,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }

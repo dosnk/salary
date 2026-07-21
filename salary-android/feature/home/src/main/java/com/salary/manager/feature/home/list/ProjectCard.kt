@@ -190,7 +190,9 @@ private fun AmountSection(project: ProjectUiModel) {
                     text = project.totalAmountText,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
-                    color = AppColors.Green400
+                    color = AppColors.Green400,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
             // 右侧：人均/日均工费（右对齐）
@@ -208,7 +210,9 @@ private fun AmountSection(project: ProjectUiModel) {
                     text = "¥${project.perAmountText}",
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
-                    color = AppColors.Green400
+                    color = AppColors.Green400,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }

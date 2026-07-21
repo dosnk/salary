@@ -896,6 +896,7 @@ fun StatCardItem(
             )
             Spacer(modifier = Modifier.height(2.dp))
             // 第3行：金额标签 + 金额数（缩进40dp，与图标右侧对齐）
+            // 标签固定宽度避免被长金额挤压，金额单行省略防止溢出卡片
             Row(
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -909,7 +910,10 @@ fun StatCardItem(
                     text = "¥${formatNumber(card.amount)}",
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
-                    color = card.iconColor
+                    color = card.iconColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
                 )
             }
         }
