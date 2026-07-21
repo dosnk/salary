@@ -339,7 +339,7 @@ class StatisticsDashboardViewModel @Inject constructor(
     }
 
     /** 执行结算操作 */
-    fun handleSettle() {
+    fun handleSettle(remark: String = "") {
         val selectedIds = _selectedProjectIds.value
         if (selectedIds.isEmpty()) {
             _errorMessage.value = "请选择要结算的工程"
@@ -348,7 +348,7 @@ class StatisticsDashboardViewModel @Inject constructor(
         viewModelScope.launch {
             _settling.value = true
             try {
-                val response = salarySheetApi.settle(SettleRequest(projectIds = selectedIds))
+                val response = salarySheetApi.settle(SettleRequest(projectIds = selectedIds, remark = remark))
                 if (response.code == 200 && response.data != null) {
                     val data = response.data!!
                     _successMessage.value = "结算成功！单号：${data.settlementNo}"

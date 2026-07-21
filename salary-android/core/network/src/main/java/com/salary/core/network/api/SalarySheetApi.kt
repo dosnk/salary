@@ -171,7 +171,9 @@ data class AdvanceDataDto(
 /** 结算请求 */
 @Serializable
 data class SettleRequest(
-    val projectIds: List<Int>
+    val projectIds: List<Int>,
+    /** 结算备注（可选，空字符串表示无备注） */
+    val remark: String = ""
 )
 
 /** 结算响应 */
@@ -250,7 +252,9 @@ data class SettlementHistoryDto(
     @SerialName("total_advance")
     val totalAdvance: Double = 0.0,
     @SerialName("final_total")
-    val finalTotal: Double = 0.0
+    val finalTotal: Double = 0.0,
+    /** 结算备注（null或空字符串表示无备注） */
+    val remark: String? = null
 )
 
 // ========== 已结算工程（扁平行结构） ==========

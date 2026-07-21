@@ -45,6 +45,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Tab
@@ -150,6 +151,8 @@ fun StatisticsDashboardScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     var showSettleConfirm by remember { mutableStateOf(false) }
+    // 结算备注输入：在确认弹窗中输入，确认结算时随请求一起提交
+    var settleRemark by remember { mutableStateOf("") }
     var showStatsProjectList by remember { mutableStateOf(false) }
     var statsFilterType by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
@@ -307,7 +310,11 @@ fun StatisticsDashboardScreen(
                                             selectedProjectIds = selectedProjectIds,
                                             settling = settling,
                                             canSettle = canSettle,
-                                            onSettle = { showSettleConfirm = true },
+                                            onSettle = {
+                                                // 打开确认弹窗时重置备注输入，避免上次输入残留
+                                                settleRemark = ""
+                                                showSettleConfirm = true
+                                            },
                                             onExportImage = onExportCurrentImage
                                         )
                                     }
@@ -589,16 +596,27 @@ fun StatisticsDashboardScreen(
             onDismissRequest = { showSettleConfirm = false },
             title = { Text("确认结算") },
             text = {
-                Column {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("已选择 ${selectedProjectIds.size} 个工程")
                     Text("确认后将生成结算单，结算后不可修改", color = AppColors.TextSecondary, fontSize = 13.sp)
+                    // 备注输入框：可选，用于在结算单底部显示备注信息
+                    OutlinedTextField(
+                        value = settleRemark,
+                        onValueChange = { settleRemark = it },
+                        label = { Text("备注（可选）") },
+                        placeholder = { Text("请输入结算备注") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = false,
+                        minLines = 1,
+                        maxLines = 3
+                    )
                 }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
                         showSettleConfirm = false
-                        viewModel.handleSettle()
+                        viewModel.handleSettle(settleRemark.trim())
                     }
                 ) {
                     Text("确认结算", color = AppColors.Green400)
@@ -2102,6 +2120,36 @@ fun SettlementHistoryTable(
                 historyMode = true,
                 formatNumber = formatNumber
             )
+        }
+
+        // 结算单底部备注：仅当结算时有备注内容才显示
+        // 样式："备注：xxx"（灰色文字，与表格等宽对齐）
+        val remarkText = settlement.remark
+        if (!remarkText.isNullOrBlank()) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = Color(0xFFFAFAFA)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Text(
+                        text = "备注：",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = AppColors.TextSecondary
+                    )
+                    Text(
+                        text = remarkText,
+                        fontSize = 13.sp,
+                        color = AppColors.TextPrimary,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
         }
     }
 }

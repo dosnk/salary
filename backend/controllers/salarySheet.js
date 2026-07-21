@@ -233,7 +233,7 @@ const getAdvances = async (ctx) => {
 const settle = async (ctx) => {
   const client = await pool.connect();
   try {
-    const { projectIds } = ctx.request.body;
+    const { projectIds, remark } = ctx.request.body;
     const userId = ctx.state.user?.id;
     const user = ctx.state.user;
 
@@ -246,6 +246,12 @@ const settle = async (ctx) => {
       ctx.fail(1001, '请选择要结算的工程');
       return;
     }
+
+    // 备注字段处理：空字符串转 null，避免数据库存冗余空字符串
+    // 长度校验由前端控制，后端兜底截断到500字符（与工程备注一致）
+    const settlementRemark = (remark && typeof remark === 'string' && remark.trim())
+      ? remark.trim().slice(0, 500)
+      : null;
 
     await client.query('BEGIN');
 
@@ -482,21 +488,22 @@ const settle = async (ctx) => {
     const projectIdsArray = [...new Set(projects.map(p => p.id))];
     const settlementResult = await client.query(`
       INSERT INTO wage_settlements (
-        settlement_no, 
+        settlement_no,
         project_id,
         project_ids,
         user_id,
-        start_month, 
-        end_month, 
-        total_amount, 
-        advance_amount, 
-        actual_amount, 
+        start_month,
+        end_month,
+        total_amount,
+        advance_amount,
+        actual_amount,
         confirmed,
         confirmed_at,
-        settled_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP, $11)
+        settled_by,
+        remark
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP, $11, $12)
       RETURNING id
-    `, [settlementNo, projectIdsArray[0], JSON.stringify(projectIdsArray), userId, formattedStartDate, formattedEndDate, totalAmount, advanceAmount, actualAmount, true, userId]);
+    `, [settlementNo, projectIdsArray[0], JSON.stringify(projectIdsArray), userId, formattedStartDate, formattedEndDate, totalAmount, advanceAmount, actualAmount, true, userId, settlementRemark]);
 
     const settlementId = settlementResult.rows[0].id;
 
