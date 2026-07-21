@@ -66,6 +66,11 @@ object SettlementImageGenerator {
     private val COLOR_TOTAL_BG = Color.parseColor("#E3F2FD")
     private val COLOR_BORDER = Color.parseColor("#666666")
     private val COLOR_TEXT = Color.parseColor("#333333")
+    private val COLOR_REMARK_BG = Color.parseColor("#F9FAFB")
+
+    // ========== 备注行 ==========
+    // 备注行左右内边距（px），文本左对齐时距离单元格左边框的距离
+    private const val REMARK_PADDING = 16f
 
     // ========== 内存保护 ==========
     // 单页 Bitmap 最大像素高度，超过此值自动分页（防止 OOM）
@@ -292,18 +297,43 @@ object SettlementImageGenerator {
         val planCount = constructionPlans.size
         val bitmapHeight = (TITLE_HEIGHT + EMPTY_ROW_HEIGHT + ROW_HEIGHT + rows.size * ROW_HEIGHT).toInt()
 
+        // ========== 备注行高度预计算 ==========
+        // 备注仅在最后一页的总额行下方绘制；内容可能较长需按宽度换行为多行
+        // 用一个与数据行同字号的画笔测量文本，计算所需行数和总高度
+        val isLastPage = pageIndex == totalPages - 1
+        val settlementRemark = settlement.remark
+        val remarkText = if (isLastPage && !settlementRemark.isNullOrBlank()) {
+            "备注：${settlementRemark.trim()}"
+        } else {
+            ""
+        }
+        val remarkMeasurePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = COLOR_TEXT
+            textSize = DATA_FONT_SIZE
+            textAlign = Paint.Align.LEFT
+        }
+        val remarkLines: List<String> = if (remarkText.isNotEmpty()) {
+            wrapText(remarkText, remarkMeasurePaint, bitmapWidth - REMARK_PADDING * 2)
+        } else {
+            emptyList()
+        }
+        // 备注区域总高度：每行占 ROW_HEIGHT，至少一行（有内容时）
+        val remarkHeight = remarkLines.size * ROW_HEIGHT
+        val totalBitmapHeight = (bitmapHeight + remarkHeight).toInt()
+
         // ========== 内存预检 ==========
         // 超过 Bitmap 单边最大像素数，直接报错（含友好提示）
-        if (bitmapHeight > MAX_BITMAP_DIMENSION) {
+        // 注意：高度校验使用含备注的 totalBitmapHeight，避免备注撑高后超限
+        if (totalBitmapHeight > MAX_BITMAP_DIMENSION) {
             // 计算导致超限的工程（子项目过多）
             val projectCount = rows.count { it is RowData.ProjectSummary }
             throw IllegalStateException(
-                "结算单图片高度过大（${bitmapHeight}px），超过最大限制 $MAX_BITMAP_DIMENSION 像素。\n" +
+                "结算单图片高度过大（${totalBitmapHeight}px），超过最大限制 $MAX_BITMAP_DIMENSION 像素。\n" +
                 "当前页包含 $projectCount 份工程，子项目数量过多。\n" +
                 "请减少单次导出的工程数量，或联系管理员优化数据。"
             )
         }
-        val estimatedBytes = bitmapWidth.toLong() * bitmapHeight.toLong() * 2L // RGB_565: 2字节/像素
+        val estimatedBytes = bitmapWidth.toLong() * totalBitmapHeight.toLong() * 2L // RGB_565: 2字节/像素
         if (estimatedBytes > MAX_BITMAP_BYTES) {
             val mb = estimatedBytes / 1024 / 1024
             throw IllegalStateException(
@@ -314,7 +344,8 @@ object SettlementImageGenerator {
         // 创建Bitmap和Canvas
         // 使用 RGB_565（每像素 2 字节）替代默认 ARGB_8888（每像素 4 字节），内存减半
         // 表格图片无透明度需求，RGB_565 视觉效果无明显差异
-        val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.RGB_565)
+        // 高度使用含备注区域的 totalBitmapHeight
+        val bitmap = Bitmap.createBitmap(bitmapWidth, totalBitmapHeight, Bitmap.Config.RGB_565)
         val canvas = Canvas(bitmap)
         canvas.drawColor(Color.WHITE)
 
@@ -547,6 +578,29 @@ object SettlementImageGenerator {
             }
         }
 
+        // ========== 5. 备注行（仅最后一页且有备注时绘制，跨整行、左对齐、支持多行） ==========
+        if (remarkLines.isNotEmpty()) {
+            // 备注区背景（淡灰）
+            bgPaint.color = COLOR_REMARK_BG
+            canvas.drawRect(0f, y, bitmapWidth.toFloat(), y + remarkHeight, bgPaint)
+            // 外边框（整块矩形，不画列分隔线，实现整行合并效果）
+            canvas.drawRect(0f, y, bitmapWidth.toFloat(), y + remarkHeight, borderPaint)
+
+            // 逐行绘制备注文本：左对齐，每行占 ROW_HEIGHT 高度并在行内垂直居中
+            textPaint.color = COLOR_TEXT
+            textPaint.textSize = DATA_FONT_SIZE
+            textPaint.typeface = Typeface.DEFAULT
+            textPaint.textAlign = Paint.Align.LEFT
+            remarkLines.forEachIndexed { lineIndex, line ->
+                val lineTop = y + lineIndex * ROW_HEIGHT
+                val baseline = lineTop + ROW_HEIGHT / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
+                canvas.drawText(line, REMARK_PADDING, baseline, textPaint)
+            }
+            // 恢复画笔水平居中对齐，避免影响后续潜在绘制
+            textPaint.textAlign = Paint.Align.CENTER
+            y += remarkHeight
+        }
+
         return bitmap
     }
 
@@ -627,6 +681,41 @@ object SettlementImageGenerator {
         } else {
             baseText
         }
+    }
+
+    /**
+     * 将文本按最大宽度换行为多行
+     *
+     * 逐字符累积测量，超过 maxWidth 时换行。适用于中英文混排的备注内容。
+     * 至少返回一行（即使内容为空也返回原文本单行），避免高度计算得到 0。
+     *
+     * @param text 待换行的完整文本
+     * @param paint 用于测量文本宽度的画笔（需与实际绘制画笔字号一致）
+     * @param maxWidth 单行最大可用宽度（px）
+     * @return 换行后的文本行列表
+     */
+    private fun wrapText(text: String, paint: Paint, maxWidth: Float): List<String> {
+        if (text.isEmpty() || maxWidth <= 0f) return listOf(text)
+        val lines = mutableListOf<String>()
+        val current = StringBuilder()
+        for (ch in text) {
+            // 遇到显式换行符直接换行
+            if (ch == '\n') {
+                lines.add(current.toString())
+                current.clear()
+                continue
+            }
+            current.append(ch)
+            // 当前累积宽度超过最大宽度时，将最后一个字符移到下一行
+            if (paint.measureText(current.toString()) > maxWidth && current.length > 1) {
+                current.deleteCharAt(current.length - 1)
+                lines.add(current.toString())
+                current.clear()
+                current.append(ch)
+            }
+        }
+        if (current.isNotEmpty()) lines.add(current.toString())
+        return if (lines.isEmpty()) listOf(text) else lines
     }
 
     /**

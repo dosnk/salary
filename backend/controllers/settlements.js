@@ -580,6 +580,7 @@ const exportSettlementByIdToExcel = async (ctx) => {
         wss.total_amount,
         wss.advance_amount,
         wss.actual_amount,
+        wss.remark,
         wss.projects_snapshot,
         wss.advances_snapshot,
         wss.calculation_snapshot,
@@ -776,6 +777,22 @@ const exportSettlementByIdToExcel = async (ctx) => {
     finalRow.push(`¥${parseFloat(finalTotal).toFixed(2)}`);
     aoaData.push(finalRow);
 
+    // 备注行：仅当结算时填写了备注才追加，位于总额行下方
+    // 备注内容跨整行合并显示，记录行号用于后续设置合并区间和样式
+    const settlementRemark = snapshot.remark && String(snapshot.remark).trim()
+      ? String(snapshot.remark).trim()
+      : '';
+    let remarkRowIndex = -1;
+    if (settlementRemark) {
+      remarkRowIndex = aoaData.length;
+      const remarkRow = [`备注：${settlementRemark}`];
+      // 填充空列保持列数一致（内容在合并单元格中左对齐显示）
+      for (let i = 1; i < headers.length; i++) {
+        remarkRow.push('');
+      }
+      aoaData.push(remarkRow);
+    }
+
     // 创建Excel工作簿
     const worksheet = XLSX.utils.aoa_to_sheet(aoaData);
 
@@ -783,6 +800,12 @@ const exportSettlementByIdToExcel = async (ctx) => {
     worksheet['!merges'] = [
       { s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } }
     ];
+    // 若存在备注行，合并备注行所有列（整行显示备注内容）
+    if (remarkRowIndex >= 0) {
+      worksheet['!merges'].push(
+        { s: { r: remarkRowIndex, c: 0 }, e: { r: remarkRowIndex, c: headers.length - 1 } }
+      );
+    }
 
     // 设置列宽：第一列1.3厘米≈4.91字符，第二列4.5厘米≈17.01字符，其余列4厘米≈15.12字符
     worksheet['!cols'] = headers.map((_, index) => {
@@ -792,8 +815,23 @@ const exportSettlementByIdToExcel = async (ctx) => {
     });
 
     // 设置行高：0.75厘米 ≈ 21.26 磅
+    // 备注行因内容可能较长且开启自动换行，按内容长度与总列宽估算所需行数动态放大高度
     const rowHeight = 21.26;
-    worksheet['!rows'] = aoaData.map(() => ({ hpt: rowHeight }));
+    worksheet['!rows'] = aoaData.map((_, rowIdx) => {
+      if (rowIdx === remarkRowIndex && settlementRemark) {
+        // 合并单元格总字符宽度 = 各列 wch 之和；按此估算备注需要的行数（中文按较宽估算）
+        const totalWch = headers.reduce((sum, _h, idx) => {
+          if (idx === 0) return sum + 4.91;
+          if (idx === 1) return sum + 17.01;
+          return sum + 15.12;
+        }, 0);
+        // "备注："前缀 + 内容长度，除以可容纳字符数向上取整为行数，至少1行、最多兜底6行
+        const contentLen = `备注：${settlementRemark}`.length;
+        const lines = Math.min(6, Math.max(1, Math.ceil(contentLen / Math.max(1, totalWch))));
+        return { hpt: rowHeight * lines };
+      }
+      return { hpt: rowHeight };
+    });
 
     // 定义样式
     const borderStyle = {
@@ -864,6 +902,14 @@ const exportSettlementByIdToExcel = async (ctx) => {
       border: borderStyle
     };
 
+    // 备注行样式（左对齐、灰底、支持自动换行，与程序内备注行视觉一致）
+    const remarkRowStyle = {
+      alignment: { horizontal: 'left', vertical: 'center', wrapText: true },
+      fill: { fgColor: { rgb: 'F9FAFB' } },
+      font: { color: { rgb: '333333' }, sz: 11 },
+      border: borderStyle
+    };
+
     // 应用样式到单元格
     const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1');
 
@@ -902,6 +948,10 @@ const exportSettlementByIdToExcel = async (ctx) => {
         // 第一行（结算单号行）不设置背景色，左对齐
         if (R === 0) {
           worksheet[cellAddress].s = titleStyle;
+        }
+        // 备注行 - 整行应用备注样式（左对齐、支持换行）
+        else if (R === remarkRowIndex) {
+          worksheet[cellAddress].s = remarkRowStyle;
         }
         // 第二行（空行）设置边框
         else if (R === 1) {
