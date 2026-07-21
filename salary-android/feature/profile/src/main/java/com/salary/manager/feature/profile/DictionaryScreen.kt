@@ -12,8 +12,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.salary.core.design.theme.AppColors
 import com.salary.core.network.api.DictionaryItemDto
 
@@ -153,10 +156,22 @@ private fun DictionaryListSection(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(item.name, fontSize = 15.sp, color = AppColors.TextPrimary)
+                                Text(
+                                    item.name,
+                                    fontSize = 15.sp,
+                                    color = AppColors.TextPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                                 val desc = item.description
                                 if (!desc.isNullOrBlank()) {
-                                    Text(desc, fontSize = 12.sp, color = AppColors.TextTertiary)
+                                    Text(
+                                        desc,
+                                        fontSize = 12.sp,
+                                        color = AppColors.TextTertiary,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
                             }
                             TextButton(onClick = {
@@ -207,13 +222,29 @@ private fun AddDictionaryItemDialog(
     var name by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
 
-    AlertDialog(
+    // 使用 Dialog + usePlatformDefaultWidth=false 实现宽度自适应屏幕
+    Dialog(
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(24.dp),
-        containerColor = Color.White,
-        title = { Text(title, fontWeight = FontWeight.Bold) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(0.92f),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    title,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = AppColors.TextPrimary
+                )
                 OutlinedTextField(
                     value = name, onValueChange = { name = it },
                     label = { Text("名称", fontSize = 13.sp) },
@@ -228,18 +259,22 @@ private fun AddDictionaryItemDialog(
                     shape = RoundedCornerShape(8.dp),
                     singleLine = true
                 )
+                // 操作按钮右对齐
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) { Text("取消") }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    TextButton(onClick = {
+                        if (name.isBlank()) return@TextButton
+                        onConfirm(name.trim(), description.ifBlank { null })
+                    }) {
+                        Text("确定", color = AppColors.Green400, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                if (name.isBlank()) return@TextButton
-                onConfirm(name.trim(), description.ifBlank { null })
-            }) {
-                Text("确定", color = AppColors.Green400, fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
         }
-    )
+    }
 }

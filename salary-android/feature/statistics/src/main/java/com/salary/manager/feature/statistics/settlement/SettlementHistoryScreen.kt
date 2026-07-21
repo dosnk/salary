@@ -10,6 +10,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -106,18 +107,23 @@ fun SettlementHistoryCard(item: SettlementHistoryItem) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     item.settlementNo,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
-                    color = AppColors.TextPrimary
+                    color = AppColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
                 Text(
                     DateFormatter.formatDate(item.settledAt),
                     fontSize = 12.sp,
-                    color = AppColors.TextTertiary
+                    color = AppColors.TextTertiary,
+                    maxLines = 1
                 )
             }
 
@@ -127,24 +133,29 @@ fun SettlementHistoryCard(item: SettlementHistoryItem) {
                 AmountFormatter.format(item.actualAmount),
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
-                color = AppColors.Green400
+                color = AppColors.Green400,
+                maxLines = 1
             )
 
             Spacer(modifier = Modifier.height(4.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     "总额 ${AmountFormatter.formatPlain(item.totalAmount)} | 预支 ${AmountFormatter.formatPlain(item.advanceAmount)}",
                     fontSize = 12.sp,
-                    color = AppColors.TextSecondary
+                    color = AppColors.TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
                 if (item.confirmed) {
-                    Text("已确认", fontSize = 12.sp, color = AppColors.Success, fontWeight = FontWeight.Medium)
+                    Text("已确认", fontSize = 12.sp, color = AppColors.Success, fontWeight = FontWeight.Medium, maxLines = 1)
                 } else {
-                    Text("待确认", fontSize = 12.sp, color = AppColors.Warning, fontWeight = FontWeight.Medium)
+                    Text("待确认", fontSize = 12.sp, color = AppColors.Warning, fontWeight = FontWeight.Medium, maxLines = 1)
                 }
             }
         }

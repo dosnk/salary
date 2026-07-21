@@ -27,9 +27,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -60,8 +61,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.salary.core.design.component.GreenTopNavBar
 import com.salary.core.design.theme.AppColors
@@ -233,35 +237,60 @@ fun ProjectListScreen(
         }
     }
 
-    // 确认完工对话框
+    // 确认完工对话框 - 使用 Dialog + usePlatformDefaultWidth=false 实现宽度自适应屏幕
     confirmProject?.let { project ->
-        AlertDialog(
+        Dialog(
             onDismissRequest = { confirmProject = null },
-            title = { Text("确认完工") },
-            text = {
-                Column {
-                    Text("工程名称：${project.name}")
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Card(
+                modifier = Modifier.fillMaxWidth(0.92f),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        "确认完工",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = AppColors.TextPrimary
+                    )
+                    Text(
+                        "工程名称：${project.name}",
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Text("当前状态：施工中")
                     Text("新状态：已完工")
                     Text("确认后工程将进入统计结算流程", color = AppColors.TextSecondary, fontSize = 13.sp)
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.confirmProjectComplete(project.id)
-                        confirmProject = null
+                    // 操作按钮右对齐
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { confirmProject = null }) {
+                            Text("取消", color = AppColors.TextSecondary)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        TextButton(
+                            onClick = {
+                                viewModel.confirmProjectComplete(project.id)
+                                confirmProject = null
+                            }
+                        ) {
+                            Text("确认完工", color = AppColors.Green400)
+                        }
                     }
-                ) {
-                    Text("确认完工", color = AppColors.Green400)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmProject = null }) {
-                    Text("取消", color = AppColors.TextSecondary)
                 }
             }
-        )
+        }
     }
 
     // Snackbar
@@ -465,7 +494,9 @@ private fun FilterTag(
                 text = text,
                 fontSize = 12.sp,
                 color = AppColors.Green400,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Spacer(modifier = Modifier.width(4.dp))
             TextButton(

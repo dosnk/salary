@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -255,19 +256,23 @@ fun LoginScreen(
 
         // 底部信息栏：左侧版权信息 + 右侧服务器在线状态
         // 两侧样式统一：10sp字号 + TextTertiary灰色
+        // 使用 spacedBy 避免窄屏挤压，长文本省略号
         Row(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 左侧：版权信息（左对齐）
+            // 左侧：版权信息（左对齐，占主权重）
             Text(
                 text = "© 2026 三人行吊顶管理系统 保留所有权利",
                 fontSize = 10.sp,
-                color = AppColors.TextTertiary
+                color = AppColors.TextTertiary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
             )
             // 右侧：服务器在线状态（右对齐，样式与左侧版权信息一致）
             // 原ApiLatencyChip为浮动阴影胶囊样式，与左侧版权信息不协调

@@ -8,6 +8,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -125,10 +127,23 @@ fun SettlementPreviewContent(data: SettlementPreviewData, modifier: Modifier = M
             ) {
                 Row(
                     modifier = Modifier.padding(12.dp).fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(project.name, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                    Text(AmountFormatter.format(project.amount), fontSize = 14.sp, color = AppColors.Green500)
+                    Text(
+                        project.name,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        AmountFormatter.format(project.amount),
+                        fontSize = 14.sp,
+                        color = AppColors.Green500,
+                        maxLines = 1
+                    )
                 }
             }
         }
@@ -139,14 +154,24 @@ fun SettlementPreviewContent(data: SettlementPreviewData, modifier: Modifier = M
 fun SummaryRow(label: String, value: String, isBold: Boolean = false) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, fontSize = 14.sp, color = AppColors.TextSecondary)
+        Text(
+            label,
+            fontSize = 14.sp,
+            color = AppColors.TextSecondary,
+            maxLines = 1
+        )
         Text(
             value,
             fontSize = if (isBold) 18.sp else 14.sp,
             fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal,
-            color = if (isBold) AppColors.Green400 else AppColors.TextPrimary
+            color = if (isBold) AppColors.Green400 else AppColors.TextPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f)
         )
     }
 }

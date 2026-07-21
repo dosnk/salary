@@ -9,6 +9,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -133,9 +134,22 @@ fun StatSummaryCard(title: String, value: String, modifier: Modifier = Modifier)
         colors = CardDefaults.cardColors(containerColor = AppColors.SurfaceVariant)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(title, fontSize = 13.sp, color = AppColors.TextSecondary)
+            Text(
+                title,
+                fontSize = 13.sp,
+                color = AppColors.TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
             Spacer(modifier = Modifier.height(4.dp))
-            Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = AppColors.Green500)
+            Text(
+                value,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = AppColors.Green500,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

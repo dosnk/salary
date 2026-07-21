@@ -16,8 +16,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.salary.core.common.util.AmountFormatter
 import com.salary.core.common.util.DateFormatter
@@ -201,38 +204,60 @@ fun AdvanceCard(item: AdvanceItem) {
     ) {
         Row(
             modifier = Modifier.padding(12.dp).fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            // 左侧信息列占主要宽度，长备注/人员名省略显示
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     AmountFormatter.format(item.amount),
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    color = AppColors.Green400
+                    color = AppColors.Green400,
+                    maxLines = 1
                 )
                 item.remark?.let {
                     Spacer(modifier = Modifier.height(2.dp))
-                    Text(it, fontSize = 13.sp, color = AppColors.TextSecondary)
+                    Text(
+                        it,
+                        fontSize = 13.sp,
+                        color = AppColors.TextSecondary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
                 // 预支所属人员（资料员/管理员查看全部预支时显示，便于识别归属）
                 item.userName?.let {
                     Spacer(modifier = Modifier.height(2.dp))
-                    Text("预支人：$it", fontSize = 12.sp, color = AppColors.TextTertiary)
+                    Text(
+                        "预支人：$it",
+                        fontSize = 12.sp,
+                        color = AppColors.TextTertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
                 // 创建人（管理员代建时显示）
                 item.creatorName?.let {
                     Spacer(modifier = Modifier.height(2.dp))
-                    Text("创建人：$it", fontSize = 12.sp, color = AppColors.TextTertiary)
+                    Text(
+                        "创建人：$it",
+                        fontSize = 12.sp,
+                        color = AppColors.TextTertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
+            // 右侧日期/状态列占用固定宽度，避免被左侧长内容挤压
             Column(horizontalAlignment = Alignment.End) {
                 // 预支日期（用户选择的预支日期）
                 if (item.date.isNotBlank()) {
                     Text(
                         "预支日期：${DateFormatter.formatDate(item.date)}",
                         fontSize = 12.sp,
-                        color = AppColors.TextTertiary
+                        color = AppColors.TextTertiary,
+                        maxLines = 1
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                 }
@@ -240,13 +265,14 @@ fun AdvanceCard(item: AdvanceItem) {
                 Text(
                     "创建：${DateFormatter.formatDate(item.createdAt)}",
                     fontSize = 12.sp,
-                    color = AppColors.TextTertiary
+                    color = AppColors.TextTertiary,
+                    maxLines = 1
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 if (item.settled) {
-                    Text("已结算", fontSize = 12.sp, color = AppColors.Success)
+                    Text("已结算", fontSize = 12.sp, color = AppColors.Success, maxLines = 1)
                 } else {
-                    Text("未结算", fontSize = 12.sp, color = AppColors.Warning)
+                    Text("未结算", fontSize = 12.sp, color = AppColors.Warning, maxLines = 1)
                 }
             }
         }
@@ -279,11 +305,29 @@ fun CreateAdvanceDialog(
     var advanceDate by remember { mutableStateOf(todayStr) }
     var showDatePicker by remember { mutableStateOf(false) }
 
-    AlertDialog(
+    // 使用 Dialog + usePlatformDefaultWidth=false 实现宽度自适应屏幕
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text("创建预支", fontWeight = FontWeight.SemiBold) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(0.92f),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    "创建预支",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AppColors.TextPrimary
+                )
                 // 预支金额输入框
                 OutlinedTextField(
                     value = amount,
@@ -317,13 +361,15 @@ fun CreateAdvanceDialog(
                     }
                 )
 
-                // 备注输入框（可选）
+                // 备注输入框（可选，自适应高度）
                 OutlinedTextField(
                     value = remark,
                     onValueChange = { remark = it },
                     label = { Text("备注（选填）") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 200.dp),
+                    minLines = 1,
                     shape = MaterialTheme.shapes.small
                 )
 
@@ -332,25 +378,32 @@ fun CreateAdvanceDialog(
                     Text(
                         errorMessage,
                         fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.error
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
+
+                // 操作按钮右对齐（取消在左，确认在右）
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(onClick = onDismiss, enabled = !isCreating) { Text("取消") }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = { onConfirm(amount, advanceDate, remark.ifBlank { null }) },
+                        // 客户端校验：金额>0且≤100000，日期不为空，不在创建中
+                        enabled = !isCreating && amount.toDoubleOrNull()?.let { it > 0 && it <= 100000 } == true && advanceDate.isNotBlank(),
+                        colors = ButtonDefaults.buttonColors(containerColor = AppColors.Green400)
+                    ) {
+                        Text(if (isCreating) "提交中..." else "确认")
+                    }
+                }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onConfirm(amount, advanceDate, remark.ifBlank { null }) },
-                // 客户端校验：金额>0且≤100000，日期不为空，不在创建中
-                enabled = !isCreating && amount.toDoubleOrNull()?.let { it > 0 && it <= 100000 } == true && advanceDate.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(containerColor = AppColors.Green400)
-            ) {
-                Text(if (isCreating) "提交中..." else "确认")
-            }
-        },
-        dismissButton = {
-            OutlinedButton(onClick = onDismiss, enabled = !isCreating) { Text("取消") }
         }
-    )
+    }
 
     // 日期选择器弹窗
     if (showDatePicker) {

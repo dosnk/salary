@@ -40,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -243,28 +244,33 @@ private fun MaterialSelectSection(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 "${material.name} ${material.brand ?: ""}",
                                 fontSize = 14.sp,
-                                color = AppColors.TextPrimary
+                                color = AppColors.TextPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 material.specification ?: "",
                                 fontSize = 12.sp,
-                                color = AppColors.TextTertiary
+                                color = AppColors.TextTertiary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                         Text(
                             "¥${material.unitPrice}/${material.unit}",
                             fontSize = 13.sp,
                             color = AppColors.Green500,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
                         )
                         if (material.id == selectedId) {
-                            Spacer(modifier = Modifier.width(8.dp))
                             Icon(
                                 Icons.Default.CheckCircle,
                                 contentDescription = "已选",

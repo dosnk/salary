@@ -14,8 +14,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.salary.core.data.local.ServerConfig
 import com.salary.core.design.theme.AppColors
@@ -186,7 +189,10 @@ fun ServerSetupScreen(
                             color = when (result) {
                                 is ConnectionTestResult.Success -> AppColors.Green600
                                 is ConnectionTestResult.Error -> AppColors.Error
-                            }
+                            },
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
@@ -273,43 +279,60 @@ fun ServerSetupScreen(
         }
     }
 
-    // 重启提示对话框
+    // 重启提示对话框 - 使用 Dialog + usePlatformDefaultWidth=false 实现宽度自适应屏幕
     // 配置保存后，Retrofit单例需要重建才能使用新地址，因此必须重启应用
     // 不提供"稍后重启"选项，因为不重启会导致业务API用旧地址，登录等操作全部失败
     if (showRestartDialog) {
-        AlertDialog(
+        Dialog(
             onDismissRequest = { /* 不可关闭，必须点击重启按钮 */ },
-            title = {
-                Text(
-                    "配置已保存",
-                    fontWeight = FontWeight.Bold,
-                    color = AppColors.TextPrimary
-                )
-            },
-            text = {
-                Text(
-                    "服务器地址已保存成功。应用需要重启以应用新的服务器地址，" +
-                            "请点击下方按钮重启应用。",
-                    fontSize = 14.sp,
-                    color = AppColors.TextSecondary
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        // 通过重启Activity来重建Retrofit单例
-                        val packageManager = context.packageManager
-                        val intent = packageManager.getLaunchIntentForPackage(context.packageName)
-                        intent?.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
-                        context.startActivity(intent)
-                        // 退出当前进程，让Retrofit等单例重建
-                        android.os.Process.killProcess(android.os.Process.myPid())
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = AppColors.Green400)
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Card(
+                modifier = Modifier.fillMaxWidth(0.92f),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("重启应用", color = Color.White)
+                    Text(
+                        "配置已保存",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = AppColors.TextPrimary
+                    )
+                    Text(
+                        "服务器地址已保存成功。应用需要重启以应用新的服务器地址，" +
+                                "请点击下方按钮重启应用。",
+                        fontSize = 14.sp,
+                        color = AppColors.TextSecondary
+                    )
+                    // 重启按钮右对齐
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Button(
+                            onClick = {
+                                // 通过重启Activity来重建Retrofit单例
+                                val packageManager = context.packageManager
+                                val intent = packageManager.getLaunchIntentForPackage(context.packageName)
+                                intent?.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
+                                context.startActivity(intent)
+                                // 退出当前进程，让Retrofit等单例重建
+                                android.os.Process.killProcess(android.os.Process.myPid())
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = AppColors.Green400)
+                        ) {
+                            Text("重启应用", color = Color.White)
+                        }
+                    }
                 }
             }
-        )
+        }
     }
 }

@@ -10,6 +10,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.salary.core.design.theme.AppColors
@@ -89,15 +91,30 @@ fun AboutScreen(
 }
 
 /**
- * 关于页面信息行
+ * 关于页面信息行 - 左标签右值，长内容单行省略号
  */
 @Composable
 private fun AboutRow(label: String, value: String) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, fontSize = 14.sp, color = AppColors.TextSecondary)
-        Text(value, fontSize = 14.sp, color = AppColors.TextPrimary, fontWeight = FontWeight.Medium)
+        Text(
+            label,
+            fontSize = 14.sp,
+            color = AppColors.TextSecondary,
+            maxLines = 1
+        )
+        Text(
+            value,
+            fontSize = 14.sp,
+            color = AppColors.TextPrimary,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
