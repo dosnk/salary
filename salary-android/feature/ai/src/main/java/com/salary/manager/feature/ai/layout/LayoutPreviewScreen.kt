@@ -1,12 +1,14 @@
 package com.salary.manager.feature.ai.layout
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,6 +30,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -117,15 +120,29 @@ fun LayoutPreviewScreen(
                         Text("双指缩放 \u00B7 单指拖动", fontSize = 12.sp, color = AppColors.TextTertiary)
                     }
 
-                    // Canvas渲染区域
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = AppColors.Background,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(300.dp)
+                    // Canvas渲染区域 - 高度根据 SVG 宽高比自适应屏幕宽度
+                    // 原理：按容器宽度等比例缩放 SVG 高度，并限制在 200dp~500dp 范围
+                    // 避免 SVG 过扁（横向狭长）导致高度过小看不清
+                    // 避免 SVG 过高（纵向狭长）导致高度过大占据过多屏幕
+                    val aspectRatio = remember(result.layout) {
+                        val w = result.layout.svgWidth.toFloat()
+                        val h = result.layout.svgHeight.toFloat()
+                        if (w > 0f && h > 0f) w / h else 1f
+                    }
+                    BoxWithConstraints(
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        LayoutCanvas(layoutData = result.layout)
+                        // 按当前容器宽度等比例计算 SVG 渲染高度，并限制范围
+                        val adaptiveHeight = (maxWidth / aspectRatio).coerceIn(200.dp, 500.dp)
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = AppColors.Background,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(adaptiveHeight)
+                        ) {
+                            LayoutCanvas(layoutData = result.layout)
+                        }
                     }
 
                     // 图例
