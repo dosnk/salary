@@ -1024,6 +1024,20 @@ fun SubprojectTable(
                     }
                 }
             }
+            // 子项目备注：非空时在数据行下方显示（灰色小字，单行省略）
+            // 让用户能直观看到子项目备注内容，编辑保存后立即刷新
+            if (!sub.remark.isNullOrBlank()) {
+                Text(
+                    text = "📝 ${sub.remark}",
+                    fontSize = 11.sp,
+                    color = AppColors.TextTertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .width(tableWidth)
+                        .padding(start = 42.dp, top = 2.dp, bottom = 2.dp)
+                )
+            }
         }
     }
 }
@@ -1074,11 +1088,14 @@ fun SubprojectEditDialog(
     onConfirm: (lengthMeter: Double, widthMeter: Double, remark: String) -> Unit
 ) {
     // 表单状态（数据库存厘米，弹窗显示米，需除以100）
-    var spaceType by remember { mutableStateOf(subproject.spaceTypeName) }
-    var constructionScheme by remember { mutableStateOf(subproject.constructionPlanName) }
-    var length by remember { mutableStateOf(formatNumber(subproject.length / 100.0)) }
-    var width by remember { mutableStateOf(formatNumber(subproject.width / 100.0)) }
-    var remark by remember { mutableStateOf(subproject.remark ?: "") }
+    // 注意：remember 必须传入 subproject.id 和 subproject.remark 作为 key，
+    // 否则保存后 loadProject 刷新数据，若 Composable 未被销毁重建（如 Loading→Success 同帧完成），
+    // subproject 参数变了但 remark 状态不会重新初始化，导致编辑弹窗显示旧值
+    var spaceType by remember(subproject.id) { mutableStateOf(subproject.spaceTypeName) }
+    var constructionScheme by remember(subproject.id) { mutableStateOf(subproject.constructionPlanName) }
+    var length by remember(subproject.id) { mutableStateOf(formatNumber(subproject.length / 100.0)) }
+    var width by remember(subproject.id) { mutableStateOf(formatNumber(subproject.width / 100.0)) }
+    var remark by remember(subproject.id, subproject.remark) { mutableStateOf(subproject.remark ?: "") }
 
     // 计算面积（单位：米）
     val lengthValue = length.toDoubleOrNull() ?: 0.0
