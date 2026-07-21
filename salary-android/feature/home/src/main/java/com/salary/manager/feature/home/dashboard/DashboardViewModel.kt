@@ -83,7 +83,9 @@ data class SubprojectUiModel(
     /** 计量单位 */
     val unit: String = "area",
     /** 计量单位的显示名称（预计算，避免在Composable中调用ViewModel） */
-    val unitDisplayName: String = "㎡"
+    val unitDisplayName: String = "㎡",
+    /** 子项目备注（null或空字符串表示无备注） */
+    val remark: String? = null
 )
 
 /**
@@ -549,7 +551,8 @@ class DashboardViewModel @Inject constructor(
             quantity = dto.quantity ?: 0.0,
             amount = AmountFormatter.format(dto.amount),
             unit = unit,
-            unitDisplayName = getUnitDisplayName(unit)
+            unitDisplayName = getUnitDisplayName(unit),
+            remark = dto.remark
         )
     }
 

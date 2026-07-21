@@ -212,7 +212,8 @@ const listWithFilters = async (filters) => {
           'width', sp.width,
           'quantity', sp.quantity,
           'amount', sp.amount,
-          'status', sp.status
+          'status', sp.status,
+          'remark', sp.remark
         ) ORDER BY sp.created_at DESC) AS sub_projects
       FROM subprojects sp
       LEFT JOIN space_types st ON sp.space_type_id = st.id

@@ -1024,19 +1024,40 @@ fun SubprojectTable(
                     }
                 }
             }
-            // 子项目备注：非空时在数据行下方显示（灰色小字，单行省略）
+            // 子项目备注：非空时在数据行下方显示（左侧备注标签 + 右侧备注内容）
             // 让用户能直观看到子项目备注内容，编辑保存后立即刷新
             if (!sub.remark.isNullOrBlank()) {
-                Text(
-                    text = "📝 ${sub.remark}",
-                    fontSize = 11.sp,
-                    color = AppColors.TextTertiary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                Row(
                     modifier = Modifier
                         .width(tableWidth)
-                        .padding(start = 42.dp, top = 2.dp, bottom = 2.dp)
-                )
+                        .padding(start = 42.dp, top = 2.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // 备注标签：浅绿底+绿字小标签，固定宽度不压缩
+                    Text(
+                        text = "备注",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = AppColors.Green400,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .background(
+                                color = AppColors.Green50,
+                                shape = RoundedCornerShape(4.dp)
+                            )
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    // 备注内容：灰色小字，单行省略，占满剩余空间
+                    Text(
+                        text = sub.remark,
+                        fontSize = 11.sp,
+                        color = AppColors.TextTertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
         }
     }
