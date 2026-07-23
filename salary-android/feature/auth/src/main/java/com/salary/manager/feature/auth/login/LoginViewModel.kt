@@ -78,14 +78,41 @@ class LoginViewModel @Inject constructor(
      * - 如果用户勾选"记住密码"，保存用户名密码到加密存储
      * - 如果用户未勾选，清除已保存的凭证
      *
+     * 前端预校验：在发起网络请求前先做基础格式校验，避免用户看到
+     * 后端返回的"参数错误: xxx"这种不够友好的技术性提示；
+     * 若校验通过再由后端做完整业务校验。
+     *
      * @param username 用户名
      * @param password 密码
      */
     fun login(username: String, password: String) {
+        // ========== 前端预校验（提供更即时且友好的提示） ==========
+        val trimmedUsername = username.trim()
+        when {
+            trimmedUsername.isEmpty() -> {
+                _state.value = LoginState.Error("请输入用户名")
+                return
+            }
+            password.isEmpty() -> {
+                _state.value = LoginState.Error("请输入密码")
+                return
+            }
+            // 与后端 Joi 规则保持一致：用户名 2-10 位中文
+            !trimmedUsername.matches(Regex("^[\\u4e00-\\u9fa5]{2,10}$")) -> {
+                _state.value = LoginState.Error("用户名格式不正确，请输入 2-10 位中文字符")
+                return
+            }
+            // 与后端 Joi 规则保持一致：密码 6-20 位
+            password.length < 6 || password.length > 20 -> {
+                _state.value = LoginState.Error("密码格式不正确，密码应为 6-20 位字符")
+                return
+            }
+        }
+
         viewModelScope.launch {
             _state.value = LoginState.Loading
             try {
-                val response = authApi.login(LoginRequest(username, password))
+                val response = authApi.login(LoginRequest(trimmedUsername, password))
                 if (response.code == 200) {
                     val loginData = response.data ?: return@launch run {
                         _state.value = LoginState.Error("登录响应数据为空")
@@ -104,16 +131,20 @@ class LoginViewModel @Inject constructor(
                     )
                     // 根据用户勾选状态保存/清除凭证
                     if (credentialStorage.rememberCredentials.value) {
-                        credentialStorage.saveCredentials(username, password)
+                        credentialStorage.saveCredentials(trimmedUsername, password)
                     } else {
                         credentialStorage.clearCredentials()
                     }
                     _state.value = LoginState.Success
                 } else {
-                    _state.value = LoginState.Error(NetworkErrorHandler.translateServerError(response.msg, "登录失败"))
+                    // 走友好化翻译；translateServerError 已单独处理"用户名或密码错误"、
+                    // "登录失败次数过多"、以及各种密码/用户名格式提示
+                    _state.value = LoginState.Error(
+                        NetworkErrorHandler.translateServerError(response.msg, "登录失败，请稍后重试")
+                    )
                 }
             } catch (e: Exception) {
-                _state.value = LoginState.Error(NetworkErrorHandler.translate(e, "登录失败"))
+                _state.value = LoginState.Error(NetworkErrorHandler.translate(e, "登录失败，请稍后重试"))
             }
         }
     }

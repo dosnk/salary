@@ -46,6 +46,27 @@ object NetworkErrorHandler {
         if (serverMsg.isNullOrBlank()) return fallback
 
         return when {
+            // ========== 登录场景专用提示（优先级最高，避免被下面的"参数错误"规则误伤） ==========
+            // 账号锁定：后端会拼接分钟数，如"登录失败次数过多，请25分钟后重试"，直接透传保留分钟数
+            serverMsg.contains("登录失败次数过多") ||
+            serverMsg.contains("账号已锁定") ->
+                serverMsg
+
+            // 用户名或密码错误：后端 code=2002 的标准文案
+            serverMsg.contains("用户名或密码错误") ->
+                "用户名或密码错误，请核对后重试"
+
+            // 登录参数校验失败：后端 Joi 校验返回"参数错误: 密码最少6位/密码最多20位/用户名必须是2-10位中文字符"
+            // 直接把关键校验信息转为用户能理解的说法
+            serverMsg.contains("密码最少6位") || serverMsg.contains("密码最多20位") ->
+                "密码格式不正确，密码应为 6-20 位字符"
+            serverMsg.contains("用户名必须是2-10位中文字符") ->
+                "用户名格式不正确，请输入 2-10 位中文字符"
+            serverMsg.contains("用户名不能为空") ->
+                "请输入用户名"
+            serverMsg.contains("密码不能为空") ->
+                "请输入密码"
+
             // 数据库相关错误
             serverMsg.contains("数据库异常", ignoreCase = true) ||
             serverMsg.contains("database", ignoreCase = true) ||
@@ -64,7 +85,7 @@ object NetworkErrorHandler {
             serverMsg.contains("无权", ignoreCase = true) ->
                 "您没有权限执行此操作"
 
-            // 参数错误
+            // 参数错误（兜底：未被上面登录参数细则命中的其它参数错误）
             serverMsg.contains("参数错误", ignoreCase = true) ||
             serverMsg.contains("参数", ignoreCase = true) ->
                 "请求参数有误，请检查后重试"
