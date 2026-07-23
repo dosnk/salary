@@ -844,7 +844,14 @@ fun DashboardScreen(
                     }
                 } else {
                     // 工程卡片列表（LazyColumn懒加载，仅组合可见项）
-                    items(uiState.projects, key = { it.id }) { project ->
+                    // contentType="project_card" 让所有工程卡片走同一组合池，
+                    // 滚动新卡片进入视口时可复用已回收卡片的组合槽，避免每张新卡都从零构建
+                    // 布局，是消除滚动到新标题时"轻微卡顿一下"的关键
+                    items(
+                        uiState.projects,
+                        key = { it.id },
+                        contentType = { "project_card" }
+                    ) { project ->
                         // 用 remember 包装 lambda，避免每次重组创建新实例，
                         // 让 ProjectHistoryCard 在参数未变时可被跳过重组
                         val openAttachmentList = remember(project.id) {
@@ -1046,6 +1053,24 @@ private fun HistoryHeader(
 }
 
 /**
+ * 工程历史卡片扩展图标缓存
+ *
+ * androidx.compose.material.icons.filled 命名空间下的图标属于 material-icons-extended 库，
+ * 每个图标都是懒加载的 ImageVector（首次访问会触发反射 + 路径数据解析，主线程耗时 5~30ms）。
+ *
+ * 工程历史列表滚动时，每张新卡片进入可视区都会引用 AttachFile / Upload 两个图标；
+ * 早期虽然属于同一 JVM 静态属性，但 delegate 的首次评估路径在部分设备上仍存在明显开销。
+ * 用文件级 by lazy 缓存 ImageVector 引用，保证只在整个进程首次访问时解析一次，
+ * 之后所有卡片复用同一 ImageVector 实例，避免滚动到新工程标题时的"轻微卡顿一下"。
+ */
+private val ATTACH_FILE_ICON: androidx.compose.ui.graphics.vector.ImageVector by lazy(LazyThreadSafetyMode.NONE) {
+    Icons.Default.AttachFile
+}
+private val UPLOAD_ICON: androidx.compose.ui.graphics.vector.ImageVector by lazy(LazyThreadSafetyMode.NONE) {
+    Icons.Default.Upload
+}
+
+/**
  * 工程历史卡片
  *
  * 优化说明：
@@ -1133,7 +1158,7 @@ private fun ProjectHistoryCard(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.AttachFile,
+                        imageVector = ATTACH_FILE_ICON,
                         contentDescription = null,
                         modifier = Modifier.size(14.dp),
                         tint = AppColors.TextSecondary
@@ -1158,7 +1183,7 @@ private fun ProjectHistoryCard(
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Upload,
+                            imageVector = UPLOAD_ICON,
                             contentDescription = null,
                             modifier = Modifier.size(14.dp),
                             tint = AppColors.Green400
