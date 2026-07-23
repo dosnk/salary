@@ -41,7 +41,7 @@ fun UserManagementScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     // 待重置密码的目标用户（null 表示未打开弹窗）
     var resetTarget by remember { mutableStateOf<UserDto?>(null) }
-    // 结果反馈用 Snackbar，重置成功后展示"已将 xx 的密码重置为 xxxxxx"
+    // 结果反馈用 Snackbar，重置成功后展示"已将 xx 的密码重置为默认密码"
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -124,14 +124,16 @@ fun UserManagementScreen(
         )
     }
 
-    // 重置密码弹窗（二次确认 + 允许自定义新密码）
+    // 重置密码弹窗（二次确认，统一重置为数据库初始化默认密码）
     val target = resetTarget
     if (target != null) {
         ResetPasswordDialog(
             user = target,
             onDismiss = { resetTarget = null; errorMessage = null },
-            onConfirm = { newPassword ->
-                onResetPassword(target.id, newPassword) { error ->
+            onConfirm = {
+                // 与后端 init-db.js 中的 DEFAULT_PASSWORD 保持一致
+                val defaultPassword = "990066"
+                onResetPassword(target.id, defaultPassword) { error ->
                     if (error != null) {
                         errorMessage = error
                     } else {
@@ -140,7 +142,7 @@ fun UserManagementScreen(
                         // 成功后展示新密码，方便管理员告知用户
                         scope.launch {
                             snackbarHostState.showSnackbar(
-                                message = "已将 ${target.nickname} 的密码重置为 $newPassword"
+                                message = "已将 ${target.nickname} 的密码重置为默认密码 $defaultPassword"
                             )
                         }
                     }
@@ -259,7 +261,7 @@ private fun AddUserDialog(
                 )
                 OutlinedTextField(
                     value = password, onValueChange = { password = it; localError = null },
-                    label = { Text("密码(6-20位，含字母和数字)", fontSize = 13.sp) },
+                    label = { Text("密码(6-20位)", fontSize = 13.sp) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp),
                     singleLine = true
@@ -296,15 +298,13 @@ private fun AddUserDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                // 客户端校验：与后端Joi规则一致
+                // 客户端校验：与后端 createUserSchema 保持一致（仅长度校验，不强制字母+数字）
                 when {
                     username.isBlank() -> localError = "用户名不能为空"
                     username.length < 2 -> localError = "用户名长度至少2位"
                     password.isBlank() -> localError = "密码不能为空"
                     password.length < 6 -> localError = "密码长度至少6位"
                     password.length > 20 -> localError = "密码长度最多20位"
-                    !password.any { it.isLetter() } || !password.any { it.isDigit() } ->
-                        localError = "密码必须包含字母和数字"
                     nickname.isBlank() -> localError = "昵称不能为空"
                     else -> {
                         onConfirm(
@@ -331,18 +331,15 @@ private fun AddUserDialog(
 /**
  * 重置密码弹窗
  *
- * 需要管理员二次确认，允许自定义新密码；
- * 默认填充"sal123"以满足后端"6-20 位含字母和数字"的校验。
+ * 需要管理员二次确认，统一将目标用户密码重置为数据库初始化默认密码 990066，
+ * 与后端 init-db.js 中的 DEFAULT_PASSWORD 保持一致，避免管理员随意设置。
  */
 @Composable
 private fun ResetPasswordDialog(
     user: UserDto,
     onDismiss: () -> Unit,
-    onConfirm: (newPassword: String) -> Unit
+    onConfirm: () -> Unit
 ) {
-    var newPassword by remember { mutableStateOf("sal123") }
-    var localError by remember { mutableStateOf<String?>(null) }
-
     AlertDialog(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(24.dp),
@@ -351,40 +348,19 @@ private fun ResetPasswordDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "确认将 ${user.nickname} 的密码重置为下方新密码？",
+                    "确认将 ${user.nickname} 的密码重置为初始默认密码 990066？",
                     fontSize = 14.sp,
                     color = AppColors.TextSecondary
                 )
-                OutlinedTextField(
-                    value = newPassword,
-                    onValueChange = { newPassword = it; localError = null },
-                    label = { Text("新密码(6-20位，含字母和数字)", fontSize = 13.sp) },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
-                    singleLine = true
-                )
                 Text(
-                    "提示：重置后建议提醒该用户尽快自行修改密码。",
+                    "提示：重置后请提醒该用户尽快自行修改密码。",
                     fontSize = 12.sp,
                     color = AppColors.TextTertiary
                 )
-                if (localError != null) {
-                    Text(localError!!, fontSize = 12.sp, color = AppColors.Error)
-                }
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                // 客户端校验：与后端 resetPasswordSchema 保持一致
-                when {
-                    newPassword.isBlank() -> localError = "新密码不能为空"
-                    newPassword.length < 6 -> localError = "密码长度至少6位"
-                    newPassword.length > 20 -> localError = "密码长度最多20位"
-                    !newPassword.any { it.isLetter() } || !newPassword.any { it.isDigit() } ->
-                        localError = "密码必须包含字母和数字"
-                    else -> onConfirm(newPassword)
-                }
-            }) {
+            TextButton(onClick = onConfirm) {
                 Text("确认重置", color = AppColors.Error, fontWeight = FontWeight.Bold)
             }
         },

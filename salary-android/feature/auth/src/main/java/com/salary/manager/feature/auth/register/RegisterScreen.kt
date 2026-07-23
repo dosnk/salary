@@ -77,7 +77,7 @@ fun RegisterScreen(
         OutlinedTextField(
             value = password,
             onValueChange = { password = it },
-            label = { Text("密码（6位以上，含字母和数字）") },
+            label = { Text("密码（6-20位）") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
@@ -114,7 +114,7 @@ fun RegisterScreen(
                 .fillMaxWidth()
                 .height(48.dp),
             enabled = username.isNotBlank() && nickname.isNotBlank()
-                    && password.length >= 6 && password == confirmPassword
+                    && password.length in 6..20 && password == confirmPassword
                     && state !is RegisterState.Loading,
             shape = MaterialTheme.shapes.large,
             colors = ButtonDefaults.buttonColors(

@@ -132,7 +132,7 @@ fun ChangePasswordScreen(
 
             // 密码规则提示
             Text(
-                "密码要求：6-20位，必须包含字母和数字",
+                "密码要求：6-20位",
                 fontSize = 12.sp,
                 color = AppColors.TextTertiary
             )
@@ -145,8 +145,7 @@ fun ChangePasswordScreen(
                     when {
                         oldPassword.isBlank() -> errorMessage = "请输入旧密码"
                         newPassword.length < 6 -> errorMessage = "新密码至少6位"
-                        !newPassword.any { it.isLetter() } || !newPassword.any { it.isDigit() } ->
-                            errorMessage = "新密码必须包含字母和数字"
+                        newPassword.length > 20 -> errorMessage = "新密码最多20位"
                         newPassword != confirmPassword -> errorMessage = "两次密码不一致"
                         else -> {
                             isLoading = true
