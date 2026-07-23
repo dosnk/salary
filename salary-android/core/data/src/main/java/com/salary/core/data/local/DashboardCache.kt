@@ -32,6 +32,12 @@ class DashboardCache @Inject constructor(
         private val ADDRESS_MAP_KEY = stringPreferencesKey("address_constructor_map")
         /** 表单数据（JSON格式） */
         private val FORM_DATA_KEY = stringPreferencesKey("form_data")
+        /**
+         * 施工人员列表缓存（JSON字符串）
+         * 施工人员变更频率低（新增/改名较少），首屏冷启动时直接用缓存渲染，
+         * 后台再向后端请求最新列表并覆盖 & 回写缓存（stale-while-revalidate）
+         */
+        private val CONSTRUCTORS_KEY = stringPreferencesKey("constructors_list")
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -117,6 +123,31 @@ class DashboardCache @Inject constructor(
     suspend fun clearFormCache() {
         try {
             context.dataStore.edit { it.remove(FORM_DATA_KEY) }
+        } catch (_: Exception) {
+            // 静默处理
+        }
+    }
+
+    /**
+     * 加载施工人员列表缓存（原始 JSON 字符串）
+     * 由调用方（ViewModel）按 UserDto 反序列化，避免 core:data 依赖 core:network
+     * @return JSON 字符串；无缓存时返回空字符串
+     */
+    suspend fun loadConstructorsJson(): String {
+        return try {
+            context.dataStore.data.map { it[CONSTRUCTORS_KEY] ?: "" }.first()
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    /**
+     * 保存施工人员列表缓存
+     * @param jsonStr 已序列化的施工人员列表 JSON 字符串（由调用方序列化）
+     */
+    suspend fun saveConstructorsJson(jsonStr: String) {
+        try {
+            context.dataStore.edit { it[CONSTRUCTORS_KEY] = jsonStr }
         } catch (_: Exception) {
             // 静默处理
         }

@@ -35,6 +35,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 import java.text.DecimalFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -219,6 +221,20 @@ class DashboardViewModel @Inject constructor(
 
     private companion object {
         const val TAG = "DashboardViewModel"
+
+        /**
+         * 施工人员列表进程内单例缓存
+         *
+         * 施工人员变更频率极低（新增/改名/删除均罕见），进程内可长期复用。
+         * 首次冷启动从磁盘 DashboardCache 加载填充；后续 ViewModel 重建（如返回、
+         * Tab 切换）直接命中此内存缓存，无需再走 DataStore 读取和 JSON 反序列化，
+         * 达到"打开即可见、不再卡顿"的效果。
+         */
+        @Volatile
+        private var cachedConstructors: List<UserDto>? = null
+
+        /** 施工人员缓存的 JSON 编解码器（忽略未知字段，兼容后端字段扩展） */
+        private val CONSTRUCTORS_JSON = Json { ignoreUnknownKeys = true }
     }
 
     /** 数字格式化工具 */
@@ -255,6 +271,11 @@ class DashboardViewModel @Inject constructor(
     private fun loadInitialData() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true)
+
+            // ========== 施工人员缓存优先注入 ==========
+            // 施工人员数据变更频率极低，先用内存/磁盘缓存立即渲染，避免冷启动等待网络。
+            // 后续 loadConstructors() 会在后台异步向服务端拉取最新列表并覆盖 UI 与缓存。
+            primeConstructorsFromCache()
 
             try {
                 coroutineScope {
@@ -374,18 +395,76 @@ class DashboardViewModel @Inject constructor(
     }
 
     /**
-     * 加载施工人员列表
+     * 冷启动前用缓存立即填充施工人员列表
+     *
+     * 优先级：进程内存缓存 > 磁盘 DataStore 缓存
+     * 目的：让"施工人员选择"控件在首屏渲染时就有数据可显示，避免等待网络请求。
+     * 已有内存缓存时跳过磁盘读，减少 IO 开销。
+     */
+    private suspend fun primeConstructorsFromCache() {
+        // 内存缓存命中：直接注入并返回
+        cachedConstructors?.let { mem ->
+            if (mem.isNotEmpty()) {
+                _uiState.value = _uiState.value.copy(constructors = mem)
+                return
+            }
+        }
+        // 磁盘缓存回填：JSON 反序列化在 IO 线程执行，避免阻塞主线程
+        try {
+            val jsonStr = dashboardCache.loadConstructorsJson()
+            if (jsonStr.isNotBlank()) {
+                val list = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    CONSTRUCTORS_JSON.decodeFromString(
+                        ListSerializer(UserDto.serializer()),
+                        jsonStr
+                    )
+                }
+                if (list.isNotEmpty()) {
+                    cachedConstructors = list
+                    _uiState.value = _uiState.value.copy(constructors = list)
+                }
+            }
+        } catch (_: Exception) {
+            // 缓存损坏时静默忽略，等 loadConstructors 从网络补齐
+        }
+    }
+
+    /**
+     * 加载施工人员列表（stale-while-revalidate）
+     *
+     * 走网络刷新最新数据，成功后：
+     * 1. 更新 UI 状态覆盖旧缓存渲染的内容
+     * 2. 写入内存缓存（供同一进程后续 ViewModel 复用）
+     * 3. 序列化 JSON 写入磁盘缓存（供下次冷启动立即命中）
+     *
+     * 网络失败时保持当前 UI 状态（可能是从缓存注入的旧数据），不打断用户操作。
      */
     private suspend fun loadConstructors() {
         try {
             val response = userApi.getConstructors()
             if (response.code == 200) {
-                _uiState.value = _uiState.value.copy(
-                    constructors = response.data ?: emptyList()
-                )
+                val list = response.data ?: emptyList()
+                _uiState.value = _uiState.value.copy(constructors = list)
+
+                // 与已缓存内容不同才写盘，减少 DataStore 无效写入
+                if (list != cachedConstructors) {
+                    cachedConstructors = list
+                    // 磁盘写入放到 IO 线程，避免序列化占用主线程
+                    withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        try {
+                            val jsonStr = CONSTRUCTORS_JSON.encodeToString(
+                                ListSerializer(UserDto.serializer()),
+                                list
+                            )
+                            dashboardCache.saveConstructorsJson(jsonStr)
+                        } catch (_: Exception) {
+                            // 静默：写盘失败不影响业务
+                        }
+                    }
+                }
             }
         } catch (_: Exception) {
-            // 静默处理
+            // 静默处理：保留缓存已渲染的旧数据
         }
     }
 

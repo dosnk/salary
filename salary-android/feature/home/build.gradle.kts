@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
 }
@@ -38,6 +39,7 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
     implementation(libs.coroutines.core)
+    implementation(libs.kotlinx.serialization.json)
 
     // 图片加载（Coil3 + 网络支持，用于附件媒体查看器）
     implementation(libs.coil.compose)
