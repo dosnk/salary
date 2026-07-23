@@ -18,6 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import com.salary.core.design.theme.AppColors
 import com.salary.core.network.api.CreateUserRequest
 import com.salary.core.network.api.UserDto
@@ -38,6 +39,11 @@ fun UserManagementScreen(
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    // 待重置密码的目标用户（null 表示未打开弹窗）
+    var resetTarget by remember { mutableStateOf<UserDto?>(null) }
+    // 结果反馈用 Snackbar，重置成功后展示"已将 xx 的密码重置为 xxxxxx"
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
@@ -56,6 +62,7 @@ fun UserManagementScreen(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
             )
         },
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         containerColor = AppColors.Background
     ) { padding ->
         // 错误提示
@@ -85,10 +92,9 @@ fun UserManagementScreen(
                     UserCard(
                         user = user,
                         onResetPassword = {
-                            // 重置密码默认为sal123，符合后端"6-20位含字母和数字"的校验规则
-                            onResetPassword(user.id, "sal123") { error ->
-                                errorMessage = error
-                            }
+                            // 打开确认弹窗，由管理员显式确认并可自定义新密码
+                            errorMessage = null
+                            resetTarget = user
                         },
                         onDelete = {
                             onDeleteUser(user.id) { error ->
@@ -112,6 +118,31 @@ fun UserManagementScreen(
                     } else {
                         showAddDialog = false
                         errorMessage = null
+                    }
+                }
+            }
+        )
+    }
+
+    // 重置密码弹窗（二次确认 + 允许自定义新密码）
+    val target = resetTarget
+    if (target != null) {
+        ResetPasswordDialog(
+            user = target,
+            onDismiss = { resetTarget = null; errorMessage = null },
+            onConfirm = { newPassword ->
+                onResetPassword(target.id, newPassword) { error ->
+                    if (error != null) {
+                        errorMessage = error
+                    } else {
+                        resetTarget = null
+                        errorMessage = null
+                        // 成功后展示新密码，方便管理员告知用户
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                message = "已将 ${target.nickname} 的密码重置为 $newPassword"
+                            )
+                        }
                     }
                 }
             }
@@ -289,6 +320,72 @@ private fun AddUserDialog(
                 }
             }) {
                 Text("确定", color = AppColors.Green400, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+/**
+ * 重置密码弹窗
+ *
+ * 需要管理员二次确认，允许自定义新密码；
+ * 默认填充"sal123"以满足后端"6-20 位含字母和数字"的校验。
+ */
+@Composable
+private fun ResetPasswordDialog(
+    user: UserDto,
+    onDismiss: () -> Unit,
+    onConfirm: (newPassword: String) -> Unit
+) {
+    var newPassword by remember { mutableStateOf("sal123") }
+    var localError by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(24.dp),
+        containerColor = Color.White,
+        title = { Text("重置密码", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "确认将 ${user.nickname} 的密码重置为下方新密码？",
+                    fontSize = 14.sp,
+                    color = AppColors.TextSecondary
+                )
+                OutlinedTextField(
+                    value = newPassword,
+                    onValueChange = { newPassword = it; localError = null },
+                    label = { Text("新密码(6-20位，含字母和数字)", fontSize = 13.sp) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    singleLine = true
+                )
+                Text(
+                    "提示：重置后建议提醒该用户尽快自行修改密码。",
+                    fontSize = 12.sp,
+                    color = AppColors.TextTertiary
+                )
+                if (localError != null) {
+                    Text(localError!!, fontSize = 12.sp, color = AppColors.Error)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                // 客户端校验：与后端 resetPasswordSchema 保持一致
+                when {
+                    newPassword.isBlank() -> localError = "新密码不能为空"
+                    newPassword.length < 6 -> localError = "密码长度至少6位"
+                    newPassword.length > 20 -> localError = "密码长度最多20位"
+                    !newPassword.any { it.isLetter() } || !newPassword.any { it.isDigit() } ->
+                        localError = "密码必须包含字母和数字"
+                    else -> onConfirm(newPassword)
+                }
+            }) {
+                Text("确认重置", color = AppColors.Error, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
