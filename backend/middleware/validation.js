@@ -148,12 +148,6 @@ module.exports.rules = {
     'string.pattern.base': '用户名只能包含中文、字母、数字、下划线，长度2-50位'
   }),
   
-  password: Joi.string().min(3).max(8).required().messages({
-    'string.min': '密码长度至少3位',
-    'string.max': '密码长度最多8位',
-    'any.required': '密码不能为空'
-  }),
-  
   phone: Joi.string().pattern(/^1[3-9]\d{9}$/).required().messages({
     'string.pattern.base': '手机号格式不正确'
   }),
