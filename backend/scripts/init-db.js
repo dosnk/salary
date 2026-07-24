@@ -213,7 +213,7 @@ const MIGRATIONS = [
         amount NUMERIC(14,4) NOT NULL,
         status VARCHAR(20) NOT NULL DEFAULT 'pending',
         remark TEXT,
-        created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT ck_subprojects_amount CHECK (amount >= 0)
@@ -224,7 +224,7 @@ const MIGRATIONS = [
         project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
         action VARCHAR(20) NOT NULL,
         description TEXT,
-        performed_by INTEGER NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+        performed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT fk_project_history_action FOREIGN KEY (action) 
             REFERENCES action_types(code) ON DELETE RESTRICT
@@ -315,7 +315,7 @@ const MIGRATIONS = [
         path VARCHAR(255) NOT NULL,
         size BIGINT NOT NULL,
         type VARCHAR(50) NOT NULL,
-        uploaded_by INTEGER NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+        uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -326,7 +326,7 @@ const MIGRATIONS = [
         advance_date DATE NOT NULL,
         settled BOOLEAN DEFAULT FALSE,
         settlement_id INTEGER REFERENCES wage_settlements(id) ON DELETE SET NULL,
-        created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         remark TEXT,
         CONSTRAINT ck_advance_amount CHECK (advance_amount >= 0)
@@ -335,11 +335,11 @@ const MIGRATIONS = [
       CREATE TABLE IF NOT EXISTS subproject_transfers (
         id SERIAL PRIMARY KEY,
         subproject_id INTEGER NOT NULL REFERENCES subprojects(id) ON DELETE CASCADE,
-        from_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE SET NULL,
-        to_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+        from_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        to_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         transfer_reason TEXT,
         transferred_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-        transferred_by INTEGER NOT NULL REFERENCES users(id) ON DELETE SET NULL
+        transferred_by INTEGER REFERENCES users(id) ON DELETE SET NULL
       );
 
       CREATE TABLE IF NOT EXISTS messages (
@@ -1013,6 +1013,33 @@ const MIGRATIONS = [
       ALTER TABLE users DROP COLUMN IF EXISTS password_changed_at;
     `,
     tables: ['users']
+  },
+  {
+    version: 'V2.2',
+    description: '修复 NOT NULL + ON DELETE SET NULL 冲突：将 subprojects.created_by、project_history.performed_by、files.uploaded_by、wage_advances.created_by、subproject_transfers.from_user_id/to_user_id/transferred_by 改为可空，以便级联置空生效',
+    up: `
+      -- 背景：这些字段声明为 NOT NULL 但外键策略是 ON DELETE SET NULL，
+      -- 当被引用用户删除时 SET NULL 会触发 not-null 约束报错，导致 DELETE FROM users 失败。
+      -- 修复方案：全部放宽为可空，与外键策略保持一致。业务写入路径保持"必填"由后端参数校验保证。
+      ALTER TABLE subprojects ALTER COLUMN created_by DROP NOT NULL;
+      ALTER TABLE project_history ALTER COLUMN performed_by DROP NOT NULL;
+      ALTER TABLE files ALTER COLUMN uploaded_by DROP NOT NULL;
+      ALTER TABLE wage_advances ALTER COLUMN created_by DROP NOT NULL;
+      ALTER TABLE subproject_transfers ALTER COLUMN from_user_id DROP NOT NULL;
+      ALTER TABLE subproject_transfers ALTER COLUMN to_user_id DROP NOT NULL;
+      ALTER TABLE subproject_transfers ALTER COLUMN transferred_by DROP NOT NULL;
+    `,
+    down: `
+      -- 回滚：恢复 NOT NULL。注意：如果已有 NULL 行，此语句会失败；
+      -- 需先手工处理 NULL 数据（回填占位用户或删除相关行）再回滚。
+      ALTER TABLE subprojects ALTER COLUMN created_by SET NOT NULL;
+      ALTER TABLE project_history ALTER COLUMN performed_by SET NOT NULL;
+      ALTER TABLE files ALTER COLUMN uploaded_by SET NOT NULL;
+      ALTER TABLE wage_advances ALTER COLUMN created_by SET NOT NULL;
+      ALTER TABLE subproject_transfers ALTER COLUMN from_user_id SET NOT NULL;
+      ALTER TABLE subproject_transfers ALTER COLUMN to_user_id SET NOT NULL;
+      ALTER TABLE subproject_transfers ALTER COLUMN transferred_by SET NOT NULL;
+    `
   }
 ];
 

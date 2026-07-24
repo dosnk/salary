@@ -143,6 +143,13 @@ const updateUser = async (ctx) => {
 
 /**
  * 删除用户
+ *
+ * 业务规则：
+ * 1. 仅管理员可操作
+ * 2. 不能删除自己
+ * 3. 有任何业务关联数据（工程分工、工资分配、工资结算、预支、
+ *    工程结算状态、工程/子项目/结算/流水/子项目转派中的操作人字段等）时，
+ *    直接拒绝删除，返回 2011，避免历史数据被级联清除或被置空丢失责任人。
  */
 const deleteUser = async (ctx) => {
   const { id } = ctx.params;
@@ -169,7 +176,52 @@ const deleteUser = async (ctx) => {
       return;
     }
 
-    // 删除用户
+    // 关联数据前置检查：所有引用当前用户的业务表都要检查
+    // 说明：
+    //   - CASCADE 类关联（一删就消失，风险最大）：project_workers、wage_settlements、
+    //     project_user_status、wage_distributions、wage_advances
+    //   - SET NULL 类关联（会丢失责任人）：projects.settled_by/created_by、
+    //     subprojects.created_by、project_history.performed_by、
+    //     files.uploaded_by、wage_settlements.settled_by、
+    //     wage_advances.created_by、subproject_transfers.from_user_id/to_user_id/transferred_by
+    const relations = [
+      { table: 'project_workers', column: 'user_id', label: '参与的工程分工' },
+      { table: 'wage_settlements', column: 'user_id', label: '工资结算主记录' },
+      { table: 'project_user_status', column: 'user_id', label: '工程结算状态' },
+      { table: 'wage_distributions', column: 'user_id', label: '工资分配明细' },
+      { table: 'wage_advances', column: 'user_id', label: '预支工资流水' },
+      { table: 'projects', column: 'created_by', label: '创建的工程' },
+      { table: 'projects', column: 'settled_by', label: '结算过的工程' },
+      { table: 'subprojects', column: 'created_by', label: '创建的子项目' },
+      { table: 'project_history', column: 'performed_by', label: '操作过的工程历史' },
+      { table: 'files', column: 'uploaded_by', label: '上传的附件' },
+      { table: 'wage_settlements', column: 'settled_by', label: '执行过的工资结算' },
+      { table: 'wage_advances', column: 'created_by', label: '录入的预支流水' },
+      { table: 'subproject_transfers', column: 'from_user_id', label: '被转派出去的子项目' },
+      { table: 'subproject_transfers', column: 'to_user_id', label: '被转派接收的子项目' },
+      { table: 'subproject_transfers', column: 'transferred_by', label: '执行的子项目转派' }
+    ];
+
+    const blocked = [];
+    for (const r of relations) {
+      const countResult = await pool.query(
+        `SELECT COUNT(*)::int AS cnt FROM ${r.table} WHERE ${r.column} = $1`,
+        [id]
+      );
+      const cnt = countResult.rows[0].cnt;
+      if (cnt > 0) {
+        blocked.push(`${r.label}(${cnt})`);
+      }
+    }
+
+    if (blocked.length > 0) {
+      // 拼装详细提示，指出具体的关联业务与数量，方便管理员定位
+      const detail = blocked.join('、');
+      ctx.fail(2011, `该用户存在关联业务数据，无法删除：${detail}。请先转派或清理相关数据后再删除。`);
+      return;
+    }
+
+    // 无关联数据，安全删除
     await pool.query('DELETE FROM users WHERE id = $1', [id]);
 
     ctx.success({ message: '删除成功' });

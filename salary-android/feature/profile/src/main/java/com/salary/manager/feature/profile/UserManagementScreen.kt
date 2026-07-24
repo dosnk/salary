@@ -41,6 +41,8 @@ fun UserManagementScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     // 待重置密码的目标用户（null 表示未打开弹窗）
     var resetTarget by remember { mutableStateOf<UserDto?>(null) }
+    // 待删除的目标用户（null 表示未打开弹窗）
+    var deleteTarget by remember { mutableStateOf<UserDto?>(null) }
     // 结果反馈用 Snackbar，重置成功后展示"已将 xx 的密码重置为默认密码"
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -97,9 +99,9 @@ fun UserManagementScreen(
                             resetTarget = user
                         },
                         onDelete = {
-                            onDeleteUser(user.id) { error ->
-                                errorMessage = error
-                            }
+                            // 打开二次确认弹窗，避免误点导致级联数据丢失
+                            errorMessage = null
+                            deleteTarget = user
                         }
                     )
                 }
@@ -143,6 +145,30 @@ fun UserManagementScreen(
                         scope.launch {
                             snackbarHostState.showSnackbar(
                                 message = "已将 ${target.nickname} 的密码重置为默认密码 $defaultPassword"
+                            )
+                        }
+                    }
+                }
+            }
+        )
+    }
+
+    // 删除用户弹窗（二次确认，明确告知级联影响）
+    val del = deleteTarget
+    if (del != null) {
+        DeleteUserDialog(
+            user = del,
+            onDismiss = { deleteTarget = null; errorMessage = null },
+            onConfirm = {
+                onDeleteUser(del.id) { error ->
+                    if (error != null) {
+                        errorMessage = error
+                    } else {
+                        deleteTarget = null
+                        errorMessage = null
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                message = "已删除用户 ${del.nickname}"
                             )
                         }
                     }
@@ -362,6 +388,61 @@ private fun ResetPasswordDialog(
         confirmButton = {
             TextButton(onClick = onConfirm) {
                 Text("确认重置", color = AppColors.Error, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+/**
+ * 删除用户确认弹窗
+ *
+ * 需要管理员二次确认。业务规则（V2.2 起）：
+ * - 后端 deleteUser 已增加关联数据前置检查：只要该用户存在任意业务关联
+ *   （工程分工、工资分配、工资结算、预支、工程结算状态、
+ *    工程/子项目/结算/附件/子项目转派中的操作人字段等），
+ *   即返回 2011 拒绝删除，业务数据永不丢失。
+ * - 因此本弹窗仅提示"无关联数据方可删除"，删除本身是安全操作，
+ *   若有关联数据将由后端返回错误明细，前端会通过 errorMessage 展示。
+ */
+@Composable
+private fun DeleteUserDialog(
+    user: UserDto,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(24.dp),
+        containerColor = Color.White,
+        title = { Text("删除用户", fontWeight = FontWeight.Bold, color = AppColors.Error) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "确认删除用户「${user.nickname}」？",
+                    fontSize = 15.sp,
+                    color = AppColors.TextPrimary,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    "为保护历史数据，仅允许删除无业务关联的用户：",
+                    fontSize = 13.sp,
+                    color = AppColors.TextSecondary
+                )
+                Text(
+                    "· 若该用户仍存在工程分工、工资结算、工资分配、预支流水、\n" +
+                    "  工程/子项目/附件/流水中的操作人等关联记录，删除将被拒绝；\n" +
+                    "· 请先将相关工作转派或清理后，再执行删除。",
+                    fontSize = 12.sp,
+                    color = AppColors.TextTertiary
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("确认删除", color = AppColors.Error, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
