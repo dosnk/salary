@@ -56,7 +56,8 @@ fun ProjectCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        // 圆角对齐设计规范中圆角（16dp 中圆角）
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = AppColors.Surface
         ),
@@ -404,7 +405,7 @@ private fun ButtonSection(
                 }
             }
             else -> {
-                // 其他状态（描边禁用按钮）
+                // 其他状态（备料中/已取消等）：根据状态显示对应文案，避免误导
                 OutlinedButton(
                     onClick = { },
                     modifier = Modifier.weight(1f),
@@ -414,7 +415,14 @@ private fun ButtonSection(
                         contentColor = AppColors.TextTertiary
                     )
                 ) {
-                    Text("已完工", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                    // 备料中→"备料中"，已取消→"已取消"，其他未知状态→"查看状态"
+                    val statusText = when (project.status) {
+                        "preparing" -> "备料中"
+                        "canceled" -> "已取消"
+                        "completed" -> "已完工"
+                        else -> "查看状态"
+                    }
+                    Text(statusText, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                 }
             }
         }

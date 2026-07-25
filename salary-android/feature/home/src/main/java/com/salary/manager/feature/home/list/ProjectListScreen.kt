@@ -1030,7 +1030,7 @@ private fun settlementStatusText(status: String): String = when (status) {
     else -> status
 }
 
-/** 按月分组工程列表 */
+/** 按月分组工程列表，并按月份倒序排序（最近月份在前） */
 private fun groupProjectsByMonth(projects: List<ProjectUiModel>): Map<String, List<ProjectUiModel>> {
     // 兼容多种后端返回格式：
     // - "yyyy-MM-dd HH:mm"（后端TO_CHAR实际返回格式）
@@ -1038,20 +1038,40 @@ private fun groupProjectsByMonth(projects: List<ProjectUiModel>): Map<String, Li
     val parserIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.CHINA)
     val parserBackend = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA)
     val formatter = SimpleDateFormat("yyyy年M月", Locale.CHINA)
-    return projects
-        .groupBy { project ->
-            // 优先尝试ISO标准格式，失败则尝试后端实际格式，都失败则标记为未知月份
-            val date = try {
-                parserIso.parse(project.createdAt)
+    // 显示格式（yyyy年M月）→ 排序键（yyyy-MM），便于降序排序
+    val sortKeyFormatter = SimpleDateFormat("yyyy-MM", Locale.CHINA)
+
+    // 先分组：displayKey（"yyyy年M月"或"未知月份"） -> 工程列表
+    val grouped = projects.groupBy { project ->
+        // 优先尝试ISO标准格式，失败则尝试后端实际格式，都失败则标记为未知月份
+        val date = try {
+            parserIso.parse(project.createdAt)
+        } catch (_: Exception) {
+            try {
+                parserBackend.parse(project.createdAt)
             } catch (_: Exception) {
+                null
+            }
+        }
+        date?.let { formatter.format(it) } ?: "未知月份"
+    }
+
+    // 按月份降序排序（最近月份在前），"未知月份"放到最后
+    return grouped.entries
+        .sortedByDescending { entry ->
+            if (entry.key == "未知月份") {
+                "" // 空字符串排序后自然落到最后
+            } else {
                 try {
-                    parserBackend.parse(project.createdAt)
+                    // 将显示键"yyyy年M月"再解析回Date，取排序键
+                    val parsed = formatter.parse(entry.key)
+                    parsed?.let { sortKeyFormatter.format(it) } ?: ""
                 } catch (_: Exception) {
-                    null
+                    ""
                 }
             }
-            date?.let { formatter.format(it) } ?: "未知月份"
         }
+        .associate { it.key to it.value }
 }
 
 /**

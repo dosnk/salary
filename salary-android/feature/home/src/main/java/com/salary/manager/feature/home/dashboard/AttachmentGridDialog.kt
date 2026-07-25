@@ -271,13 +271,16 @@ private fun MediaGridItem(
                 // 图片/视频缩略图
                 // fillMaxWidth 拉伸宽度至弹窗宽度
                 // ContentScale.Fit 保持原始长宽比，高度自适应
+                // heightIn(max) 限制最大高度，避免超长截图（如长图）撑爆弹窗
                 AsyncImage(
                     model = ImageRequest.Builder(context)
                         .data(fullUrl)
                         .crossfade(true)
                         .build(),
                     contentDescription = displayName,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 320.dp),
                     contentScale = ContentScale.Fit
                 )
             }

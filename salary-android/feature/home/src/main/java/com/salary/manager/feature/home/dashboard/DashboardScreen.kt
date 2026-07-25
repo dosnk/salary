@@ -1166,6 +1166,8 @@ private fun ProjectHistoryCard(
     // 子项目表格展开/折叠状态
     // 优化：子项目≤30个时默认展开（用户体验优先），>30个时默认折叠（减少渲染量）
     // 卡顿问题已通过拆分 form_card 为多个 item + SubprojectTable 行级 key 复用解决
+    // 注意：使用 remember 而非 rememberSaveable（后者需要 runtime-saveable 额外依赖）
+    // 配置更改（屏幕旋转）时会重置为默认展开/折叠状态，可接受
     var isSubprojectExpanded by remember(project.id) {
         mutableStateOf(project.subprojects.size <= 30)
     }
@@ -1227,10 +1229,12 @@ private fun ProjectHistoryCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             // 左：查看附件（中性浅灰背景）
+            // 触摸目标 ≥48dp 满足 Material 无障碍建议，视觉样式保持紧凑
             Surface(
                 onClick = onOpenAttachmentList,
                 shape = RoundedCornerShape(8.dp),
-                color = AppColors.NeutralSurface
+                color = AppColors.NeutralSurface,
+                modifier = Modifier.heightIn(min = 48.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -1251,11 +1255,13 @@ private fun ProjectHistoryCard(
                 }
             }
             // 右：上传附件（浅绿背景）—— 资料员不可上传，隐藏按钮
+            // 触摸目标 ≥48dp 满足 Material 无障碍建议，视觉样式保持紧凑
             if (canUploadFile) {
                 Surface(
                     onClick = onOpenFilePicker,
                     shape = RoundedCornerShape(8.dp),
-                    color = AppColors.Green50
+                    color = AppColors.Green50,
+                    modifier = Modifier.heightIn(min = 48.dp)
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -1673,9 +1679,11 @@ private fun MonthPickerDialog(
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    // 解析当前年月失败时，回退到系统当前年月，避免硬编码 2026/6 导致用户初次打开时月份不准
+    val today = java.time.LocalDate.now()
     val parts = currentYearMonth.split("-")
-    val initYear = parts.getOrNull(0)?.toIntOrNull() ?: 2026
-    val initMonth = parts.getOrNull(1)?.toIntOrNull() ?: 6
+    val initYear = parts.getOrNull(0)?.toIntOrNull() ?: today.year
+    val initMonth = parts.getOrNull(1)?.toIntOrNull() ?: today.monthValue
 
     var selectedYear by remember { mutableIntStateOf(initYear) }
     var selectedMonth by remember { mutableIntStateOf(initMonth) }
