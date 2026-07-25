@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.salary.core.common.util.AmountFormatter
 import com.salary.core.common.util.DateFormatter
 import com.salary.core.design.theme.AppColors
@@ -41,11 +42,11 @@ import java.util.Locale
 fun AdvanceScreen(
     viewModel: AdvanceViewModel = hiltViewModel()
 ) {
-    val state by viewModel.state.collectAsState()
-    val createError by viewModel.createErrorMessage.collectAsState()
-    val isCreating by viewModel.isCreating.collectAsState()
-    val constructors by viewModel.constructors.collectAsState()
-    val selectedUserId by viewModel.selectedUserId.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val createError by viewModel.createErrorMessage.collectAsStateWithLifecycle()
+    val isCreating by viewModel.isCreating.collectAsStateWithLifecycle()
+    val constructors by viewModel.constructors.collectAsStateWithLifecycle()
+    val selectedUserId by viewModel.selectedUserId.collectAsStateWithLifecycle()
     var showCreateDialog by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize()) {

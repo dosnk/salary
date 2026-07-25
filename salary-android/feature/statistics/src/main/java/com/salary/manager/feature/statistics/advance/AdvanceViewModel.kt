@@ -65,17 +65,17 @@ class AdvanceViewModel @Inject constructor(
     val selectedUserId: StateFlow<Int?> = _selectedUserId.asStateFlow()
 
     init {
-        loadUserRole()
-        loadAdvances()
-        // 资料员/管理员可按人员筛选，加载施工人员列表
-        loadConstructorsIfNeeded()
-    }
-
-    /** 加载当前用户角色，用于UI层控制创建按钮显示 */
-    private fun loadUserRole() {
+        // 修复初始化时序问题：loadConstructorsIfNeeded 依赖 _currentUserRole，
+        // 必须先完成角色加载再调用，否则 canFilterByUser() 会因角色为空返回 false
+        // 导致施工人员列表不加载。loadAdvances 不依赖角色，可与角色加载并行。
         viewModelScope.launch {
+            // 1. 先加载用户角色（异步读取 DataStore）
             _currentUserRole.value = userStorage.getRole() ?: ""
+            // 2. 角色就绪后按需加载施工人员列表（admin/documenter 才需要）
+            loadConstructorsIfNeeded()
         }
+        // 3. 并行加载预支记录列表（不依赖角色）
+        loadAdvances()
     }
 
     /** 当前用户是否可以创建预支（仅施工员constructor可以） */
@@ -85,17 +85,15 @@ class AdvanceViewModel @Inject constructor(
     fun canFilterByUser(): Boolean = _currentUserRole.value == "admin" || _currentUserRole.value == "documenter"
 
     /** 加载施工人员列表（仅资料员/管理员需要，用于按人员筛选） */
-    private fun loadConstructorsIfNeeded() {
-        viewModelScope.launch {
-            if (!canFilterByUser()) return@launch
-            try {
-                val response = userApi.getConstructors()
-                if (response.code == 200 && response.data != null) {
-                    _constructors.value = response.data!!
-                }
-            } catch (_: Exception) {
-                // 静默处理，不影响主流程
+    private suspend fun loadConstructorsIfNeeded() {
+        if (!canFilterByUser()) return
+        try {
+            val response = userApi.getConstructors()
+            if (response.code == 200 && response.data != null) {
+                _constructors.value = response.data!!
             }
+        } catch (_: Exception) {
+            // 静默处理，不影响主流程
         }
     }
 

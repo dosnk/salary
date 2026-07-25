@@ -113,7 +113,11 @@ class ProjectListViewModel @Inject constructor(
 
     private var currentKeyword: String? = null
     private var currentPage = 1
+    /** 是否正在加载更多（防抖，避免重复触发 loadMore 导致跳页） */
     private var isLoadingMore = false
+    /** 对外暴露的加载更多状态，UI 层据此显示加载中并避免重复触发 */
+    private val _isLoadingMoreState = MutableStateFlow(false)
+    val isLoadingMoreState: StateFlow<Boolean> = _isLoadingMoreState.asStateFlow()
     /** 错误重试次数，最多3次 */
     private var retryCount = 0
     private val maxRetryCount = 3
@@ -143,6 +147,7 @@ class ProjectListViewModel @Inject constructor(
                 currentPage = 1
             }
             isLoadingMore = true
+            _isLoadingMoreState.value = true
 
             try {
                 val filter = _advancedFilter.value
@@ -161,8 +166,15 @@ class ProjectListViewModel @Inject constructor(
                 if (response.code == 200) {
                     // 成功时重置重试计数
                     retryCount = 0
-                    val pageData = response.data ?: run {
-                        _state.value = com.salary.core.ui.state.ListUiState.Error("暂无工程数据")
+                    // 后端返回 200 但 data 为 null 时视为空数据，显示空状态页而非错误页
+                    // 避免"暂无工程数据"误显示为错误，影响用户体验
+                    val pageData = response.data
+                    if (pageData == null) {
+                        _state.value = com.salary.core.ui.state.ListUiState.Success(
+                            items = emptyList(),
+                            hasMore = false,
+                            page = currentPage
+                        )
                         return@launch
                     }
                     val newItems = pageData.list.map { dto ->
@@ -250,6 +262,7 @@ class ProjectListViewModel @Inject constructor(
                 }
             } finally {
                 isLoadingMore = false
+                _isLoadingMoreState.value = false
             }
         }
     }
@@ -265,6 +278,8 @@ class ProjectListViewModel @Inject constructor(
 
     /** 加载更多 */
     fun loadMore() {
+        // 防抖：正在加载更多时直接返回，避免重复触发导致 currentPage 自增跳页
+        if (isLoadingMore) return
         val currentState = _state.value
         if (currentState is com.salary.core.ui.state.ListUiState.Success && currentState.hasMore) {
             currentPage++

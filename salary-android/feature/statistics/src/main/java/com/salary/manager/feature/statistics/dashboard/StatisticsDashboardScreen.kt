@@ -156,7 +156,6 @@ fun StatisticsDashboardScreen(
     var settleRemark by remember { mutableStateOf("") }
     var showStatsProjectList by remember { mutableStateOf(false) }
     var statsFilterType by remember { mutableStateOf("") }
-    val scope = rememberCoroutineScope()
 
     // Tab切换时静默刷新统计数据（首次进入refreshTrigger=0不触发，后续切换递增触发）
     LaunchedEffect(refreshTrigger) {

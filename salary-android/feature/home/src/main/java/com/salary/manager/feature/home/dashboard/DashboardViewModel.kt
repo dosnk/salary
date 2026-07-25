@@ -1614,18 +1614,19 @@ class DashboardViewModel @Inject constructor(
      * 场景：用户修改表单后800ms内退出App，防抖Job未执行就被取消，导致最后一次修改丢失。
      *
      * 实现说明：
-     * - 使用NonCancellable + GlobalScope.launch异步保存，避免在主线程执行IO操作
-     * - NonCancellable确保即使ViewModel的viewModelScope已取消，保存操作仍能完成
-     * - GlobalScope生命周期独立于ViewModel，App进程未退出时保存任务可继续执行
-     * - 相比runBlocking：不阻塞主线程，避免ANR风险
+     * - 使用 viewModelScope + NonCancellable 异步保存，避免在主线程执行IO操作
+     * - NonCancellable 确保即使 viewModelScope 已开始取消流程，保存操作仍能完成
+     *   （viewModelScope 在 onCleared 调用后才正式取消，此时 launch + NonCancellable 仍可执行）
+     * - 相比 GlobalScope：协程受 ViewModel 生命周期约束，避免进程级协程累积导致内存泄漏
+     * - 相比 runBlocking：不阻塞主线程，避免ANR风险
      */
     override fun onCleared() {
         super.onCleared()
         // 取消未执行的防抖Job（避免重复保存）
         saveFormJob?.cancel()
         // 异步兜底保存表单快照（防抖未完成时强制落盘）
-        // 使用NonCancellable确保保存操作不被取消
-        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.NonCancellable) {
+        // 使用 NonCancellable 确保保存操作不被取消
+        viewModelScope.launch(kotlinx.coroutines.NonCancellable) {
             try {
                 val state = _uiState.value
                 dashboardCache.saveFormCache(

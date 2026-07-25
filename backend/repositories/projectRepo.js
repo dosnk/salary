@@ -12,10 +12,28 @@ const logger = require('../config/logger');
 
 /**
  * 根据ID查询工程
+ * 注意：软删除（status='deleted'）的工程不返回，需要查询已删除工程请使用 findByIdIncludeDeleted
+ * @param {number} id - 工程ID
+ * @returns {Promise<object|null>} 工程记录，不存在或已软删除则返回 null
+ */
+const findById = async (id) => {
+  const result = await pool.query(
+    `SELECT id, name, description, status, COALESCE(total_amount, 0) AS total_amount,
+            salary_distribution, total_work_days, settled_by, created_by, remark,
+            TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+            TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
+     FROM projects WHERE id = $1 AND status <> 'deleted'`,
+    [id]
+  );
+  return result.rows[0] || null;
+};
+
+/**
+ * 根据ID查询工程（含已软删除，仅用于内部审计/恢复场景）
  * @param {number} id - 工程ID
  * @returns {Promise<object|null>} 工程记录，不存在则返回 null
  */
-const findById = async (id) => {
+const findByIdIncludeDeleted = async (id) => {
   const result = await pool.query(
     `SELECT id, name, description, status, COALESCE(total_amount, 0) AS total_amount,
             salary_distribution, total_work_days, settled_by, created_by, remark,
@@ -226,12 +244,13 @@ const listWithFilters = async (filters) => {
     ) sp ON true`;
 
   // 施工员角色：只能查看自己参与的工程（创建者 OR 施工人员）
+  // 所有角色均过滤软删除工程（status='deleted'），避免敏感数据泄露
   if (isConstructorRole) {
-    query += ` WHERE (p.created_by = $${paramIndex} OR EXISTS (SELECT 1 FROM project_workers pw WHERE pw.project_id = p.id AND pw.user_id = $${paramIndex}))`;
+    query += ` WHERE p.status <> 'deleted' AND (p.created_by = $${paramIndex} OR EXISTS (SELECT 1 FROM project_workers pw WHERE pw.project_id = p.id AND pw.user_id = $${paramIndex}))`;
     params.push(userId);
     paramIndex++;
   } else {
-    query += ' WHERE 1=1';
+    query += ` WHERE p.status <> 'deleted'`;
   }
 
   // 月份筛选
@@ -360,6 +379,8 @@ const listWithFilters = async (filters) => {
   }
 
   // 施工员角色过滤（用EXISTS避免JOIN膨胀）
+  // 所有角色均过滤软删除工程（status='deleted'），与主查询保持一致
+  countConditions.push(`p.status <> 'deleted'`);
   if (isConstructorRole) {
     countConditions.push(`EXISTS (SELECT 1 FROM project_workers pw WHERE pw.project_id = p.id AND pw.user_id = $${countParamIndex})`);
     countParams.push(userId);
@@ -467,17 +488,18 @@ const listWithFilters = async (filters) => {
 
 /**
  * 获取工程详情（含子项目、施工人员、附件）
+ * 注意：软删除工程不返回详情，避免敏感数据泄露
  * @param {number} id - 工程ID
- * @returns {Promise<object|null>} 工程详情对象，不存在则返回 null
+ * @returns {Promise<object|null>} 工程详情对象，不存在或已软删除则返回 null
  */
 const getDetailById = async (id) => {
-  // 获取工程基本信息
+  // 获取工程基本信息（过滤软删除工程）
   const projectResult = await pool.query(
     `SELECT p.*,
             TO_CHAR(p.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
             TO_CHAR(p.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
      FROM projects p
-     WHERE p.id = $1`,
+     WHERE p.id = $1 AND p.status <> 'deleted'`,
     [id]
   );
 
@@ -989,8 +1011,9 @@ const findSubprojectById = async (id) => {
  * @param {number} id - 子项目ID
  * @returns {Promise<object|null>} 子项目详情（含 shape 字段）
  */
-const findSubprojectDetailById = async (id) => {
-  const result = await pool.query(
+const findSubprojectDetailById = async (id, client) => {
+  const executor = client || pool;
+  const result = await executor.query(
     `SELECT sp.*,
             st.name AS space_type_name,
             st.shape AS space_type_shape,
@@ -1009,10 +1032,12 @@ const findSubprojectDetailById = async (id) => {
 /**
  * 获取工程子项目总额
  * @param {number} projectId - 工程ID
+ * @param {object} [client] - pg 事务客户端，不传则使用连接池
  * @returns {Promise<number>} 子项目金额之和
  */
-const getSubprojectsTotalAmount = async (projectId) => {
-  const result = await pool.query(
+const getSubprojectsTotalAmount = async (projectId, client) => {
+  const executor = client || pool;
+  const result = await executor.query(
     'SELECT COALESCE(SUM(amount), 0) AS total FROM subprojects WHERE project_id = $1',
     [projectId]
   );
@@ -1123,22 +1148,30 @@ const createProjectWithSubproject = async (data) => {
  * @param {number} subprojectId - 子项目ID
  * @param {number} quantity - 数量
  * @param {number} amount - 金额
+ * @param {object} [client] - pg 事务客户端，不传则使用连接池
  * @returns {Promise<void>}
  */
-const updateSubprojectAmount = async (subprojectId, quantity, amount) => {
-  await pool.query(
+const updateSubprojectAmount = async (subprojectId, quantity, amount, client) => {
+  const executor = client || pool;
+  await executor.query(
     'UPDATE subprojects SET quantity = $1, amount = $2 WHERE id = $3',
     [quantity, amount, subprojectId]
   );
 };
 
 /**
- * 在事务中更新子项目
+ * 更新子项目（支持事务）
+ *
+ * 安全说明：字段映射采用严格白名单，未在 fieldToColumn 中的字段一律跳过，
+ * 避免用户可控字段名被拼接到 SQL 造成注入风险。
+ *
  * @param {number} subprojectId - 子项目ID
  * @param {object} updates - 更新字段
+ * @param {object} [client] - pg 事务客户端，不传则使用连接池
  * @returns {Promise<void>}
  */
-const updateSubprojectInTransaction = async (subprojectId, updates) => {
+const updateSubprojectInTransaction = async (subprojectId, updates, client) => {
+  const executor = client || pool;
   const setClauses = [];
   const params = [];
   let paramIndex = 1;
@@ -1148,39 +1181,44 @@ const updateSubprojectInTransaction = async (subprojectId, updates) => {
     construction_plan_id: 'construction_plan_id',
     length: 'length',
     width: 'width',
+    height: 'height',
     quantity: 'quantity',
     amount: 'amount',
     remark: 'remark',
     status: 'status',
-    created_by: 'created_by'
+    created_by: 'created_by',
+    measured_quantity: 'measured_quantity',
+    measured_note: 'measured_note'
   };
 
   for (const [field, value] of Object.entries(updates)) {
-    const column = fieldToColumn[field] || field;
-    if (value !== undefined) {
-      setClauses.push(`${column} = $${paramIndex}`);
-      params.push(value);
-      paramIndex++;
-    }
+    // 严格白名单：未在映射表中的字段直接跳过，避免 SQL 注入风险
+    const column = fieldToColumn[field];
+    if (!column || value === undefined) continue;
+    setClauses.push(`${column} = $${paramIndex}`);
+    params.push(value);
+    paramIndex++;
   }
 
   if (setClauses.length === 0) return;
 
   setClauses.push('updated_at = CURRENT_TIMESTAMP');
   params.push(subprojectId);
-  await pool.query(
+  await executor.query(
     `UPDATE subprojects SET ${setClauses.join(', ')} WHERE id = $${paramIndex}`,
     params
   );
 };
 
 /**
- * 在事务中删除子项目
+ * 删除子项目（支持事务）
  * @param {number} subprojectId - 子项目ID
+ * @param {object} [client] - pg 事务客户端，不传则使用连接池
  * @returns {Promise<void>}
  */
-const deleteSubprojectInTransaction = async (subprojectId) => {
-  await pool.query('DELETE FROM subprojects WHERE id = $1', [subprojectId]);
+const deleteSubprojectInTransaction = async (subprojectId, client) => {
+  const executor = client || pool;
+  await executor.query('DELETE FROM subprojects WHERE id = $1', [subprojectId]);
 };
 
 /**
@@ -1261,6 +1299,14 @@ const updateSubprojectStatus = async (subprojectId, status, userId, projectId) =
 
     const subproject = subprojectResult.rows[0];
 
+    // 校验子项目归属当前工程，防止跨工程越权操作
+    // 攻击场景：传入自己参与的 projectId + 他人工程的 subprojectId，绕过权限校验
+    // 返回 forbidden 而非 notFound，避免泄露子项目存在性信息
+    if (projectId !== undefined && Number(subproject.project_id) !== Number(projectId)) {
+      await client.query('ROLLBACK');
+      return { forbidden: true };
+    }
+
     // 权限校验：只有子项目创建者可以操作（沿用原有逻辑）
     if (userId !== subproject.created_by) {
       await client.query('ROLLBACK');
@@ -1274,9 +1320,11 @@ const updateSubprojectStatus = async (subprojectId, status, userId, projectId) =
     );
 
     // 添加历史记录
+    // 修复：使用子项目真实的 project_id 写入历史，避免攻击者传入伪造 projectId 导致历史记录错乱
+    const realProjectId = subproject.project_id;
     await client.query(
       'INSERT INTO project_history (project_id, action, description, performed_by) VALUES ($1, $2, $3, $4)',
-      [projectId, 'UPDATE_SUBPROJECT_STATUS', `更新子项目状态为${status}`, userId]
+      [realProjectId, 'UPDATE_SUBPROJECT_STATUS', `更新子项目状态为${status}`, userId]
     );
 
     await client.query('COMMIT');
@@ -1356,6 +1404,7 @@ const deleteFileRecord = async (fileId) => {
 module.exports = {
   // 工程基础 CRUD
   findById,
+  findByIdIncludeDeleted,
   findByName,
   create,
   update,

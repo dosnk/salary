@@ -313,7 +313,19 @@ module.exports = {
     const result = await pool.query(query, params);
 
     // 初始化各状态分组的数据结构
+    // 工程状态枚举：preparing → constructing → completed → settled / canceled
+    // settled 状态由 confirmSettlement 自动设置，不可手动变更
     const statusGroups = {
+      preparing: {
+        status: 'preparing',
+        status_name: '备料中',
+        settlement_groups: {
+          unsettled: { count: 0, amount: 0, subproject_count: 0, subproject_amount: 0 },
+          settling: { count: 0, amount: 0, subproject_count: 0, subproject_amount: 0 },
+          settled: { count: 0, amount: 0, subproject_count: 0, subproject_amount: 0 }
+        },
+        total: { count: 0, amount: 0, subproject_count: 0, subproject_amount: 0 }
+      },
       constructing: {
         status: 'constructing',
         status_name: '施工中',
@@ -334,9 +346,9 @@ module.exports = {
         },
         total: { count: 0, amount: 0, subproject_count: 0, subproject_amount: 0 }
       },
-      preparing: {
-        status: 'preparing',
-        status_name: '准备中',
+      settled: {
+        status: 'settled',
+        status_name: '已结算',
         settlement_groups: {
           unsettled: { count: 0, amount: 0, subproject_count: 0, subproject_amount: 0 },
           settling: { count: 0, amount: 0, subproject_count: 0, subproject_amount: 0 },
@@ -684,68 +696,91 @@ module.exports = {
    */
   async getDashboard({ userId, role }) {
     const isConstructorUser = isConstructor({ role });
+    // documenter 与 admin 一样可查看全部统计（仅读，无个人维度）
+    const isGlobalViewer = !isConstructorUser;
     const currentYear = new Date().getFullYear();
     const currentMonth = new Date().getMonth() + 1;
     const monthDivisor = Math.max(currentMonth, 1);
 
-    logger.info(`[getDashboard] userId=${userId}, role=${role}, isConstructor=${isConstructorUser}, year=${currentYear}, month=${currentMonth}`);
+    logger.info(`[getDashboard] userId=${userId}, role=${role}, isConstructor=${isConstructorUser}, isGlobalViewer=${isGlobalViewer}, year=${currentYear}, month=${currentMonth}`);
 
     // ========== 卡片1：待结算工程（已完工未结算，settling状态） ==========
     // 份数（工程级）：COUNT(DISTINCT p.id)
-    // 金额（个人级）：按 salary_distribution 分配方式计算个人分摊金额合计
-    //   - average：子项目总额 / 施工人数
-    //   - work_days：子项目总额 * (个人工日 / 总工日)
+    // 金额维度：
+    //   - 施工员（constructor）：个人分摊金额（按 salary_distribution 计算）
+    //     * average：子项目总额 / 施工人数
+    //     * work_days：子项目总额 * (个人工日 / 总工日)
+    //   - 管理员/资料员：工程总额（sp_agg.sp_total 直接求和，看全局应收规模）
     // 关键：settling 工程尚未结算，wage_distributions 表无记录，
-    //       必须从 subprojects.amount 聚合并按 calculateUserWage 逻辑计算个人分摊
-    // 注意：pus必须限制 user_id，否则多用户时视图产生多行导致金额重复累加
-    let settlingQuery = `
-      SELECT
-        COUNT(DISTINCT p.id) AS unsettled_project_count,
-        COALESCE(SUM(
-          CASE
-            WHEN p.salary_distribution = 'average' THEN
-              sp_agg.sp_total / GREATEST(COALESCE(pw_agg.worker_count, 0), 1)
-            WHEN p.salary_distribution = 'work_days' THEN
-              CASE
-                WHEN COALESCE(pw_agg.total_workdays, 0) > 0 THEN
-                  sp_agg.sp_total * (COALESCE(pw_agg.user_workdays, 0) / pw_agg.total_workdays)
-                ELSE
-                  sp_agg.sp_total / GREATEST(COALESCE(pw_agg.worker_count, 0), 1)
-              END
-            ELSE
-              sp_agg.sp_total / GREATEST(COALESCE(pw_agg.worker_count, 0), 1)
-          END
-        ), 0) AS unsettled_amount
-      FROM projects p
-      INNER JOIN v_project_user_settlement_status pus
-        ON p.id = pus.project_id AND pus.user_id = $1 AND pus.settlement_status = 'settling'
-      -- 子项目金额聚合（与 getProjects 保持一致，不限制子项目状态）
-      LEFT JOIN LATERAL (
-        SELECT COALESCE(SUM(sp.amount), 0) AS sp_total
-        FROM subprojects sp
-        WHERE sp.project_id = p.id
-      ) sp_agg ON true
-      -- 施工人员聚合（合并原3个LATERAL为1个，减少3次子查询）
-      LEFT JOIN LATERAL (
-        SELECT
-          COUNT(DISTINCT pw2.user_id) AS worker_count,
-          COALESCE(SUM(pw2.workdays), 0) AS total_workdays,
-          COALESCE(MAX(CASE WHEN pw2.user_id = $1 THEN pw2.workdays END), 0) AS user_workdays
-        FROM project_workers pw2
-        WHERE pw2.project_id = p.id
-      ) pw_agg ON true
-      WHERE 1=1
-    `;
-    let settlingParams = [userId];
+    //       必须从 subprojects.amount 聚合计算
+    // 注意：pus 必须限制 user_id（仅施工员分支），否则多用户时视图产生多行导致金额重复累加；
+    //       admin/documenter 不关联 pus，直接按 v_project_user_settlement_status.settlement_status='settling' 过滤工程
+    let settlingQuery;
+    let settlingParams;
 
-    // 施工员额外校验必须是项目参与者
     if (isConstructorUser) {
-      settlingQuery += `
-        AND EXISTS (
+      // 施工员：按个人分摊计算
+      settlingQuery = `
+        SELECT
+          COUNT(DISTINCT p.id) AS unsettled_project_count,
+          COALESCE(SUM(
+            CASE
+              WHEN p.salary_distribution = 'average' THEN
+                sp_agg.sp_total / GREATEST(COALESCE(pw_agg.worker_count, 0), 1)
+              WHEN p.salary_distribution = 'work_days' THEN
+                CASE
+                  WHEN COALESCE(pw_agg.total_workdays, 0) > 0 THEN
+                    sp_agg.sp_total * (COALESCE(pw_agg.user_workdays, 0) / pw_agg.total_workdays)
+                  ELSE
+                    sp_agg.sp_total / GREATEST(COALESCE(pw_agg.worker_count, 0), 1)
+                END
+              ELSE
+                sp_agg.sp_total / GREATEST(COALESCE(pw_agg.worker_count, 0), 1)
+            END
+          ), 0) AS unsettled_amount
+        FROM projects p
+        INNER JOIN v_project_user_settlement_status pus
+          ON p.id = pus.project_id AND pus.user_id = $1 AND pus.settlement_status = 'settling'
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(sp.amount), 0) AS sp_total
+          FROM subprojects sp
+          WHERE sp.project_id = p.id
+        ) sp_agg ON true
+        LEFT JOIN LATERAL (
+          SELECT
+            COUNT(DISTINCT pw2.user_id) AS worker_count,
+            COALESCE(SUM(pw2.workdays), 0) AS total_workdays,
+            COALESCE(MAX(CASE WHEN pw2.user_id = $1 THEN pw2.workdays END), 0) AS user_workdays
+          FROM project_workers pw2
+          WHERE pw2.project_id = p.id
+        ) pw_agg ON true
+        WHERE EXISTS (
           SELECT 1 FROM project_workers pw
           WHERE pw.project_id = p.id AND pw.user_id = $1
         )
       `;
+      settlingParams = [userId];
+    } else {
+      // admin/documenter：统计全部 settling 工程的子项目总额
+      // 使用 LATERAL 确保 pus 多行（多用户）不会让 sp_agg 重复累加
+      settlingQuery = `
+        SELECT
+          COUNT(DISTINCT p.id) AS unsettled_project_count,
+          COALESCE(SUM(sp_agg.sp_total), 0) AS unsettled_amount
+        FROM projects p
+        INNER JOIN (
+          SELECT DISTINCT project_id
+          FROM v_project_user_settlement_status
+          WHERE settlement_status = 'settling'
+        ) settling_projects ON p.id = settling_projects.project_id
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(sp.amount), 0) AS sp_total
+          FROM subprojects sp
+          WHERE sp.project_id = p.id
+        ) sp_agg ON true
+        WHERE p.status NOT IN ('settled', 'canceled')
+      `;
+      settlingParams = [];
     }
 
     const settlingResult = await pool.query(settlingQuery, settlingParams);
@@ -753,13 +788,30 @@ module.exports = {
     const unsettledAmount = parseFloat(settlingResult.rows[0].unsettled_amount) || 0;
 
     // ========== 卡片2：预支金额（未结算预支） ==========
-    const advanceResult = await pool.query(`
-      SELECT
-        COUNT(*) AS advance_count,
-        COALESCE(SUM(wa.advance_amount), 0) AS advance_total
-      FROM wage_advances wa
-      WHERE wa.user_id = $1 AND wa.settled = false
-    `, [userId]);
+    // 施工员：仅看自己的未结算预支
+    // admin/documenter：查看全部未结算预支（与 advances 接口保持一致）
+    let advanceQuery;
+    let advanceParams;
+    if (isConstructorUser) {
+      advanceQuery = `
+        SELECT
+          COUNT(*) AS advance_count,
+          COALESCE(SUM(wa.advance_amount), 0) AS advance_total
+        FROM wage_advances wa
+        WHERE wa.user_id = $1 AND wa.settled = false
+      `;
+      advanceParams = [userId];
+    } else {
+      advanceQuery = `
+        SELECT
+          COUNT(*) AS advance_count,
+          COALESCE(SUM(wa.advance_amount), 0) AS advance_total
+        FROM wage_advances wa
+        WHERE wa.settled = false
+      `;
+      advanceParams = [];
+    }
+    const advanceResult = await pool.query(advanceQuery, advanceParams);
     const advanceCount = parseInt(advanceResult.rows[0].advance_count) || 0;
     const advanceTotal = parseFloat(advanceResult.rows[0].advance_total) || 0;
 

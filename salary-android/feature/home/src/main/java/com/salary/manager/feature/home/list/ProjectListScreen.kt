@@ -185,6 +185,7 @@ fun ProjectListScreen(
             is ListUiState.Success -> {
                 val items = (state as ListUiState.Success<ProjectUiModel>).items
                 val hasMore = (state as ListUiState.Success<ProjectUiModel>).hasMore
+                val isLoadingMore = viewModel.isLoadingMoreState.collectAsStateWithLifecycle().value
 
                 if (items.isEmpty()) {
                     EmptyProjectList()
@@ -192,6 +193,8 @@ fun ProjectListScreen(
                     ProjectList(
                         projects = items,
                         hasMore = hasMore,
+                        // 加载更多状态：用于UI防抖，避免加载期间重复触发 loadMore
+                        isLoadingMore = isLoadingMore,
                         // 仅施工员可确认完工（admin/documenter 只读）
                         canConfirmComplete = userRole == "constructor",
                         onLoadMore = { viewModel.loadMore() },
@@ -882,6 +885,7 @@ private fun StatusPickerSheet(
 private fun ProjectList(
     projects: List<ProjectUiModel>,
     hasMore: Boolean,
+    isLoadingMore: Boolean,
     canConfirmComplete: Boolean,
     onLoadMore: () -> Unit,
     onRefresh: () -> Unit,
@@ -893,12 +897,15 @@ private fun ProjectList(
     val listState = rememberLazyListState()
 
     // 检测是否滚动到底部，触发加载更多
-    LaunchedEffect(listState, hasMore) {
+    // 防抖条件：hasMore + isLoadingMore（避免加载期间重复触发）
+    // 阈值条件：totalItemsCount > 0 且 lastVisible > 0（避免列表项过少时误触发）
+    LaunchedEffect(listState, hasMore, isLoadingMore) {
         snapshotFlow {
             val lastVisibleItem = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            lastVisibleItem >= listState.layoutInfo.totalItemsCount - 2
+            val total = listState.layoutInfo.totalItemsCount
+            total > 0 && lastVisibleItem > 0 && lastVisibleItem >= total - 2
         }.collect { isAtEnd ->
-            if (isAtEnd && hasMore) {
+            if (isAtEnd && hasMore && !isLoadingMore) {
                 onLoadMore()
             }
         }

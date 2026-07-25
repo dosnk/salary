@@ -24,41 +24,87 @@ const getConstructionPlans = async (ctx) => {
 const getProjects = async (ctx) => {
   try {
     const userId = ctx.state.user?.id;
+    const user = ctx.state.user;
+    // documenter 与 admin 一样可查看全部数据（仅读，无个人维度）
+    // constructor 按个人分摊计算金额
+    const isGlobalViewer = !isConstructor(user);
 
     // 查询子项目明细数据（包含空间类型）
-    const subprojectsResult = await pool.query(`
-      SELECT
-        p.id as project_id,
-        p.name as project_name,
-        p.created_at,
-        p.salary_distribution,
-        sp.id as subproject_id,
-        sp.quantity,
-        sp.length,
-        sp.width,
-        sp.amount,
-        st.id as space_type_id,
-        st.name as space_type_name,
-        cp.id as plan_id,
-        cp.name as plan_name,
-        cp.unit,
-        cp.price,
-        (SELECT COUNT(DISTINCT pw.user_id) FROM project_workers pw WHERE pw.project_id = p.id) as worker_count
-      FROM projects p
-      INNER JOIN v_project_user_settlement_status pus ON p.id = pus.project_id AND pus.user_id = $1
-      INNER JOIN subprojects sp ON p.id = sp.project_id
-      LEFT JOIN space_types st ON sp.space_type_id = st.id
-      LEFT JOIN construction_plans cp ON sp.construction_plan_id = cp.id
-      WHERE pus.settlement_status = 'settling'
-      ORDER BY p.id, cp.id, sp.id
-    `, [userId]);
+    // - constructor: 通过 pus.user_id 过滤只查自己参与的 settling 工程
+    // - admin/documenter: 查全部 settling 工程（无 user_id 过滤），用 DISTINCT project_id 避免视图多用户产生重复行
+    let subprojectsQuery;
+    let subprojectsParams;
+    if (isGlobalViewer) {
+      subprojectsQuery = `
+        SELECT
+          p.id as project_id,
+          p.name as project_name,
+          p.created_at,
+          p.salary_distribution,
+          sp.id as subproject_id,
+          sp.quantity,
+          sp.length,
+          sp.width,
+          sp.amount,
+          st.id as space_type_id,
+          st.name as space_type_name,
+          cp.id as plan_id,
+          cp.name as plan_name,
+          cp.unit,
+          cp.price,
+          (SELECT COUNT(DISTINCT pw.user_id) FROM project_workers pw WHERE pw.project_id = p.id) as worker_count
+        FROM projects p
+        INNER JOIN (
+          SELECT DISTINCT project_id
+          FROM v_project_user_settlement_status
+          WHERE settlement_status = 'settling'
+        ) settling_projects ON p.id = settling_projects.project_id
+        INNER JOIN subprojects sp ON p.id = sp.project_id
+        LEFT JOIN space_types st ON sp.space_type_id = st.id
+        LEFT JOIN construction_plans cp ON sp.construction_plan_id = cp.id
+        WHERE p.status NOT IN ('settled', 'canceled')
+        ORDER BY p.id, cp.id, sp.id
+      `;
+      subprojectsParams = [];
+    } else {
+      subprojectsQuery = `
+        SELECT
+          p.id as project_id,
+          p.name as project_name,
+          p.created_at,
+          p.salary_distribution,
+          sp.id as subproject_id,
+          sp.quantity,
+          sp.length,
+          sp.width,
+          sp.amount,
+          st.id as space_type_id,
+          st.name as space_type_name,
+          cp.id as plan_id,
+          cp.name as plan_name,
+          cp.unit,
+          cp.price,
+          (SELECT COUNT(DISTINCT pw.user_id) FROM project_workers pw WHERE pw.project_id = p.id) as worker_count
+        FROM projects p
+        INNER JOIN v_project_user_settlement_status pus ON p.id = pus.project_id AND pus.user_id = $1
+        INNER JOIN subprojects sp ON p.id = sp.project_id
+        LEFT JOIN space_types st ON sp.space_type_id = st.id
+        LEFT JOIN construction_plans cp ON sp.construction_plan_id = cp.id
+        WHERE pus.settlement_status = 'settling'
+        ORDER BY p.id, cp.id, sp.id
+      `;
+      subprojectsParams = [userId];
+    }
+
+    const subprojectsResult = await pool.query(subprojectsQuery, subprojectsParams);
 
     // 查询当前用户在各工程的工日数（用于 work_days 分配方式计算个人分摊金额）
+    // admin/documenter 不计算个人分摊，跳过该查询
     const projectIdSet = new Set(subprojectsResult.rows.map(r => r.project_id));
     const projectIds = Array.from(projectIdSet);
     const userWorkdays = {};
     const totalWorkdays = {};
-    if (projectIds.length > 0) {
+    if (!isGlobalViewer && projectIds.length > 0) {
       const userWorkdaysResult = await pool.query(`
         SELECT pw.project_id, COALESCE(pw.workdays, 1) as user_workdays
         FROM project_workers pw
@@ -92,20 +138,29 @@ const getProjects = async (ctx) => {
       let subprojectQuantity = parseFloat(row.quantity) || 0;
       const subprojectAmount = parseFloat(row.amount) || 0;
 
-      // 统一使用 calculateUserWage 计算个人分摊数量和金额（与 calculateSettlementPreview 保持一致）
-      // 修复：原逻辑仅处理 average 分配方式，work_days 方式直接使用工程总量导致与选择后计算结果不一致
-      const userWorkday = userWorkdays[projectId] || 0;
-      const totalWorkday = totalWorkdays[projectId] || 1;
-      const { userQuantity: rawUserQuantity, userAmount } = calculation.calculateUserWage(
-        subprojectAmount,
-        subprojectQuantity,
-        row.salary_distribution,
-        workerCount,
-        userWorkday,
-        totalWorkday
-      );
-      let userQuantity = Math.round(rawUserQuantity * 100) / 100; // 保留两位小数
-      
+      let userQuantity;
+      let userAmount;
+      if (isGlobalViewer) {
+        // admin/documenter: 展示工程级总额，不做个人分摊
+        userQuantity = Math.round(subprojectQuantity * 100) / 100;
+        userAmount = subprojectAmount;
+      } else {
+        // constructor: 统一使用 calculateUserWage 计算个人分摊数量和金额（与 calculateSettlementPreview 保持一致）
+        // 修复：原逻辑仅处理 average 分配方式，work_days 方式直接使用工程总量导致与选择后计算结果不一致
+        const userWorkday = userWorkdays[projectId] || 0;
+        const totalWorkday = totalWorkdays[projectId] || 1;
+        const { userQuantity: rawUserQuantity, userAmount: rawUserAmount } = calculation.calculateUserWage(
+          subprojectAmount,
+          subprojectQuantity,
+          row.salary_distribution,
+          workerCount,
+          userWorkday,
+          totalWorkday
+        );
+        userQuantity = Math.round(rawUserQuantity * 100) / 100; // 保留两位小数
+        userAmount = rawUserAmount;
+      }
+
       // 初始化工程
       if (!projectMap.has(projectId)) {
         projectMap.set(projectId, {
@@ -117,9 +172,9 @@ const getProjects = async (ctx) => {
           planQuantities: {}  // 按施工方案汇总的数量
         });
       }
-      
+
       const project = projectMap.get(projectId);
-      
+
       // 添加子项目明细
       if (planId) {
         // 金额直接使用 calculateUserWage 返回的 userAmount，避免 userQuantity*price 的浮点误差
@@ -167,20 +222,46 @@ const getProjects = async (ctx) => {
 
     const grandTotal = Object.values(planTotals).reduce((sum, pt) => sum + pt.total_amount, 0);
 
-    const advancesResult = await pool.query(`
-      SELECT 
-        wa.id,
-        wa.user_id,
-        u.username,
-        u.nickname,
-        wa.advance_amount,
-        wa.advance_date,
-        wa.remark
-      FROM wage_advances wa
-      LEFT JOIN users u ON wa.user_id = u.id
-      WHERE wa.settled = false AND wa.user_id = $1
-      ORDER BY wa.advance_date DESC
-    `, [userId]);
+    // 预支记录查询：
+    // - constructor: 仅查自己的未结算预支
+    // - admin/documenter: 查全部未结算预支（与 advances 接口和 getDashboard 保持一致）
+    let advancesQuery;
+    let advancesParams;
+    if (isGlobalViewer) {
+      advancesQuery = `
+        SELECT
+          wa.id,
+          wa.user_id,
+          u.username,
+          u.nickname,
+          wa.advance_amount,
+          wa.advance_date,
+          wa.remark
+        FROM wage_advances wa
+        LEFT JOIN users u ON wa.user_id = u.id
+        WHERE wa.settled = false
+        ORDER BY wa.advance_date DESC
+      `;
+      advancesParams = [];
+    } else {
+      advancesQuery = `
+        SELECT
+          wa.id,
+          wa.user_id,
+          u.username,
+          u.nickname,
+          wa.advance_amount,
+          wa.advance_date,
+          wa.remark
+        FROM wage_advances wa
+        LEFT JOIN users u ON wa.user_id = u.id
+        WHERE wa.settled = false AND wa.user_id = $1
+        ORDER BY wa.advance_date DESC
+      `;
+      advancesParams = [userId];
+    }
+
+    const advancesResult = await pool.query(advancesQuery, advancesParams);
 
     const advances = advancesResult.rows;
     const totalAdvance = advances.reduce((sum, a) => sum + parseFloat(a.advance_amount), 0);
@@ -202,26 +283,54 @@ const getProjects = async (ctx) => {
 const getAdvances = async (ctx) => {
   try {
     const userId = ctx.state.user?.id;
+    const user = ctx.state.user;
 
     if (!userId) {
       ctx.fail(4001, '用户未登录');
       return;
     }
 
-    const result = await pool.query(`
-      SELECT 
-        wa.id,
-        wa.user_id,
-        u.username,
-        u.nickname,
-        wa.advance_amount,
-        wa.advance_date,
-        wa.remark
-      FROM wage_advances wa
-      LEFT JOIN users u ON wa.user_id = u.id
-      WHERE wa.settled = false AND wa.user_id = $1
-      ORDER BY wa.advance_date DESC
-    `, [userId]);
+    // 权限区分：
+    // - constructor: 仅查自己的未结算预支
+    // - admin/documenter: 查全部未结算预支（按权限表，预支查看=全部）
+    const isGlobalViewer = !isConstructor(user);
+    let query;
+    let params;
+    if (isGlobalViewer) {
+      query = `
+        SELECT
+          wa.id,
+          wa.user_id,
+          u.username,
+          u.nickname,
+          wa.advance_amount,
+          wa.advance_date,
+          wa.remark
+        FROM wage_advances wa
+        LEFT JOIN users u ON wa.user_id = u.id
+        WHERE wa.settled = false
+        ORDER BY wa.advance_date DESC
+      `;
+      params = [];
+    } else {
+      query = `
+        SELECT
+          wa.id,
+          wa.user_id,
+          u.username,
+          u.nickname,
+          wa.advance_amount,
+          wa.advance_date,
+          wa.remark
+        FROM wage_advances wa
+        LEFT JOIN users u ON wa.user_id = u.id
+        WHERE wa.settled = false AND wa.user_id = $1
+        ORDER BY wa.advance_date DESC
+      `;
+      params = [userId];
+    }
+
+    const result = await pool.query(query, params);
 
     ctx.success(result.rows);
   } catch (error) {
@@ -621,58 +730,104 @@ const settle = async (ctx) => {
 const getSettledProjects = async (ctx) => {
   try {
     const userId = ctx.state.user?.id;
+    const user = ctx.state.user;
 
     if (!userId) {
       ctx.fail(4001, '用户未登录');
       return;
     }
 
-    const result = await pool.query(`
-      SELECT 
-        p.id,
-        p.name as project_name,
-        TO_CHAR(p.created_at, 'YYYY-MM-DD HH24:MI') as created_at,
-        cp.id as plan_id,
-        cp.name as plan_name,
-        cp.unit,
-        COALESCE(SUM(wd.amount), 0) as user_amount,
-        CASE 
-          WHEN p.salary_distribution = 'average' THEN 
-            ROUND(COALESCE(SUM(
-              CASE 
-                WHEN cp.unit = 'area' THEN sp.quantity
-                WHEN cp.unit = 'length' THEN sp.length
-                WHEN cp.unit = 'perimeter' THEN (sp.length + sp.width) * 2
-                ELSE sp.quantity
-              END
-            ), 0) / COUNT(DISTINCT pw.user_id), 2)
-          WHEN p.salary_distribution = 'work_days' THEN
-            ROUND(COALESCE(SUM(
-              CASE 
-                WHEN cp.unit = 'area' THEN sp.quantity
-                WHEN cp.unit = 'length' THEN sp.length
-                WHEN cp.unit = 'perimeter' THEN (sp.length + sp.width) * 2
-                ELSE sp.quantity
-              END
-            ), 0) * wd.workdays / (SUM(wd.workdays) OVER (PARTITION BY p.id, cp.id)), 2)
-          ELSE 
-            ROUND(COALESCE(SUM(
-              CASE 
-                WHEN cp.unit = 'area' THEN sp.quantity
-                WHEN cp.unit = 'length' THEN sp.length
-                WHEN cp.unit = 'perimeter' THEN (sp.length + sp.width) * 2
-                ELSE sp.quantity
-              END
-            ), 0) / COUNT(DISTINCT pw.user_id), 2)
-        END as user_quantity
-      FROM projects p
-      INNER JOIN v_project_user_settlement_status pus ON p.id = pus.project_id AND pus.user_id = $1 AND pus.settlement_status = 'settled'
-      INNER JOIN subprojects sp ON p.id = sp.project_id
-      INNER JOIN wage_distributions wd ON sp.id = wd.subproject_id AND wd.user_id = $1
-      LEFT JOIN construction_plans cp ON sp.construction_plan_id = cp.id
-      GROUP BY p.id, p.name, p.created_at, p.salary_distribution, cp.id, cp.name, cp.unit, wd.workdays
-      ORDER BY p.id, cp.id
-    `, [userId]);
+    // 权限区分：
+    // - constructor: 仅查自己参与的已结算工程，user_amount 为个人分摊金额
+    // - admin/documenter: 查全部已结算工程，user_amount 为工程级总额（无个人分摊）
+    const isGlobalViewer = !isConstructor(user);
+    let query;
+    let params;
+    if (isGlobalViewer) {
+      // admin/documenter：聚合所有已结算工程的子项目总额（工程级）
+      // 使用 DISTINCT project_id 避免 v_project_user_settlement_status 多用户视图产生重复行
+      query = `
+        SELECT
+          p.id,
+          p.name as project_name,
+          TO_CHAR(p.created_at, 'YYYY-MM-DD HH24:MI') as created_at,
+          cp.id as plan_id,
+          cp.name as plan_name,
+          cp.unit,
+          COALESCE(SUM(sp.amount), 0) as user_amount,
+          COALESCE(SUM(
+            CASE
+              WHEN cp.unit = 'area' THEN sp.quantity
+              WHEN cp.unit = 'length' THEN sp.length
+              WHEN cp.unit = 'perimeter' THEN (sp.length + sp.width) * 2
+              ELSE sp.quantity
+            END
+          ), 0) as user_quantity
+        FROM projects p
+        INNER JOIN (
+          SELECT DISTINCT project_id
+          FROM v_project_user_settlement_status
+          WHERE settlement_status = 'settled'
+        ) settled_projects ON p.id = settled_projects.project_id
+        INNER JOIN subprojects sp ON p.id = sp.project_id
+        LEFT JOIN construction_plans cp ON sp.construction_plan_id = cp.id
+        WHERE p.status NOT IN ('canceled')
+        GROUP BY p.id, p.name, p.created_at, cp.id, cp.name, cp.unit
+        ORDER BY p.id, cp.id
+      `;
+      params = [];
+    } else {
+      // constructor：仅查自己已结算的工程，user_amount 为个人分摊金额
+      query = `
+        SELECT
+          p.id,
+          p.name as project_name,
+          TO_CHAR(p.created_at, 'YYYY-MM-DD HH24:MI') as created_at,
+          cp.id as plan_id,
+          cp.name as plan_name,
+          cp.unit,
+          COALESCE(SUM(wd.amount), 0) as user_amount,
+          CASE
+            WHEN p.salary_distribution = 'average' THEN
+              ROUND(COALESCE(SUM(
+                CASE
+                  WHEN cp.unit = 'area' THEN sp.quantity
+                  WHEN cp.unit = 'length' THEN sp.length
+                  WHEN cp.unit = 'perimeter' THEN (sp.length + sp.width) * 2
+                  ELSE sp.quantity
+                END
+              ), 0) / COUNT(DISTINCT pw.user_id), 2)
+            WHEN p.salary_distribution = 'work_days' THEN
+              ROUND(COALESCE(SUM(
+                CASE
+                  WHEN cp.unit = 'area' THEN sp.quantity
+                  WHEN cp.unit = 'length' THEN sp.length
+                  WHEN cp.unit = 'perimeter' THEN (sp.length + sp.width) * 2
+                  ELSE sp.quantity
+                END
+              ), 0) * wd.workdays / (SUM(wd.workdays) OVER (PARTITION BY p.id, cp.id)), 2)
+            ELSE
+              ROUND(COALESCE(SUM(
+                CASE
+                  WHEN cp.unit = 'area' THEN sp.quantity
+                  WHEN cp.unit = 'length' THEN sp.length
+                  WHEN cp.unit = 'perimeter' THEN (sp.length + sp.width) * 2
+                  ELSE sp.quantity
+                END
+              ), 0) / COUNT(DISTINCT pw.user_id), 2)
+          END as user_quantity
+        FROM projects p
+        INNER JOIN v_project_user_settlement_status pus ON p.id = pus.project_id AND pus.user_id = $1 AND pus.settlement_status = 'settled'
+        INNER JOIN subprojects sp ON p.id = sp.project_id
+        INNER JOIN wage_distributions wd ON sp.id = wd.subproject_id AND wd.user_id = $1
+        LEFT JOIN construction_plans cp ON sp.construction_plan_id = cp.id
+        GROUP BY p.id, p.name, p.created_at, p.salary_distribution, cp.id, cp.name, cp.unit, wd.workdays
+        ORDER BY p.id, cp.id
+      `;
+      params = [userId];
+    }
+
+    const result = await pool.query(query, params);
 
     // 显式将 NUMERIC 类型字段转为 float，避免 pg 类型解析器未生效时返回字符串
     // 导致前端 Kotlin Double 解析失败变为 0
@@ -692,26 +847,54 @@ const getSettledProjects = async (ctx) => {
 const getSettledAdvances = async (ctx) => {
   try {
     const userId = ctx.state.user?.id;
+    const user = ctx.state.user;
 
     if (!userId) {
       ctx.fail(4001, '用户未登录');
       return;
     }
 
-    const result = await pool.query(`
-      SELECT 
-        wa.id,
-        wa.user_id,
-        u.username,
-        u.nickname,
-        wa.advance_amount,
-        wa.advance_date,
-        wa.remark
-      FROM wage_advances wa
-      LEFT JOIN users u ON wa.user_id = u.id
-      WHERE wa.settled = true AND wa.user_id = $1
-      ORDER BY wa.advance_date DESC
-    `, [userId]);
+    // 权限区分：
+    // - constructor: 仅查自己的已结算预支
+    // - admin/documenter: 查全部已结算预支
+    const isGlobalViewer = !isConstructor(user);
+    let query;
+    let params;
+    if (isGlobalViewer) {
+      query = `
+        SELECT
+          wa.id,
+          wa.user_id,
+          u.username,
+          u.nickname,
+          wa.advance_amount,
+          wa.advance_date,
+          wa.remark
+        FROM wage_advances wa
+        LEFT JOIN users u ON wa.user_id = u.id
+        WHERE wa.settled = true
+        ORDER BY wa.advance_date DESC
+      `;
+      params = [];
+    } else {
+      query = `
+        SELECT
+          wa.id,
+          wa.user_id,
+          u.username,
+          u.nickname,
+          wa.advance_amount,
+          wa.advance_date,
+          wa.remark
+        FROM wage_advances wa
+        LEFT JOIN users u ON wa.user_id = u.id
+        WHERE wa.settled = true AND wa.user_id = $1
+        ORDER BY wa.advance_date DESC
+      `;
+      params = [userId];
+    }
+
+    const result = await pool.query(query, params);
 
     ctx.success(result.rows);
   } catch (error) {
@@ -723,43 +906,86 @@ const getSettledAdvances = async (ctx) => {
 const getSettlementHistory = async (ctx) => {
   try {
     const userId = ctx.state.user?.id;
+    const user = ctx.state.user;
 
     if (!userId) {
       ctx.fail(4001, '用户未登录');
       return;
     }
 
+    // 权限区分：
+    // - constructor: 仅查自己的结算历史快照
+    // - admin/documenter: 查全部结算历史快照
+    const isGlobalViewer = !isConstructor(user);
+    let query;
+    let params;
+    if (isGlobalViewer) {
+      query = `
+        SELECT
+          id,
+          settlement_id,
+          settlement_no,
+          project_id,
+          project_name,
+          user_id,
+          username,
+          nickname,
+          start_month,
+          end_month,
+          total_amount,
+          advance_amount,
+          actual_amount,
+          confirmed,
+          confirmed_at,
+          settled_by,
+          settled_by_username,
+          settled_by_nickname,
+          settled_at,
+          remark,
+          projects_snapshot,
+          plans_snapshot,
+          advances_snapshot,
+          calculation_snapshot
+        FROM wage_settlement_snapshots
+        ORDER BY settled_at DESC
+      `;
+      params = [];
+    } else {
+      query = `
+        SELECT
+          id,
+          settlement_id,
+          settlement_no,
+          project_id,
+          project_name,
+          user_id,
+          username,
+          nickname,
+          start_month,
+          end_month,
+          total_amount,
+          advance_amount,
+          actual_amount,
+          confirmed,
+          confirmed_at,
+          settled_by,
+          settled_by_username,
+          settled_by_nickname,
+          settled_at,
+          remark,
+          projects_snapshot,
+          plans_snapshot,
+          advances_snapshot,
+          calculation_snapshot
+        FROM wage_settlement_snapshots
+        WHERE user_id = $1
+        ORDER BY settled_at DESC
+      `;
+      params = [userId];
+    }
+
     // 直接从快照表读取数据，提升查询性能
-    const result = await pool.query(`
-      SELECT 
-        id,
-        settlement_id,
-        settlement_no,
-        project_id,
-        project_name,
-        user_id,
-        username,
-        nickname,
-        start_month,
-        end_month,
-        total_amount,
-        advance_amount,
-        actual_amount,
-        confirmed,
-        confirmed_at,
-        settled_by,
-        settled_by_username,
-        settled_by_nickname,
-        settled_at,
-        remark,
-        projects_snapshot,
-        plans_snapshot,
-        advances_snapshot,
-        calculation_snapshot
-      FROM wage_settlement_snapshots
-      WHERE user_id = $1
-      ORDER BY settled_at DESC
-    `, [userId]);
+    const result = await pool.query(query, params);
 
     const snapshots = result.rows;
 

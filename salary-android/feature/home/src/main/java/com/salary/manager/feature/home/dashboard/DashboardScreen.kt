@@ -270,10 +270,13 @@ fun DashboardScreen(
             val listState = rememberLazyListState()
 
             // 滚动到底部自动加载更多工程
-            LaunchedEffect(listState, uiState.hasMoreProjects) {
+            // 防误触发：totalItemsCount > 0 且 lastVisible > 0，避免列表项 ≤3 时
+            // lastVisible >= totalItemsCount - 3 永远为真反复触发分页请求
+            LaunchedEffect(listState, uiState.hasMoreProjects, uiState.isLoadingMoreProjects) {
                 snapshotFlow {
                     val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                    lastVisible >= listState.layoutInfo.totalItemsCount - 3
+                    val total = listState.layoutInfo.totalItemsCount
+                    total > 0 && lastVisible > 0 && lastVisible >= total - 3
                 }.collect { isAtEnd ->
                     if (isAtEnd && uiState.hasMoreProjects && !uiState.isLoadingMoreProjects) {
                         viewModel.loadMoreProjects()
@@ -1291,11 +1294,11 @@ private fun ProjectHistoryCard(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(vertical = 2.dp)
             ) {
-                Text(text = "📝", fontSize = 14.sp)
+                Text(text = "📝", fontSize = 12.sp)
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = project.remark,
-                    fontSize = 13.sp,
+                    fontSize = 12.sp,
                     color = AppColors.TextTertiary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis

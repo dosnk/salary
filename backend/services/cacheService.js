@@ -181,14 +181,24 @@ const cacheKey = (namespace, ...parts) => {
  * - 列表缓存：projects:{userId}:list:...   （按用户隔离）
  * - 详情缓存：projects:detail:{projectId}    （所有用户共享，不带userId）
  *
- * 关键修复：原实现只清除 projects:{userId}:*，遗漏了 projects:detail:* 前缀，
- *          导致更新工程后详情缓存不被清除，客户端重新加载仍命中10分钟旧缓存，
- *          表现为"编辑后很久看不到更新"。
+ * 关键修复：
+ * 1. 原实现只清除 projects:{userId}:*，遗漏了 projects:detail:* 前缀，
+ *    导致更新工程后详情缓存不被清除，客户端重新加载仍命中10分钟旧缓存。
+ * 2. 原实现无法清除其他用户的列表缓存（admin/documenter/其他constructor），
+ *    导致其他用户10分钟内仍看到旧数据，新建工程对其他用户不可见。
+ *    修复：增加 projects:*:list: 通配清除所有用户的列表缓存。
  *
  * @param {number} userId - 用户ID
  */
 const invalidateProjectCache = async (userId) => {
-  await delByPrefix(`projects:${userId || '*'}`);
+  // 清除当前用户的所有工程相关缓存（含列表、详情等）
+  if (userId) {
+    await delByPrefix(`projects:${userId}`);
+  }
+  // 清除所有用户的列表缓存，确保其他用户（admin/documenter/其他constructor）
+  // 不会命中陈旧列表数据（新建/更新/删除工程后立即可见）
+  // 通配模式 projects:*:list: 仅匹配列表缓存，不会误伤详情缓存（projects:detail:xxx）
+  await delByPrefix('projects:*:list:');
   // 详情缓存键为 projects:detail:{projectId}（不带userId），需单独清除
   await delByPrefix('projects:detail:');
   await delByPrefix('statistics:');

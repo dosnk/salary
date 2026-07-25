@@ -13,6 +13,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.salary.core.common.util.AmountFormatter
 import com.salary.core.design.theme.AppColors
 import com.salary.core.ui.state.UiState
@@ -26,7 +27,8 @@ import com.salary.manager.feature.statistics.charts.BarChartData
 fun MonthlyStatsScreen(
     viewModel: MonthlyStatsViewModel = hiltViewModel()
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val currentMonth by viewModel.currentMonth.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -43,7 +45,7 @@ fun MonthlyStatsScreen(
                 Text("< 上月")
             }
             Text(
-                viewModel.currentMonth.collectAsState().value,
+                currentMonth,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
             )

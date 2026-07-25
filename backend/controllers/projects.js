@@ -101,9 +101,10 @@ const getProjects = async (ctx) => {
  */
 const getProjectDetail = async (ctx) => {
   const { id } = ctx.params;
+  const user = ctx.state.user;
 
   try {
-    const result = await projectService.getProjectDetail(id);
+    const result = await projectService.getProjectDetail(id, user);
     ctx.success(result);
   } catch (error) {
     if (error.name === 'BusinessError') {

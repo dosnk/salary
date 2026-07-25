@@ -36,6 +36,49 @@ try {
 }
 
 /**
+ * 校验附件路径格式，防止路径伪造和路径穿越攻击
+ *
+ * 合法路径格式：/upload/... 或 /uploads/...，且不允许包含 .. 路径穿越符
+ *
+ * @param {string} filePath - 文件路径
+ * @returns {boolean} 是否合法
+ */
+const isValidFilePath = (filePath) => {
+  if (!filePath || typeof filePath !== 'string') return false;
+  // 必须以 /upload/ 或 /uploads/ 开头
+  if (!filePath.startsWith('/upload/') && !filePath.startsWith('/uploads/')) return false;
+  // 禁止路径穿越符
+  if (filePath.includes('..')) return false;
+  // 禁止null字节
+  if (filePath.includes('\0')) return false;
+  return true;
+};
+
+/**
+ * 安全解析附件物理文件绝对路径，防止路径穿越
+ *
+ * @param {string} filePath - 数据库中存储的文件路径（形如 /upload/YYYYMM/xxx）
+ * @returns {{absPath: string|null}} 规范化后的绝对路径，若穿越 upload 目录则返回 null
+ */
+const safeResolveUploadPath = (filePath) => {
+  if (!isValidFilePath(filePath)) return { absPath: null };
+  const fs = require('fs');
+  const path = require('path');
+  // 统一移除 /upload 或 /uploads 前缀
+  const relativePath = filePath.startsWith('/uploads/')
+    ? filePath.substring('/uploads'.length)
+    : filePath.substring('/upload'.length);
+  // upload 目录绝对路径（与 index.js 静态文件服务一致：backend/upload）
+  const uploadDir = path.resolve(__dirname, '..', 'upload');
+  const absolutePath = path.resolve(uploadDir, '.' + relativePath);
+  // 验证规范化后的路径仍在 upload 目录内，防止路径穿越
+  if (!absolutePath.startsWith(uploadDir + path.sep) && absolutePath !== uploadDir) {
+    return { absPath: null };
+  }
+  return { absPath: absolutePath };
+};
+
+/**
  * 业务异常类
  * Controller 层捕获后调用 ctx.fail(error.code, error.message)
  */
@@ -79,11 +122,12 @@ const invalidateCache = async (userId) => {
 /**
  * 重新计算工程总额（所有子项目金额之和）
  * @param {number} projectId - 工程ID
+ * @param {object} [client] - pg 事务客户端，不传则使用连接池
  * @returns {Promise<number>} 新的工程总额
  */
-const recalculateProjectTotal = async (projectId) => {
-  const totalAmount = await projectRepo.getSubprojectsTotalAmount(projectId);
-  await projectRepo.updateProject(projectId, { total_amount: totalAmount });
+const recalculateProjectTotal = async (projectId, client) => {
+  const totalAmount = await projectRepo.getSubprojectsTotalAmount(projectId, client);
+  await projectRepo.updateProject(projectId, { total_amount: totalAmount }, client);
   return totalAmount;
 };
 
@@ -393,11 +437,20 @@ module.exports = {
    * @param {number} projectId - 工程ID
    * @returns {Promise<object>} 工程详情（含子项目、施工人员、附件）
    */
-  async getProjectDetail(projectId) {
+  async getProjectDetail(projectId, user) {
     // 尝试从缓存获取
     const cacheKeyStr = cache.cacheKey('projects', 'detail', projectId);
     const cachedData = await cache.get(cacheKeyStr);
     if (cachedData) {
+      // 深度防御：即使路由层 requireProjectView 中间件已校验权限，
+      // 此处仍补充 constructor 参与性校验，防止中间件被绕过或重构后缓存直接泄露
+      // admin/documenter 可查看全部工程，无需校验
+      if (user && user.role === 'constructor') {
+        const isParticipant = await projectRepo.isParticipant(projectId, user.id);
+        if (!isParticipant) {
+          throw new BusinessError(4002, '您未参与此工程，无法查看详情');
+        }
+      }
       return cachedData;
     }
 
@@ -405,6 +458,15 @@ module.exports = {
     const project = await projectRepo.findProjectById(projectId);
     if (!project) {
       throw new BusinessError(3001, '工程不存在');
+    }
+
+    // 权限兜底校验：constructor 必须是工程参与者
+    // admin/documenter 可查看全部工程，无需校验
+    if (user && user.role === 'constructor') {
+      const isParticipant = await projectRepo.isParticipant(projectId, user.id);
+      if (!isParticipant) {
+        throw new BusinessError(4002, '您未参与此工程，无法查看详情');
+      }
     }
 
     // 查询子项目信息
@@ -625,11 +687,21 @@ module.exports = {
     // 软删除工程
     await projectRepo.updateProject(projectId, { status: 'deleted' });
 
+    // 同步子项目状态为 canceled
+    // 修复：原实现未同步子项目状态，导致子项目状态与工程状态不一致
+    // （对比 updateProject 完工/恢复时同步子项目状态的逻辑）
+    await projectRepo.updateSubprojectsStatus(projectId, 'canceled');
+
     // 添加历史记录
     await projectRepo.addProjectHistory(projectId, 'DELETE_PROJECT', '删除工程', userId);
 
     // 清除缓存
     await invalidateCache(userId);
+
+    // 异步刷新物化视图
+    // 修复：原实现未刷新，物化视图 mv_project_user_settlement_status 依赖工程 status
+    // 计算 settlement_status，不刷新则统计接口最长5分钟仍计入已删除工程
+    refreshMvAsync();
 
     logger.info('删除工程成功', { projectId, userId });
 
@@ -661,6 +733,12 @@ module.exports = {
     const subproject = await projectRepo.findSubprojectById(subprojectId);
     if (!subproject) {
       throw new BusinessError(3009, '子项目不存在');
+    }
+
+    // 校验子项目归属当前工程，防止跨工程越权操作
+    // 攻击场景：传入自己参与的 projectId + 他人工程的 subprojectId，绕过权限校验
+    if (Number(subproject.project_id) !== Number(projectId)) {
+      throw new BusinessError(4002, '子项目不属于该工程，无法操作');
     }
 
     // 检查用户是否参与该工程
@@ -734,59 +812,74 @@ module.exports = {
       throw new BusinessError(1001, '参数错误');
     }
 
-    // 在事务中执行更新
-    await projectRepo.updateSubprojectInTransaction(subprojectId, updateFields);
+    // 在事务中执行：字段更新 → 金额重算 → 工程总额重算 → 历史记录
+    // 修复：原实现四步分别独立执行无事务保护，并发更新下可能导致：
+    //   1. 子项目字段更新成功但金额重算失败 → 工程总额与子项目明细不一致
+    //   2. 两个并发更新同时读旧值并写入，丢失更新
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    // 重新计算子项目金额
-    // 获取更新后的子项目完整信息
-    const updatedSubproject = await projectRepo.findSubprojectDetailById(subprojectId);
-    if (updatedSubproject) {
-      // 数据库存储单位为厘米，calculation 服务接收厘米，无需单位转换
-      const lengthCm = parseFloat(updatedSubproject.length) || 0;
-      const widthCm = parseFloat(updatedSubproject.width) || 0;
-      const heightCm = parseFloat(updatedSubproject.height) || 0;
-      const unit = updatedSubproject.unit || 'area';
-      const unitPrice = parseFloat(updatedSubproject.price) || 0;
-      // shape 优先使用本次切换空间类型时记录的值，否则取数据库中现有的 shape
-      const shape = latestShape || updatedSubproject.space_type_shape || 'rectangle';
-      // 实测数量：若存在则覆盖按长宽计算的 quantity（异形空间场景）
-      const measuredQuantity = updatedSubproject.measured_quantity !== null && updatedSubproject.measured_quantity !== undefined
-        ? parseFloat(updatedSubproject.measured_quantity)
-        : null;
+      // 1. 更新子项目字段
+      await projectRepo.updateSubprojectInTransaction(subprojectId, updateFields, client);
 
-      // 调用 calculation 服务计算新的数量和金额（传入 measuredQuantity 时优先使用实测值）
-      const { quantity, amount } = calculation.calculateSubprojectAmount(
-        unit,
-        lengthCm,
-        widthCm,
-        unitPrice,
-        measuredQuantity,
-        shape,
-        heightCm
-      );
+      // 2. 重新计算子项目金额（事务内读取更新后的数据）
+      const updatedSubproject = await projectRepo.findSubprojectDetailById(subprojectId, client);
+      if (updatedSubproject) {
+        // 数据库存储单位为厘米，calculation 服务接收厘米，无需单位转换
+        const lengthCm = parseFloat(updatedSubproject.length) || 0;
+        const widthCm = parseFloat(updatedSubproject.width) || 0;
+        const heightCm = parseFloat(updatedSubproject.height) || 0;
+        const unit = updatedSubproject.unit || 'area';
+        const unitPrice = parseFloat(updatedSubproject.price) || 0;
+        // shape 优先使用本次切换空间类型时记录的值，否则取数据库中现有的 shape
+        const shape = latestShape || updatedSubproject.space_type_shape || 'rectangle';
+        // 实测数量：若存在则覆盖按长宽计算的 quantity（异形空间场景）
+        const measuredQuantity = updatedSubproject.measured_quantity !== null && updatedSubproject.measured_quantity !== undefined
+          ? parseFloat(updatedSubproject.measured_quantity)
+          : null;
 
-      // 更新子项目的数量和金额
-      await projectRepo.updateSubprojectAmount(subprojectId, quantity, amount);
+        // 调用 calculation 服务计算新的数量和金额（传入 measuredQuantity 时优先使用实测值）
+        const { quantity, amount } = calculation.calculateSubprojectAmount(
+          unit,
+          lengthCm,
+          widthCm,
+          unitPrice,
+          measuredQuantity,
+          shape,
+          heightCm
+        );
 
-      logger.info('重新计算子项目金额', {
-        subprojectId,
-        lengthCm,
-        widthCm,
-        heightCm,
-        unit,
-        unitPrice,
-        shape,
-        measuredQuantity,
-        quantity,
-        amount,
-      });
+        // 更新子项目的数量和金额（事务内）
+        await projectRepo.updateSubprojectAmount(subprojectId, quantity, amount, client);
+
+        logger.info('重新计算子项目金额', {
+          subprojectId,
+          lengthCm,
+          widthCm,
+          heightCm,
+          unit,
+          unitPrice,
+          shape,
+          measuredQuantity,
+          quantity,
+          amount,
+        });
+      }
+
+      // 3. 重新计算工程总额（事务内）
+      await recalculateProjectTotal(projectId, client);
+
+      // 4. 添加历史记录（事务内）
+      await projectRepo.addProjectHistory(projectId, 'UPDATE_SUBPROJECT', '更新子项目信息', userId, client);
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    // 重新计算工程总额
-    await recalculateProjectTotal(projectId);
-
-    // 添加历史记录
-    await projectRepo.addProjectHistory(projectId, 'UPDATE_SUBPROJECT', '更新子项目信息', userId);
 
     // 清除缓存
     await invalidateCache(userId);
@@ -816,20 +909,32 @@ module.exports = {
       throw new BusinessError(3009, '子项目不存在');
     }
 
+    // 校验子项目归属当前工程，防止跨工程越权操作
+    if (Number(subproject.project_id) !== Number(projectId)) {
+      throw new BusinessError(4002, '子项目不属于该工程，无法操作');
+    }
+
     // 检查用户是否参与该工程
     const isParticipant = await checkProjectParticipant(projectId, userId);
     if (!isParticipant) {
       throw new BusinessError(4002, '您未参与此工程，无法删除子项目');
     }
 
-    // 在事务中执行删除
-    await projectRepo.deleteSubprojectInTransaction(subprojectId);
-
-    // 重新计算工程总额
-    await recalculateProjectTotal(projectId);
-
-    // 添加历史记录
-    await projectRepo.addProjectHistory(projectId, 'DELETE_SUBPROJECT', '删除子项目', userId);
+    // 在事务中执行：删除子项目 → 重算工程总额 → 历史记录
+    // 修复：原实现三步独立执行无事务保护，并发下可能导致工程总额与子项目明细不一致
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await projectRepo.deleteSubprojectInTransaction(subprojectId, client);
+      await recalculateProjectTotal(projectId, client);
+      await projectRepo.addProjectHistory(projectId, 'DELETE_SUBPROJECT', '删除子项目', userId, client);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
 
     // 清除缓存
     await invalidateCache(userId);
@@ -841,6 +946,12 @@ module.exports = {
 
   /**
    * 转交子项目
+   *
+   * 业务规则：
+   * - 子项目必须存在且属于当前工程
+   * - 只有子项目创建者可以转交（与 updateSubprojectStatus 权限模型一致）
+   * - 目标用户必须存在
+   * - 同时清除转出者和接收者缓存
    *
    * @param {number} projectId - 工程ID
    * @param {number} subprojectId - 子项目ID
@@ -855,10 +966,16 @@ module.exports = {
       throw new BusinessError(3009, '子项目不存在');
     }
 
-    // 检查用户是否参与该工程
-    const isParticipant = await checkProjectParticipant(projectId, userId);
-    if (!isParticipant) {
-      throw new BusinessError(4002, '您未参与此工程，无法修改子项目状态');
+    // 校验子项目归属当前工程，防止跨工程越权操作
+    if (Number(subproject.project_id) !== Number(projectId)) {
+      throw new BusinessError(4002, '子项目不属于该工程，无法操作');
+    }
+
+    // 权限校验：只有子项目创建者可以转交
+    // 修复：原逻辑为"任何工程参与者可操作"，存在非创建者恶意转移他人子项目的风险
+    // 与 updateSubprojectStatus 权限模型保持一致
+    if (Number(subproject.created_by) !== Number(userId)) {
+      throw new BusinessError(4002, '只有子项目创建者可以转交子项目');
     }
 
     // 检查目标用户是否存在
@@ -878,8 +995,12 @@ module.exports = {
       userId
     );
 
-    // 清除缓存
+    // 清除缓存：同时清除转出者和接收者的缓存，确保接收者能立即看到新转入的子项目
+    // 修复：原逻辑只清除转出者缓存，接收者10分钟内看不到新转入的子项目
     await invalidateCache(userId);
+    if (Number(toUserId) !== Number(userId)) {
+      await invalidateCache(toUserId);
+    }
 
     logger.info('转交子项目成功', { projectId, subprojectId, fromUserId: userId, toUserId });
 
@@ -951,6 +1072,13 @@ module.exports = {
     // 清除缓存
     await invalidateCache(userId);
 
+    // 异步刷新物化视图
+    // 修复：子项目状态变更（completed/canceled）影响结算状态计算，
+    // statisticsService 多处依赖 sp.status = 'completed' 计算工资，
+    // 不刷新则统计接口最长5分钟才更新，影响实时性
+    // （与 updateProject 状态变更后刷新物化视图的逻辑对齐）
+    refreshMvAsync();
+
     logger.info('更新子项目状态成功', { projectId, subprojectId, status, userId });
 
     return { id: subprojectId };
@@ -991,6 +1119,12 @@ module.exports = {
     // 方式1：接收 JSON 数据（前端已上传文件，只需保存记录）
     if (fileData && fileData.path) {
       const { filename, originalName, path: filePath, size, type } = fileData;
+
+      // 路径格式校验：防止前端伪造任意路径导致路径穿越或URL污染
+      // 修复：原实现直接存入 fileData.path，前端可传任意字符串
+      if (!isValidFilePath(filePath)) {
+        throw new BusinessError(1001, '附件路径格式不合法');
+      }
 
       await projectRepo.addFileRecord(projectId, {
         filename,
@@ -1080,22 +1214,18 @@ module.exports = {
 
     // 5. 尝试删除物理文件（失败不影响接口结果，仅记录日志）
     // 物理文件路径解析：files.path 存储的是 /upload/YYYYMM/工程名/uuid.ext 形式的URL路径
-    // 需要移除 /upload 前缀后，与后端 upload 目录拼接得到绝对路径
+    // 安全修复：使用 safeResolveUploadPath 规范化路径并验证仍在 upload 目录内，
+    //          防止路径穿越攻击删除任意文件（原实现仅 startsWith 校验可被 /upload/foo/../../config 绕过）
     try {
       const filePath = fileRecord.path || '';
-      if (filePath.startsWith('/upload/')) {
+      const { absPath } = safeResolveUploadPath(filePath);
+      if (absPath) {
         const fs = require('fs');
-        const path = require('path');
-        // 移除 /upload 前缀，保留 YYYYMM/工程名/uuid.ext 相对路径
-        const relativePath = filePath.substring('/upload'.length);
-        // 与 index.js 中静态文件服务保持一致：path.join(__dirname, 'upload', decodedPath)
-        // 注意：service 层 __dirname 为 backend/services，需回退一级到 backend 目录
-        const absolutePath = path.join(__dirname, '..', 'upload', relativePath);
-        if (fs.existsSync(absolutePath)) {
-          fs.unlinkSync(absolutePath);
-          logger.info(`删除附件物理文件成功: ${absolutePath}`);
+        if (fs.existsSync(absPath)) {
+          fs.unlinkSync(absPath);
+          logger.info(`删除附件物理文件成功: ${absPath}`);
         } else {
-          logger.warn(`附件物理文件不存在（可能已被删除）: ${absolutePath}`);
+          logger.warn(`附件物理文件不存在（可能已被删除）: ${absPath}`);
         }
       }
     } catch (fileErr) {
