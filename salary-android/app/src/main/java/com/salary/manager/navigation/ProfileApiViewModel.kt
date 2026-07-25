@@ -172,10 +172,12 @@ class ProfileApiViewModel @Inject constructor(
     }
 
     /** 添加空间类型 */
-    fun addSpaceType(name: String, description: String?, callback: (String?) -> Unit) {
+    fun addSpaceType(name: String, description: String?, shape: String?, callback: (String?) -> Unit) {
         viewModelScope.launch {
             try {
-                val response = dictionaryApi.createSpaceType(CreateDictionaryRequest(name, description))
+                val response = dictionaryApi.createSpaceType(
+                    CreateDictionaryRequest(name = name, description = description, shape = shape)
+                )
                 if (response.code == 200) { loadDictionaries(); callback(null) }
                 else callback(NetworkErrorHandler.translateServerError(response.msg, "添加空间类型失败"))
             } catch (e: Exception) { callback(NetworkErrorHandler.translate(e, "添加空间类型失败")) }

@@ -61,7 +61,13 @@ class DashboardCache @Inject constructor(
         val selectedConstructorIds: List<Int> = emptyList(),
         val remark: String = "",
         /** 按工日分配模式下的工日映射（key=userId, value=工日数字符串） */
-        val workerWorkdays: Map<Int, String> = emptyMap()
+        val workerWorkdays: Map<Int, String> = emptyMap(),
+        /** 实测数量（异形空间现场实测值，空字符串表示不使用实测） */
+        val measuredQuantity: String = "",
+        /** 实测备注 */
+        val measuredNote: String = "",
+        /** 高度（厘米字符串，仅梯形等需要三维参数的形状使用，空字符串表示未输入） */
+        val heightCm: String = ""
     )
 
     /**

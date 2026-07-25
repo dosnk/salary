@@ -5,13 +5,14 @@ const cache = require('../services/cacheService');
 
 /**
  * 获取空间类型列表（永久缓存，变更时失效）
+ * 返回字段包含 shape（空间形状），用于前端录入表单按形状动态渲染参数组
  */
 const getSpaceTypes = async (ctx) => {
   try {
     const data = await cache.getOrSet(
       cache.cacheKey('dictionary', 'spaceTypes'),
       async () => {
-        const result = await pool.query('SELECT id, name FROM space_types ORDER BY id');
+        const result = await pool.query('SELECT id, name, shape FROM space_types ORDER BY id');
         return result.rows;
       },
       cache.TTL.PERMANENT
@@ -25,26 +26,31 @@ const getSpaceTypes = async (ctx) => {
 
 /**
  * 创建空间类型
+ * shape 默认 rectangle，可由前端传入指定为 rectangle/right_triangle/trapezoid/circle
  */
 const createSpaceType = async (ctx) => {
-  const { name } = ctx.request.body;
+  const { name, shape } = ctx.request.body;
 
   try {
     const existing = await pool.query(
       'SELECT id FROM space_types WHERE name = $1',
       [name]
     );
-    
+
     if (existing.rows.length > 0) {
       ctx.fail(8001);
       return;
     }
 
+    // shape 未传入或非法值时统一兜底为 rectangle
+    const allowedShapes = ['rectangle', 'right_triangle', 'trapezoid', 'circle'];
+    const finalShape = allowedShapes.includes(shape) ? shape : 'rectangle';
+
     const result = await pool.query(
-      'INSERT INTO space_types (name) VALUES ($1) RETURNING id, name',
-      [name]
+      'INSERT INTO space_types (name, shape) VALUES ($1, $2) RETURNING id, name, shape',
+      [name, finalShape]
     );
-    
+
     // 清除字典缓存
     await cache.invalidateDictionaryCache();
     ctx.success(result.rows[0]);
@@ -56,17 +62,18 @@ const createSpaceType = async (ctx) => {
 
 /**
  * 更新空间类型
+ * 支持更新 name 和 shape
  */
 const updateSpaceType = async (ctx) => {
   const { id } = ctx.params;
-  const { name } = ctx.request.body;
+  const { name, shape } = ctx.request.body;
 
   try {
     const existing = await pool.query(
       'SELECT id FROM space_types WHERE id = $1',
       [id]
     );
-    
+
     if (existing.rows.length === 0) {
       ctx.fail(8002);
       return;
@@ -76,17 +83,21 @@ const updateSpaceType = async (ctx) => {
       'SELECT id FROM space_types WHERE name = $1 AND id != $2',
       [name, id]
     );
-    
+
     if (duplicate.rows.length > 0) {
       ctx.fail(8001);
       return;
     }
 
+    // shape 校验，未传入或非法值时保持原值（不更新 shape 列）
+    const allowedShapes = ['rectangle', 'right_triangle', 'trapezoid', 'circle'];
+    const finalShape = allowedShapes.includes(shape) ? shape : 'rectangle';
+
     const result = await pool.query(
-      'UPDATE space_types SET name = $1 WHERE id = $2 RETURNING id, name',
-      [name, id]
+      'UPDATE space_types SET name = $1, shape = $2 WHERE id = $3 RETURNING id, name, shape',
+      [name, finalShape, id]
     );
-    
+
     // 清除字典缓存
     await cache.invalidateDictionaryCache();
     ctx.success(result.rows[0]);
@@ -336,12 +347,15 @@ const getConstructionUnits = async (ctx) => {
 };
 
 const createSpaceTypeSchema = Joi.object({
-  name: Joi.string().min(1).max(50).required()
+  name: Joi.string().min(1).max(50).required(),
+  // 空间形状：rectangle/right_triangle/trapezoid/circle，可选，默认 rectangle
+  shape: Joi.string().valid('rectangle', 'right_triangle', 'trapezoid', 'circle').optional()
 });
 
 const updateSpaceTypeSchema = Joi.object({
   id: Joi.number().integer().positive().required(),
-  name: Joi.string().min(1).max(50).required()
+  name: Joi.string().min(1).max(50).required(),
+  shape: Joi.string().valid('rectangle', 'right_triangle', 'trapezoid', 'circle').optional()
 });
 
 const deleteSpaceTypeSchema = Joi.object({

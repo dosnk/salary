@@ -87,7 +87,11 @@ data class SubprojectUiModel(
     /** 计量单位的显示名称（预计算，避免在Composable中调用ViewModel） */
     val unitDisplayName: String = "㎡",
     /** 子项目备注（null或空字符串表示无备注） */
-    val remark: String? = null
+    val remark: String? = null,
+    /** 实测数量（非null表示使用现场实测值覆盖按长宽计算的quantity） */
+    val measuredQuantity: Double? = null,
+    /** 实测备注（记录实测方式或现场说明） */
+    val measuredNote: String? = null
 )
 
 /**
@@ -122,6 +126,19 @@ data class DashboardUiState(
     val lengthCm: String = "",
     /** 宽度（厘米） */
     val widthCm: String = "",
+    /**
+     * 高度（厘米字符串，仅梯形等需要三维参数的形状使用，空字符串表示未输入）
+     * 语义随空间形状变化：
+     * - rectangle：不使用
+     * - right_triangle：不使用（length=底, width=高）
+     * - trapezoid：梯形的高（length=上底, width=下底, height=高）
+     * - circle：不使用（length=直径）
+     */
+    val heightCm: String = "",
+    /** 实测数量（异形空间现场实测值，空字符串表示不使用实测，按长宽计算） */
+    val measuredQuantity: String = "",
+    /** 实测备注（记录实测方式或现场说明，可选） */
+    val measuredNote: String = "",
     /** 分配方式：average=平均, work_days=按工日 */
     val salaryDistribution: String = "average",
     /** 已选中的施工人员ID集合 */
@@ -331,10 +348,13 @@ class DashboardViewModel @Inject constructor(
                 selectedScheme = cache.selectedScheme,
                 lengthCm = cache.lengthCm,
                 widthCm = cache.widthCm,
+                heightCm = cache.heightCm,
                 salaryDistribution = cache.salaryDistribution,
                 selectedConstructorIds = cache.selectedConstructorIds.toSet(),
                 workerWorkdays = cache.workerWorkdays,
-                remark = cache.remark
+                remark = cache.remark,
+                measuredQuantity = cache.measuredQuantity,
+                measuredNote = cache.measuredNote
             )
             // 恢复施工方案对应的单价
             if (cache.selectedScheme.isNotBlank()) {
@@ -343,9 +363,9 @@ class DashboardViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(unitPrice = scheme.price)
                 }
             }
-            // 无论是否恢复方案，只要长度或宽度非空就重算预览
+            // 无论是否恢复方案，只要长度/宽度/高度/实测数量非空就重算预览
             // 避免：用户上次仅修改了长度/宽度而未选方案，恢复后预览公式为空的不一致问题
-            if (cache.lengthCm.isNotBlank() || cache.widthCm.isNotBlank()) {
+            if (cache.lengthCm.isNotBlank() || cache.widthCm.isNotBlank() || cache.heightCm.isNotBlank() || cache.measuredQuantity.isNotBlank()) {
                 recalculate()
             }
         } catch (_: Exception) {
@@ -631,7 +651,9 @@ class DashboardViewModel @Inject constructor(
             amount = AmountFormatter.format(dto.amount),
             unit = unit,
             unitDisplayName = getUnitDisplayName(unit),
-            remark = dto.remark
+            remark = dto.remark,
+            measuredQuantity = dto.measuredQuantity,
+            measuredNote = dto.measuredNote
         )
     }
 
@@ -682,9 +704,66 @@ class DashboardViewModel @Inject constructor(
     /**
      * 选择空间类型
      * 触发防抖保存：用户单独修改空间类型后退出App也不丢失
+     *
+     * 形状切换时清理与新形状不相关的字段，避免残留输入误导用户：
+     * - 切到 trapezoid：保留 length/width，清空 height 由用户重新输入
+     * - 切到非 trapezoid：清空 height（不再使用）
+     * - 切到 circle：保留 length（直径），清空 width（圆形不使用宽度）
+     * - 切到 right_triangle：保留 length（底）和 width（高），清空 height
      */
     fun selectSpaceType(spaceType: String) {
-        _uiState.value = _uiState.value.copy(selectedSpaceType = spaceType)
+        val newShape = getShapeForSpaceType(spaceType)
+        val current = _uiState.value
+        // 计算切换后的字段清理策略
+        val clearedWidth = when (newShape) {
+            // 圆形仅使用 length（直径），width 不再相关
+            "circle" -> ""
+            else -> current.widthCm
+        }
+        val clearedHeight = if (newShape == "trapezoid") {
+            // 切到梯形：height 由用户重新输入，清空避免沿用旧值
+            ""
+        } else {
+            // 切到非梯形：height 不再使用，清空
+            ""
+        }
+        _uiState.value = current.copy(
+            selectedSpaceType = spaceType,
+            widthCm = clearedWidth,
+            heightCm = clearedHeight
+        )
+        recalculate()
+        saveFormDebounced()
+    }
+
+    /**
+     * 根据空间类型名称返回对应的 shape（rectangle/right_triangle/trapezoid/circle）
+     * 未匹配时默认 rectangle，保证向后兼容
+     */
+    private fun getShapeForSpaceType(spaceTypeName: String): String {
+        val st = _uiState.value.spaceTypes.find { it.name == spaceTypeName }
+        return st?.shape?.takeIf { it.isNotBlank() } ?: "rectangle"
+    }
+
+    /**
+     * 获取当前选中空间类型的 shape
+     * UI 层根据返回值动态渲染参数输入框（矩形/直角三角形/梯形/圆形）
+     */
+    fun currentSpaceShape(): String {
+        val selected = _uiState.value.selectedSpaceType
+        if (selected.isBlank()) return "rectangle"
+        return getShapeForSpaceType(selected)
+    }
+
+    /**
+     * 更新高度（厘米，仅梯形形状使用）
+     * 触发防抖保存
+     */
+    fun updateHeight(value: String) {
+        // 仅允许数字与小数点
+        if (value.isNotEmpty() && !value.matches(Regex("^\\d*(\\.\\d*)?$"))) return
+        _uiState.value = _uiState.value.copy(heightCm = value)
+        recalculate()
         saveFormDebounced()
     }
 
@@ -719,6 +798,28 @@ class DashboardViewModel @Inject constructor(
     fun updateWidth(width: String) {
         _uiState.value = _uiState.value.copy(widthCm = width)
         recalculate()
+        saveFormDebounced()
+    }
+
+    /**
+     * 更新实测数量（异形空间现场实测值）
+     * 非空且为正数时覆盖按长宽计算的 quantity；清空后回退到按长宽计算
+     * 触发防抖保存
+     */
+    fun updateMeasuredQuantity(value: String) {
+        // 只允许数字与小数点
+        if (value.isNotEmpty() && !value.matches(Regex("^\\d*(\\.\\d*)?$"))) return
+        _uiState.value = _uiState.value.copy(measuredQuantity = value)
+        recalculate()
+        saveFormDebounced()
+    }
+
+    /**
+     * 更新实测备注
+     * 触发防抖保存
+     */
+    fun updateMeasuredNote(note: String) {
+        _uiState.value = _uiState.value.copy(measuredNote = note)
         saveFormDebounced()
     }
 
@@ -889,33 +990,44 @@ class DashboardViewModel @Inject constructor(
 
     /**
      * 重新计算预览公式
-     * 根据施工方案的计量单位计算数量和金额
-     * 按工日分配模式下额外显示每人分摊金额（按工日比例）
+     *
+     * 计算规则与后端 services/calculation.js 保持一致：
+     * - unit=length: 数量 = lengthCm / 100 (米)，形状不参与
+     * - unit=perimeter: 数量 = (lengthCm + widthCm) * 2 / 100 (米)，形状不参与
+     * - unit=area: 按 shape 选择公式（rectangle/right_triangle/trapezoid/circle）
+     *
+     * 有实测数量时优先使用实测值覆盖上述计算（异形空间场景）。
      */
     private fun recalculate() {
         val state = _uiState.value
         val scheme = state.constructionPlans.find { it.name == state.selectedScheme }
         val lengthCm = state.lengthCm.toDoubleOrNull() ?: 0.0
         val widthCm = state.widthCm.toDoubleOrNull() ?: 0.0
+        val heightCm = state.heightCm.toDoubleOrNull() ?: 0.0
         val unitPrice = state.unitPrice
+        val shape = getShapeForSpaceType(state.selectedSpaceType)
 
-        // 根据计量单位计算数量
-        val quantity = when (scheme?.unit) {
-            "area" -> (lengthCm * widthCm) / 10000       // cm² → m²
-            "perimeter" -> (lengthCm + widthCm) * 2 / 100 // cm → m
-            "length" -> lengthCm / 100                     // cm → m
-            else -> (lengthCm * widthCm) / 10000          // 默认按面积
+        // 实测数量：非空且为正数时覆盖按长宽计算的 quantity（异形空间场景）
+        val measured = state.measuredQuantity.toDoubleOrNull()
+        val hasMeasured = measured != null && measured > 0
+
+        // 根据计量单位计算数量（有实测值时优先使用实测值）
+        val quantity = if (hasMeasured) {
+            measured!!
+        } else {
+            calculateQuantityLocally(scheme?.unit, shape, lengthCm, widthCm, heightCm)
         }
 
         val totalAmount = quantity * unitPrice
 
         // 生成计算公式文本（含按工日分配的每人分摊明细）
         val formula = buildCalculationFormula(
-            scheme, quantity, unitPrice, totalAmount, lengthCm, widthCm,
+            scheme, quantity, unitPrice, totalAmount, lengthCm, widthCm, heightCm, shape,
             salaryDistribution = state.salaryDistribution,
             workerWorkdays = state.workerWorkdays,
             selectedConstructorIds = state.selectedConstructorIds,
-            constructors = state.constructors
+            constructors = state.constructors,
+            hasMeasured = hasMeasured
         )
 
         _uiState.value = state.copy(
@@ -926,8 +1038,62 @@ class DashboardViewModel @Inject constructor(
     }
 
     /**
+     * 本地预览数量计算（与后端 calculateQuantity 等价）
+     * 后端 services/calculation.js 的 normalizeUnit/calculateAreaByShape 已在此复刻
+     */
+    private fun calculateQuantityLocally(
+        unit: String?,
+        shape: String,
+        lengthCm: Double,
+        widthCm: Double,
+        heightCm: Double
+    ): Double {
+        val lengthM = lengthCm / 100
+        val widthM = widthCm / 100
+        val heightM = heightCm / 100
+        return when (unit) {
+            "length" -> lengthM
+            "perimeter" -> (lengthM + widthM) * 2
+            "area", null -> calculateAreaByShape(shape, lengthM, widthM, heightM)
+            // 兼容历史别名：m²/平方米 走面积；m/米 走长度
+            "m²", "㎡", "平方米" -> calculateAreaByShape(shape, lengthM, widthM, heightM)
+            "m", "米" -> lengthM
+            else -> calculateAreaByShape(shape, lengthM, widthM, heightM)
+        }
+    }
+
+    /**
+     * 根据空间形状计算面积（平方米），与后端 calculateAreaByShape 等价
+     */
+    private fun calculateAreaByShape(
+        shape: String,
+        lengthM: Double,
+        widthM: Double,
+        heightM: Double
+    ): Double {
+        return when (shape) {
+            "right_triangle" -> 0.5 * lengthM * widthM
+            "trapezoid" -> 0.5 * (lengthM + widthM) * heightM
+            "circle" -> Math.PI * (lengthM / 2) * (lengthM / 2)
+            "rectangle" -> lengthM * widthM
+            else -> lengthM * widthM
+        }
+    }
+
+    /**
      * 构建计算公式文本
-     * 参考Vue前端的 calculationFormula computed 逻辑
+     *
+     * 公式展示规则：
+     * - 有实测值时直接展示"实测 数量 × 单价 = 金额"
+     * - 按形状推导：
+     *   - unit=length：长度(m) × ¥单价/m = ¥金额
+     *   - unit=perimeter：周长(m) = (长+宽)×2 × ¥单价/m = ¥金额
+     *   - unit=area：
+     *     - rectangle：长×宽 = 面积(m²) × ¥单价/m² = ¥金额
+     *     - right_triangle：底×高/2 = 面积(m²) × ¥单价/m² = ¥金额
+     *     - trapezoid：(上底+下底)×高/2 = 面积(m²) × ¥单价/m² = ¥金额
+     *     - circle：π×(直径/2)² = 面积(m²) × ¥单价/m² = ¥金额
+     *
      * 按工日分配模式下追加显示每人分摊金额
      */
     private fun buildCalculationFormula(
@@ -937,24 +1103,55 @@ class DashboardViewModel @Inject constructor(
         totalAmount: Double,
         lengthCm: Double,
         widthCm: Double,
+        heightCm: Double,
+        shape: String,
         salaryDistribution: String = "average",
         workerWorkdays: Map<Int, String> = emptyMap(),
         selectedConstructorIds: Set<Int> = emptySet(),
-        constructors: List<UserDto> = emptyList()
+        constructors: List<UserDto> = emptyList(),
+        // 是否使用实测数量（异形空间场景，为true时公式标注"实测"）
+        hasMeasured: Boolean = false
     ): String {
         val q = numberFormat.format(quantity)
         val p = numberFormat.format(unitPrice)
         val t = numberFormat.format(totalAmount)
 
-        // 基础公式：数量 × 单价 = 总额
-        val baseFormula = when (scheme?.unit) {
-            "area" -> "$q m² × ¥$p/m² = ¥$t"
+        val lengthM = lengthCm / 100
+        val widthM = widthCm / 100
+        val heightM = heightCm / 100
+
+        // 基础公式：有实测值时标注"实测"，否则按形状与单位展示推导过程
+        val baseFormula = if (hasMeasured) {
+            // 实测数量直接展示，不显示长宽推导（异形空间无法用长宽准确表达）
+            val unitLabel = when (scheme?.unit) {
+                "area" -> "m²"
+                "perimeter", "length" -> "m"
+                else -> "m²"
+            }
+            "实测 $q $unitLabel × ¥$p/$unitLabel = ¥$t"
+        } else when (scheme?.unit) {
+            "area" -> {
+                // 按形状生成面积推导公式
+                val areaFormula = when (shape) {
+                    "right_triangle" ->
+                        "${numberFormat.format(lengthM)}×${numberFormat.format(widthM)}÷2"
+                    "trapezoid" ->
+                        "(${numberFormat.format(lengthM)}+${numberFormat.format(widthM)})×${numberFormat.format(heightM)}÷2"
+                    "circle" ->
+                        "π×(${numberFormat.format(lengthM)}÷2)²"
+                    "rectangle" ->
+                        "${numberFormat.format(lengthM)}×${numberFormat.format(widthM)}"
+                    else ->
+                        "${numberFormat.format(lengthM)}×${numberFormat.format(widthM)}"
+                }
+                "$areaFormula = $q m² × ¥$p/m² = ¥$t"
+            }
             "perimeter" -> {
+                // 周长不参与 shape 计算，统一按矩形 (长+宽)×2
                 val perimeter = (lengthCm + widthCm) * 2 / 100
                 "${numberFormat.format(perimeter)} m × ¥$p/m = ¥$t"
             }
             "length" -> {
-                val lengthM = lengthCm / 100
                 "${numberFormat.format(lengthM)} m × ¥$p/m = ¥$t"
             }
             else -> "$q m² × ¥$p/m² = ¥$t"
@@ -1022,15 +1219,29 @@ class DashboardViewModel @Inject constructor(
             _uiState.value = state.copy(errorMessage = "请选择施工方案")
             return
         }
+        // 参数校验：根据空间形状决定哪些字段必填
+        // - rectangle：长+宽
+        // - right_triangle：底(length)+高(width)
+        // - trapezoid：上底(length)+下底(width)+高(height)
+        // - circle：直径(length)
+        // 同时考虑施工方案 unit=length 时不强制 width（与历史逻辑保持一致）
         val length = state.lengthCm.toDoubleOrNull()
         if (length == null || length <= 0) {
             _uiState.value = state.copy(errorMessage = "请输入有效的长度")
             return
         }
         val schemeUnit = currentSchemeUnit()
+        val shape = getShapeForSpaceType(state.selectedSpaceType)
+        val needsWidth = schemeUnit != "length" && shape != "circle"
         val width = state.widthCm.toDoubleOrNull()
-        if (schemeUnit != "length" && (width == null || width <= 0)) {
+        if (needsWidth && (width == null || width <= 0)) {
             _uiState.value = state.copy(errorMessage = "请输入有效的宽度")
+            return
+        }
+        // 梯形必须提供 height
+        val height = state.heightCm.toDoubleOrNull()
+        if (shape == "trapezoid" && (height == null || height <= 0)) {
+            _uiState.value = state.copy(errorMessage = "请输入梯形的高")
             return
         }
         if (state.selectedConstructorIds.isEmpty()) {
@@ -1077,7 +1288,12 @@ class DashboardViewModel @Inject constructor(
                     salaryDistribution = state.salaryDistribution,
                     constructors = state.selectedConstructorIds.map { ConstructorItem(it) },
                     remark = state.remark.ifBlank { null },
-                    workerWorkDays = workerWorkDays
+                    workerWorkDays = workerWorkDays,
+                    // 实测数量：非空且为正数时传给后端覆盖按长宽计算的quantity（异形空间场景）
+                    measuredQuantity = state.measuredQuantity.toDoubleOrNull()?.takeIf { it > 0 },
+                    measuredNote = state.measuredNote.ifBlank { null },
+                    // 高度：仅梯形等需要三维参数的形状传值，其他形状传 null
+                    height = if (shape == "trapezoid") height else null
                 )
 
                 val response = projectApi.createProject(request)
@@ -1100,6 +1316,9 @@ class DashboardViewModel @Inject constructor(
                         selectedScheme = "",
                         lengthCm = "",
                         widthCm = "",
+                        heightCm = "",
+                        measuredQuantity = "",
+                        measuredNote = "",
                         remark = "",
                         unitPrice = 0.0,
                         quantity = 0.0,
@@ -1379,7 +1598,10 @@ class DashboardViewModel @Inject constructor(
                         salaryDistribution = state.salaryDistribution,
                         selectedConstructorIds = state.selectedConstructorIds.toList(),
                         workerWorkdays = state.workerWorkdays,
-                        remark = state.remark
+                        remark = state.remark,
+                        measuredQuantity = state.measuredQuantity,
+                        measuredNote = state.measuredNote,
+                        heightCm = state.heightCm
                     )
                 )
             }
@@ -1416,7 +1638,10 @@ class DashboardViewModel @Inject constructor(
                         salaryDistribution = state.salaryDistribution,
                         selectedConstructorIds = state.selectedConstructorIds.toList(),
                         workerWorkdays = state.workerWorkdays,
-                        remark = state.remark
+                        remark = state.remark,
+                        measuredQuantity = state.measuredQuantity,
+                        measuredNote = state.measuredNote,
+                        heightCm = state.heightCm
                     )
                 )
                 // 地址映射兜底落盘

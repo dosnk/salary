@@ -42,20 +42,58 @@ const normalizeUnit = (unit) => {
  * @param {string} unit - 单位类型 (length/perimeter/area 或其别名)
  * @param {number} length - 长度（厘米）
  * @param {number} width - 宽度（厘米）
+ * @param {string} [shape='rectangle'] - 空间形状（仅 area 单位时生效）
+ * @param {number} [height=0] - 高度（厘米，仅 trapezoid 形状使用）
  * @returns {number} 计算后的数量（米或平方米）
  */
-const calculateQuantity = (unit, length, width) => {
+const calculateQuantity = (unit, length, width, shape = 'rectangle', height = 0) => {
   const lengthM = length / 100;
   const widthM = width / 100;
+  const heightM = height / 100;
   const standardUnit = normalizeUnit(unit);
 
   switch (standardUnit) {
     case 'length':
+      // 按长度计价时形状不参与计算，统一返回长度（米）
       return lengthM;
     case 'perimeter':
+      // 按周长计价时形状不参与计算，按矩形周长 (长+宽)×2
+      // 异形空间周长建议使用 measured_quantity 实测值覆盖
       return (lengthM + widthM) * 2;
     case 'area':
     default:
+      // 按面积计价时根据 shape 选择不同计算公式
+      return calculateAreaByShape(shape, lengthM, widthM, heightM);
+  }
+};
+
+/**
+ * 根据空间形状计算面积（单位：平方米）
+ * 形状参数语义：
+ *   - rectangle: length=长, width=宽
+ *   - right_triangle: length=底, width=高（面积 = 底×高/2）
+ *   - trapezoid: length=上底, width=下底, height=高（面积 = (上底+下底)×高/2）
+ *   - circle: length=直径（面积 = π×(直径/2)²）
+ * @param {string} shape - 空间形状
+ * @param {number} lengthM - 长度（米）
+ * @param {number} widthM - 宽度（米）
+ * @param {number} heightM - 高度（米）
+ * @returns {number} 面积（平方米）
+ */
+const calculateAreaByShape = (shape, lengthM, widthM, heightM) => {
+  switch (shape) {
+    case 'right_triangle':
+      // 直角三角形：0.5 × 底 × 高
+      return 0.5 * lengthM * widthM;
+    case 'trapezoid':
+      // 梯形：0.5 × (上底 + 下底) × 高
+      return 0.5 * (lengthM + widthM) * heightM;
+    case 'circle':
+      // 圆形：π × r²，lengthM 为直径
+      return Math.PI * (lengthM / 2) * (lengthM / 2);
+    case 'rectangle':
+    default:
+      // 默认矩形：长 × 宽
       return lengthM * widthM;
   }
 };
@@ -66,10 +104,18 @@ const calculateQuantity = (unit, length, width) => {
  * @param {number} length - 长度（厘米）
  * @param {number} width - 宽度（厘米）
  * @param {number} price - 单价
+ * @param {number} [measuredQuantity] - 实测数量（异形空间现场实测值，提供时覆盖按长宽计算的 quantity）
+ * @param {string} [shape='rectangle'] - 空间形状（rectangle/right_triangle/trapezoid/circle）
+ * @param {number} [height=0] - 高度（厘米，仅 trapezoid 形状使用）
  * @returns {object} { quantity, amount }
  */
-const calculateSubprojectAmount = (unit, length, width, price) => {
-  const quantity = calculateQuantity(unit, length, width);
+const calculateSubprojectAmount = (unit, length, width, price, measuredQuantity, shape = 'rectangle', height = 0) => {
+  // 若提供实测数量（非 null/undefined 且为正数），直接采用实测值，金额 = 实测数量 × 单价
+  // 适用于非矩形/多边形/圆形等异形空间，现场实测比按长宽估算更准确
+  const hasMeasured = typeof measuredQuantity === 'number' && measuredQuantity > 0;
+  const quantity = hasMeasured
+    ? measuredQuantity
+    : calculateQuantity(unit, length, width, shape, height);
   const amount = quantity * price;
 
   // 消除 JS 浮点运算误差（如 924.0000000000001）
@@ -320,6 +366,7 @@ const calculateSettlementPreview = async (projectIds, currentUserId) => {
 module.exports = {
   normalizeUnit,
   calculateQuantity,
+  calculateAreaByShape,
   calculateSubprojectAmount,
   calculateUserWage,
   calculateAdvanceTotal,

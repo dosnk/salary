@@ -207,11 +207,15 @@ const listWithFilters = async (filters) => {
       SELECT JSON_AGG(JSON_BUILD_OBJECT(
           'id', sp.id,
           'space_type_name', st.name,
+          'space_type_shape', st.shape,
           'construction_plan_name', cp.name,
           'length', sp.length,
           'width', sp.width,
+          'height', sp.height,
           'quantity', sp.quantity,
           'amount', sp.amount,
+          'measured_quantity', sp.measured_quantity,
+          'measured_note', sp.measured_note,
           'status', sp.status,
           'remark', sp.remark
         ) ORDER BY sp.created_at DESC) AS sub_projects
@@ -671,8 +675,11 @@ const isParticipant = async (projectId, userId, client) => {
  * @param {number} subprojectData.constructionPlanId - 施工方案ID
  * @param {number} subprojectData.length - 长度（米）
  * @param {number} subprojectData.width - 宽度（米）
+ * @param {number} [subprojectData.height] - 高度（米，仅梯形等需要三维参数的形状使用）
  * @param {number} subprojectData.quantity - 数量
  * @param {number} subprojectData.amount - 金额
+ * @param {number} [subprojectData.measuredQuantity] - 实测数量（异形空间覆盖计算值）
+ * @param {string} [subprojectData.measuredNote] - 实测备注
  * @param {number} subprojectData.createdBy - 创建人ID
  * @param {object} [client] - pg 事务客户端，不传则使用连接池
  * @returns {Promise<object>} 创建的子项目记录（含 id）
@@ -680,8 +687,8 @@ const isParticipant = async (projectId, userId, client) => {
 const createSubproject = async (subprojectData, client) => {
   const executor = client || pool;
   const result = await executor.query(
-    `INSERT INTO subprojects (project_id, space_type_id, construction_plan_id, length, width, quantity, amount, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO subprojects (project_id, space_type_id, construction_plan_id, length, width, height, quantity, amount, measured_quantity, measured_note, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      RETURNING id`,
     [
       subprojectData.projectId,
@@ -689,8 +696,11 @@ const createSubproject = async (subprojectData, client) => {
       subprojectData.constructionPlanId,
       subprojectData.length,
       subprojectData.width,
+      subprojectData.height ?? null,
       subprojectData.quantity,
       subprojectData.amount,
+      subprojectData.measuredQuantity ?? null,
+      subprojectData.measuredNote ?? null,
       subprojectData.createdBy
     ]
   );
@@ -716,8 +726,11 @@ const updateSubproject = async (subprojectId, updates, client) => {
     constructionPlanId: 'construction_plan_id',
     length: 'length',
     width: 'width',
+    height: 'height',
     quantity: 'quantity',
     amount: 'amount',
+    measuredQuantity: 'measured_quantity',
+    measuredNote: 'measured_note',
     remark: 'remark',
     status: 'status',
     createdBy: 'created_by'
@@ -912,11 +925,11 @@ const findUserById = async (id) => {
 /**
  * 根据名称查询空间类型
  * @param {string} name - 空间类型名称
- * @returns {Promise<object|null>} 空间类型记录
+ * @returns {Promise<object|null>} 空间类型记录（含 shape 字段）
  */
 const findSpaceTypeByName = async (name) => {
   const result = await pool.query(
-    'SELECT id, name FROM space_types WHERE name = $1',
+    'SELECT id, name, shape FROM space_types WHERE name = $1',
     [name]
   );
   return result.rows[0] || null;
@@ -938,12 +951,13 @@ const findConstructionPlanByName = async (name) => {
 /**
  * 根据工程ID查询子项目列表
  * @param {number} projectId - 工程ID
- * @returns {Promise<Array>} 子项目列表
+ * @returns {Promise<Array>} 子项目列表（含 shape 字段）
  */
 const findSubprojectsByProjectId = async (projectId) => {
   const result = await pool.query(
     `SELECT sp.*,
             st.name AS space_type_name,
+            st.shape AS space_type_shape,
             cp.name AS construction_plan_name,
             cp.unit,
             cp.price
@@ -973,12 +987,13 @@ const findSubprojectById = async (id) => {
 /**
  * 根据ID查询子项目详情（含空间类型和施工方案信息）
  * @param {number} id - 子项目ID
- * @returns {Promise<object|null>} 子项目详情
+ * @returns {Promise<object|null>} 子项目详情（含 shape 字段）
  */
 const findSubprojectDetailById = async (id) => {
   const result = await pool.query(
     `SELECT sp.*,
             st.name AS space_type_name,
+            st.shape AS space_type_shape,
             cp.name AS construction_plan_name,
             cp.unit,
             cp.price
@@ -1068,11 +1083,12 @@ const createProjectWithSubproject = async (data) => {
     }
 
     // 创建子项目（使用预先计算的金额，确保事务内数据一致性）
+    // height 字段仅梯形等需要三维参数的形状使用，其他形状为 null
     const subprojectResult = await client.query(
-      `INSERT INTO subprojects (project_id, space_type_id, construction_plan_id, length, width, quantity, amount, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO subprojects (project_id, space_type_id, construction_plan_id, length, width, height, quantity, amount, measured_quantity, measured_note, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING id`,
-      [projectId, data.spaceTypeId, data.constructionPlanId, data.length, data.width, data.quantity, data.amount, data.userId]
+      [projectId, data.spaceTypeId, data.constructionPlanId, data.length, data.width, data.height ?? null, data.quantity, data.amount, data.measuredQuantity ?? null, data.measuredNote ?? null, data.userId]
     );
     const subprojectId = subprojectResult.rows[0].id;
 

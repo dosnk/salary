@@ -65,7 +65,15 @@ data class SubprojectUiModel(
     val quantity: Double,
     val amount: Double,
     /** 子项目备注（null表示无备注，编辑弹窗初始化时使用） */
-    val remark: String? = null
+    val remark: String? = null,
+    /** 实测数量（异形空间现场实测值，非null时覆盖按长宽计算的quantity） */
+    val measuredQuantity: Double? = null,
+    /** 实测备注（记录实测方式或现场说明） */
+    val measuredNote: String? = null,
+    /** 空间形状（rectangle/right_triangle/trapezoid/circle，决定编辑弹窗参数组） */
+    val spaceTypeShape: String = "rectangle",
+    /** 高度（米，仅梯形等需要三维参数的形状使用，null表示未设置） */
+    val height: Double? = null
 )
 
 /**
@@ -183,7 +191,12 @@ class ProjectDetailViewModel @Inject constructor(
                                     it.id, it.spaceTypeName, it.constructionPlanName,
                                     it.length ?: 0.0, it.width ?: 0.0, it.quantity ?: 0.0,
                                     it.amount ?: 0.0,
-                                    it.remark
+                                    it.remark,
+                                    it.measuredQuantity,
+                                    it.measuredNote,
+                                    it.spaceTypeShape ?: "rectangle",
+                                    // 后端 height 单位厘米，UI 层统一使用米
+                                    it.height?.let { h -> h / 100.0 }
                                 )
                             },
                             files = mappedFiles,
@@ -252,14 +265,20 @@ class ProjectDetailViewModel @Inject constructor(
      * @param subprojectId 子项目ID
      * @param lengthMeter 长度（米）
      * @param widthMeter 宽度（米）
+     * @param heightMeter 高度（米，仅梯形使用，null 表示清除高度）
      * @param remark 备注（空字符串表示删除备注，后端会转为 null 存储）
+     * @param measuredQuantity 实测数量（异形空间现场实测值，null表示清除实测回退到按长宽计算）
+     * @param measuredNote 实测备注（空字符串表示清除）
      */
     fun updateSubproject(
         projectId: Int,
         subprojectId: Int,
         lengthMeter: Double,
         widthMeter: Double,
-        remark: String
+        heightMeter: Double?,
+        remark: String,
+        measuredQuantity: Double? = null,
+        measuredNote: String = ""
     ) {
         viewModelScope.launch {
             _savingSubproject.value = true
@@ -270,13 +289,18 @@ class ProjectDetailViewModel @Inject constructor(
                 // 米转厘米
                 val lengthCm = lengthMeter * 100
                 val widthCm = widthMeter * 100
+                val heightCm = heightMeter?.let { it * 100 }
                 val response = projectApi.updateSubproject(
                     projectId,
                     subprojectId,
                     UpdateSubprojectRequest(
                         length = lengthCm,
                         width = widthCm,
-                        remark = remark
+                        height = heightCm,
+                        remark = remark,
+                        // 实测数量：null 表示清除实测回退到按长宽计算
+                        measuredQuantity = measuredQuantity,
+                        measuredNote = measuredNote.ifBlank { null }
                     )
                 )
                 if (response.code == 200) {

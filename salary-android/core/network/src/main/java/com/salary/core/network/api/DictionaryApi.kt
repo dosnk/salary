@@ -78,13 +78,21 @@ data class DictionaryItemDto(
     /** 计量单位：area=面积, perimeter=周长, length=长度 */
     val unit: String? = null,
     /** 单价 */
-    val price: Double? = null
+    val price: Double? = null,
+    /**
+     * 空间形状（仅空间类型有此字段，其他字典类型为 null）
+     * 取值：rectangle=矩形, right_triangle=直角三角形, trapezoid=梯形, circle=圆形
+     * 默认 rectangle，决定录入表单的参数组与计算公式
+     */
+    val shape: String? = null
 )
 
 @Serializable
 data class CreateDictionaryRequest(
     val name: String,
-    val description: String? = null
+    val description: String? = null,
+    /** 空间形状（仅创建空间类型时使用，可选，默认后端 rectangle） */
+    val shape: String? = null
 )
 
 /**

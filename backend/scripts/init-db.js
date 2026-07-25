@@ -152,6 +152,11 @@ const MIGRATIONS = [
       CREATE TABLE IF NOT EXISTS space_types (
         id SERIAL PRIMARY KEY,
         name VARCHAR(50) UNIQUE NOT NULL,
+        -- 空间形状：决定子项目数量计算公式
+        -- rectangle=矩形(长×宽), right_triangle=直角三角形(底×高/2),
+        -- trapezoid=梯形((上底+下底)×高/2), circle=圆形(π×r²)
+        -- 默认 rectangle，兼容历史数据
+        shape VARCHAR(20) NOT NULL DEFAULT 'rectangle',
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
@@ -211,6 +216,10 @@ const MIGRATIONS = [
         width NUMERIC(10,2),
         quantity NUMERIC(10,2) NOT NULL,
         amount NUMERIC(14,4) NOT NULL,
+        -- 实测数量：非矩形/多边形/圆形等异形空间由现场人员直接填入实测值，覆盖按长宽计算的 quantity
+        measured_quantity NUMERIC(10,2),
+        -- 实测备注：记录实测方式或现场说明（如"L形客厅周长实测"）
+        measured_note VARCHAR(200),
         status VARCHAR(20) NOT NULL DEFAULT 'pending',
         remark TEXT,
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -1039,6 +1048,33 @@ const MIGRATIONS = [
       ALTER TABLE subproject_transfers ALTER COLUMN from_user_id SET NOT NULL;
       ALTER TABLE subproject_transfers ALTER COLUMN to_user_id SET NOT NULL;
       ALTER TABLE subproject_transfers ALTER COLUMN transferred_by SET NOT NULL;
+    `
+  },
+  {
+    version: 'V2.3',
+    description: '子项目增加实测数量与实测备注：支持非矩形/多边形/圆形等异形空间的现场实测计量，填入后覆盖按长宽计算的数量',
+    up: `
+      ALTER TABLE subprojects ADD COLUMN IF NOT EXISTS measured_quantity NUMERIC(10,2);
+      ALTER TABLE subprojects ADD COLUMN IF NOT EXISTS measured_note VARCHAR(200);
+    `,
+    down: `
+      ALTER TABLE subprojects DROP COLUMN IF EXISTS measured_quantity;
+      ALTER TABLE subprojects DROP COLUMN IF EXISTS measured_note;
+    `
+  },
+  {
+    version: 'V2.4',
+    description: '空间类型增加 shape 字段、子项目增加 height 字段：支持矩形/直角三角形/梯形/圆形等参数化形状计算',
+    up: `
+      -- space_types 表增加 shape 列，默认 rectangle 兼容历史数据
+      ALTER TABLE space_types ADD COLUMN IF NOT EXISTS shape VARCHAR(20) NOT NULL DEFAULT 'rectangle';
+
+      -- subprojects 表增加 height 列（厘米），仅梯形等需要三维参数的形状使用，其他形状为 NULL
+      ALTER TABLE subprojects ADD COLUMN IF NOT EXISTS height NUMERIC(10,2);
+    `,
+    down: `
+      ALTER TABLE space_types DROP COLUMN IF EXISTS shape;
+      ALTER TABLE subprojects DROP COLUMN IF EXISTS height;
     `
   }
 ];

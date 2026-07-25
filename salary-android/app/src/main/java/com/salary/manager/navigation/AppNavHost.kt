@@ -470,8 +470,8 @@ fun MainScaffold(
                                     spaceTypes = spaceTypes,
                                     constructionPlans = constructionPlans,
                                     wageDistributionTypes = wageDistributionTypes,
-                                    onAddSpaceType = { name, desc, callback ->
-                                        profileApiViewModel.addSpaceType(name, desc, callback)
+                                    onAddSpaceType = { name, desc, shape, callback ->
+                                        profileApiViewModel.addSpaceType(name, desc, shape, callback)
                                     },
                                     onDeleteSpaceType = { id, callback ->
                                         profileApiViewModel.deleteSpaceType(id, callback)

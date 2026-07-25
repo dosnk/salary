@@ -128,6 +128,11 @@ module.exports = {
     workerWorkDays,
     userId,
     userRole,
+    // 实测数量（异形空间现场实测值，提供时覆盖按长宽计算的 quantity）
+    measuredQuantity,
+    measuredNote,
+    // 高度（厘米，仅梯形等需要三维参数的形状使用）
+    height,
   }) {
     // 1. 验证施工人员ID存在性
     const constructorIds = constructors.map((c) => c.userId);
@@ -138,12 +143,13 @@ module.exports = {
       throw new BusinessError(3002, `施工人员ID不存在: ${invalidIds.join(', ')}`);
     }
 
-    // 2. 空间类型名称转ID
+    // 2. 空间类型名称转ID，同时获取 shape（决定计算公式）
     const spaceTypeRecord = await projectRepo.findSpaceTypeByName(spaceType);
     if (!spaceTypeRecord) {
       throw new BusinessError(3007, `空间类型不存在: ${spaceType}`);
     }
     const spaceTypeId = spaceTypeRecord.id;
+    const shape = spaceTypeRecord.shape || 'rectangle';
 
     // 3. 施工方案名称转ID，同时获取单价和单位
     const constructionPlan = await projectRepo.findConstructionPlanByName(constructionScheme);
@@ -154,9 +160,17 @@ module.exports = {
     const unitPrice = constructionPlan.price;
     const unit = constructionPlan.unit;
 
-    // 4. 验证宽度：只有当施工方案不是length类型时才需要宽度
-    if (unit !== 'length' && (!width || width <= 0)) {
+    // 4. 验证宽度：圆形不需要宽度，length 单位不需要宽度，其他形状需要
+    //    梯形需要 height，此处先校验宽度，height 在计算前再校验
+    const noWidthShapes = ['circle'];
+    const needsWidth = unit !== 'length' && !noWidthShapes.includes(shape);
+    if (needsWidth && (!width || width <= 0)) {
       throw new BusinessError(1001, '请输入有效的宽度');
+    }
+
+    // 梯形必须提供 height
+    if (shape === 'trapezoid' && (!height || height <= 0)) {
+      throw new BusinessError(1001, '梯形空间必须输入有效的高度');
     }
 
     // 5. 检查工程名是否已存在
@@ -182,8 +196,20 @@ module.exports = {
     }
 
     // 6. 预先计算子项目金额（移到事务内确保数据一致性）
-    const widthToUse = unit === 'length' ? 100 : width;
-    const { quantity, amount } = calculation.calculateSubprojectAmount(unit, length, widthToUse, unitPrice);
+    // 若提供有效的实测数量，则覆盖按长宽计算的 quantity（适用于异形空间）
+    // 圆形不需要宽度，width 兜底为 0；length 单位宽度兜底为 100（保持历史兼容）
+    let widthToUse;
+    if (unit === 'length') {
+      widthToUse = 100;
+    } else if (noWidthShapes.includes(shape)) {
+      widthToUse = 0;
+    } else {
+      widthToUse = width;
+    }
+    const heightToUse = shape === 'trapezoid' ? height : 0;
+    const { quantity, amount } = calculation.calculateSubprojectAmount(
+      unit, length, widthToUse, unitPrice, measuredQuantity, shape, heightToUse
+    );
 
     // 预先计算历史记录信息（将在事务内写入，确保与工程/子项目数据一致）
     const historyAction = isNewProject ? 'CREATE_PROJECT' : 'ADD_SUBPROJECT';
@@ -205,8 +231,13 @@ module.exports = {
       constructionPlanId,
       length,
       width,
+      // height 字段仅梯形等需要三维参数的形状使用，其他形状为 null
+      height: shape === 'trapezoid' ? height : null,
       quantity,
       amount,
+      // 实测信息（异形空间现场实测值，null 表示按长宽计算）
+      measuredQuantity: measuredQuantity ?? null,
+      measuredNote: measuredNote ?? null,
       constructors,
       // 按工日分配模式下的工日数据（新工程时写入project_workers.workdays）
       workerWorkDays,
@@ -394,10 +425,16 @@ module.exports = {
       // NUMERIC 字段显式 parseFloat，确保返回 JSON number
       length: sp.length !== null ? parseFloat(sp.length) : null,
       width: sp.width !== null ? parseFloat(sp.width) : null,
+      // height（NUMERIC(10,2)，梯形等异形空间场景使用，其他形状为 null）
+      height: sp.height !== null && sp.height !== undefined ? parseFloat(sp.height) : null,
       quantity: sp.quantity !== null ? parseFloat(sp.quantity) : null,
       amount: sp.amount !== null ? parseFloat(sp.amount) : null,
+      // 实测数量（NUMERIC(10,2)，异形空间场景使用）
+      measured_quantity: sp.measured_quantity !== null && sp.measured_quantity !== undefined ? parseFloat(sp.measured_quantity) : null,
       price: sp.price !== null ? parseFloat(sp.price) : null,
       space_type: sp.space_type_name,
+      // 空间形状（来自 space_types 表，前端按形状动态渲染参数组）
+      space_type_shape: sp.space_type_shape || 'rectangle',
       construction_scheme: sp.construction_plan_name,
       unit_price: sp.price !== null ? parseFloat(sp.price) : null,
       unit_type: sp.unit,
@@ -634,6 +671,8 @@ module.exports = {
 
     // 构建更新字段
     const updateFields = {};
+    // 记录最新 shape，用于重新计算金额时选择公式
+    let latestShape = null;
 
     // 空间类型名称转ID
     if (updates.spaceType !== undefined) {
@@ -642,6 +681,8 @@ module.exports = {
         throw new BusinessError(3007, `空间类型不存在: ${updates.spaceType}`);
       }
       updateFields.space_type_id = spaceTypeRecord.id;
+      // 记录新 shape 用于后续金额重算
+      latestShape = spaceTypeRecord.shape || 'rectangle';
     }
 
     // 施工方案名称转ID
@@ -661,6 +702,25 @@ module.exports = {
     // 宽度（统一存储厘米，与创建工程时保持一致，不再转换为米）
     if (updates.width !== undefined) {
       updateFields.width = updates.width;
+    }
+
+    // 高度（厘米，仅梯形等需要三维参数的形状使用）
+    // 空字符串/null/非梯形形状都置为 null，避免无意义数据残留
+    if (updates.height !== undefined) {
+      const heightVal = updates.height === '' || updates.height === null ? null : updates.height;
+      updateFields.height = heightVal;
+    }
+
+    // 实测数量：空字符串/null 表示清除实测值，回退到按长宽计算
+    if (updates.measuredQuantity !== undefined) {
+      updateFields.measuredQuantity = updates.measuredQuantity === '' || updates.measuredQuantity === null
+        ? null
+        : updates.measuredQuantity;
+    }
+
+    // 实测备注：空字符串转为 null
+    if (updates.measuredNote !== undefined) {
+      updateFields.measuredNote = updates.measuredNote === '' ? null : updates.measuredNote;
     }
 
     // 备注
@@ -684,15 +744,25 @@ module.exports = {
       // 数据库存储单位为厘米，calculation 服务接收厘米，无需单位转换
       const lengthCm = parseFloat(updatedSubproject.length) || 0;
       const widthCm = parseFloat(updatedSubproject.width) || 0;
+      const heightCm = parseFloat(updatedSubproject.height) || 0;
       const unit = updatedSubproject.unit || 'area';
       const unitPrice = parseFloat(updatedSubproject.price) || 0;
+      // shape 优先使用本次切换空间类型时记录的值，否则取数据库中现有的 shape
+      const shape = latestShape || updatedSubproject.space_type_shape || 'rectangle';
+      // 实测数量：若存在则覆盖按长宽计算的 quantity（异形空间场景）
+      const measuredQuantity = updatedSubproject.measured_quantity !== null && updatedSubproject.measured_quantity !== undefined
+        ? parseFloat(updatedSubproject.measured_quantity)
+        : null;
 
-      // 调用 calculation 服务计算新的数量和金额
+      // 调用 calculation 服务计算新的数量和金额（传入 measuredQuantity 时优先使用实测值）
       const { quantity, amount } = calculation.calculateSubprojectAmount(
         unit,
         lengthCm,
         widthCm,
-        unitPrice
+        unitPrice,
+        measuredQuantity,
+        shape,
+        heightCm
       );
 
       // 更新子项目的数量和金额
@@ -702,8 +772,11 @@ module.exports = {
         subprojectId,
         lengthCm,
         widthCm,
+        heightCm,
         unit,
         unitPrice,
+        shape,
+        measuredQuantity,
         quantity,
         amount,
       });

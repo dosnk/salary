@@ -379,12 +379,29 @@ fun DashboardScreen(
                             )
                         }
 
-                        // 长度cm（独立一行）
+                        // ===== 参数输入区：按空间形状动态渲染 =====
+                        // 形状与参数语义对照：
+                        // - rectangle：长(length) + 宽(width)
+                        // - right_triangle：底(length) + 高(width)
+                        // - trapezoid：上底(length) + 下底(width) + 高(height)
+                        // - circle：直径(length)
+                        // 同时考虑施工方案 unit=length 时禁用宽度输入（与历史逻辑保持一致）
+                        val currentShape = viewModel.currentSpaceShape()
+                        val isLengthOnlyUnit = viewModel.currentSchemeUnit() == "length"
+
+                        // 主参数标签（length）随形状变化，避免用户误填
+                        val primaryLabel = when (currentShape) {
+                            "right_triangle" -> "底(cm)"
+                            "trapezoid" -> "上底(cm)"
+                            "circle" -> "直径(cm)"
+                            "rectangle" -> "长度(cm)"
+                            else -> "长度(cm)"
+                        }
                         OutlinedTextField(
                             value = uiState.lengthCm,
                             onValueChange = { viewModel.updateLength(it) },
-                            label = { Text("长度(cm)") },
-                            placeholder = { Text("请输入长度") },
+                            label = { Text(primaryLabel) },
+                            placeholder = { Text("请输入$primaryLabel") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.fillMaxWidth(),
@@ -395,22 +412,81 @@ fun DashboardScreen(
                             shape = RoundedCornerShape(8.dp)
                         )
 
-                        // 宽度cm（独立一行）
-                        val isLengthOnly = viewModel.currentSchemeUnit() == "length"
+                        // 次参数（width）：圆形不显示（仅用直径）；其他形状显示
+                        // unit=length 时禁用（保留历史逻辑：长度计价不使用宽度）
+                        val showWidthField = currentShape != "circle"
+                        if (showWidthField) {
+                            val secondaryLabel = when (currentShape) {
+                                "right_triangle" -> "高(cm)"
+                                "trapezoid" -> "下底(cm)"
+                                "rectangle" -> "宽度(cm)"
+                                else -> "宽度(cm)"
+                            }
+                            OutlinedTextField(
+                                value = uiState.widthCm,
+                                onValueChange = { viewModel.updateWidth(it) },
+                                label = { Text(secondaryLabel) },
+                                placeholder = { Text("请输入$secondaryLabel") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !isLengthOnlyUnit,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = AppColors.Green400,
+                                    focusedLabelColor = AppColors.Green400,
+                                    disabledBorderColor = AppColors.TextPlaceholder,
+                                    disabledTextColor = AppColors.TextTertiary
+                                ),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        }
+
+                        // 高度（height）：仅梯形显示，其他形状不渲染
+                        if (currentShape == "trapezoid") {
+                            OutlinedTextField(
+                                value = uiState.heightCm,
+                                onValueChange = { viewModel.updateHeight(it) },
+                                label = { Text("高(cm)") },
+                                placeholder = { Text("请输入梯形的高") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = AppColors.Green400,
+                                    focusedLabelColor = AppColors.Green400
+                                ),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        }
+
+                        // 实测数量（异形空间现场实测值，可选）
+                        // 填入后覆盖按长宽计算的数量，适用于L形/多边形/圆形等非矩形空间
                         OutlinedTextField(
-                            value = uiState.widthCm,
-                            onValueChange = { viewModel.updateWidth(it) },
-                            label = { Text("宽度(cm)") },
-                            placeholder = { Text("请输入宽度") },
+                            value = uiState.measuredQuantity,
+                            onValueChange = { viewModel.updateMeasuredQuantity(it) },
+                            label = { Text("实测数量（可选，覆盖计算值）") },
+                            placeholder = { Text("异形空间填实测值") },
                             singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.fillMaxWidth(),
-                            enabled = !isLengthOnly,
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = AppColors.Green400,
-                                focusedLabelColor = AppColors.Green400,
-                                disabledBorderColor = AppColors.TextPlaceholder,
-                                disabledTextColor = AppColors.TextTertiary
+                                focusedLabelColor = AppColors.Green400
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+
+                        // 实测备注（记录实测方式或现场说明，可选）
+                        OutlinedTextField(
+                            value = uiState.measuredNote,
+                            onValueChange = { viewModel.updateMeasuredNote(it) },
+                            label = { Text("实测备注（可选）") },
+                            placeholder = { Text("如：L形客厅周长实测") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = AppColors.Green400,
+                                focusedLabelColor = AppColors.Green400
                             ),
                             shape = RoundedCornerShape(8.dp)
                         )

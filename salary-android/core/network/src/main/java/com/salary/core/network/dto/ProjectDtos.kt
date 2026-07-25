@@ -75,17 +75,28 @@ data class SubprojectDto(
     val id: Int,
     @SerialName("space_type_name")
     val spaceTypeName: String,
+    /** 空间形状（rectangle/right_triangle/trapezoid/circle，决定计算公式） */
+    @SerialName("space_type_shape")
+    val spaceTypeShape: String? = null,
     @SerialName("construction_plan_name")
     val constructionPlanName: String,
     val length: Double? = null,
     val width: Double? = null,
+    /** 高度（厘米，仅梯形等需要三维参数的形状使用，其他形状为 null） */
+    val height: Double? = null,
     val quantity: Double? = null,
     val amount: Double? = null,
     @SerialName("salary_distribution")
     val salaryDistribution: String? = null,
     val status: String? = null,
     /** 子项目备注（后端 SELECT sp.* 返回，null表示无备注） */
-    val remark: String? = null
+    val remark: String? = null,
+    /** 实测数量（异形空间现场实测值，非null时覆盖按长宽计算的quantity） */
+    @SerialName("measured_quantity")
+    val measuredQuantity: Double? = null,
+    /** 实测备注（记录实测方式或现场说明） */
+    @SerialName("measured_note")
+    val measuredNote: String? = null
 )
 
 /**
@@ -173,7 +184,15 @@ data class CreateProjectRequest(
     val remark: String? = null,
     /** 按工日分配模式下的工日列表（可选） */
     @SerialName("workerWorkDays")
-    val workerWorkDays: List<WorkerWorkdayItem>? = null
+    val workerWorkDays: List<WorkerWorkdayItem>? = null,
+    /** 实测数量（异形空间现场实测值，非null时后端覆盖按长宽计算的quantity） */
+    @SerialName("measuredQuantity")
+    val measuredQuantity: Double? = null,
+    /** 实测备注（记录实测方式或现场说明） */
+    @SerialName("measuredNote")
+    val measuredNote: String? = null,
+    /** 高度（厘米，仅梯形等需要三维参数的形状使用，可选） */
+    val height: Double? = null
 )
 
 /**

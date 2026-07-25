@@ -417,7 +417,7 @@ fun ProjectDetailContent(
             subproject = sub,
             saving = savingSubproject,
             onDismiss = { editingSubproject = null },
-            onConfirm = { lengthMeter, widthMeter, remark ->
+            onConfirm = { lengthMeter, widthMeter, heightMeter, remark, measuredQty, measuredNt ->
                 // 标记进入编辑保存流程，阻止外层LaunchedEffect消费本次消息
                 onEditingSaveChange(true)
                 viewModel.updateSubproject(
@@ -425,7 +425,10 @@ fun ProjectDetailContent(
                     subprojectId = sub.id,
                     lengthMeter = lengthMeter,
                     widthMeter = widthMeter,
-                    remark = remark
+                    heightMeter = heightMeter,
+                    remark = remark,
+                    measuredQuantity = measuredQty,
+                    measuredNote = measuredNt
                 )
                 // 不在此处关闭弹窗，等待保存成功后由LaunchedEffect自动关闭
             }
@@ -1125,15 +1128,30 @@ private fun RowScope.SubprojectCell(
 
 /**
  * 子项目编辑弹窗 - 对齐Vue前端编辑弹窗设计
- * 包含：空间类型、施工方案、长宽、单价(只读)、计算预览、备注
- * 注意：弹窗内长度/宽度以米为单位展示和编辑，保存时由ViewModel转换为厘米
+ * 包含：空间类型、施工方案、按 shape 动态渲染的参数组、实测数量、实测备注、备注
+ *
+ * 形状与参数语义对照：
+ * - rectangle：长(length) + 宽(width)
+ * - right_triangle：底(length) + 高(width)
+ * - trapezoid：上底(length) + 下底(width) + 高(height)
+ * - circle：直径(length)
+ *
+ * 注意：弹窗内长度/宽度/高度以米为单位展示和编辑，保存时由ViewModel转换为厘米
+ * 实测数量用于异形空间（L形/多边形/圆形等），填入后覆盖按长宽计算的数量
  */
 @Composable
 fun SubprojectEditDialog(
     subproject: SubprojectUiModel,
     saving: Boolean,
     onDismiss: () -> Unit,
-    onConfirm: (lengthMeter: Double, widthMeter: Double, remark: String) -> Unit
+    onConfirm: (
+        lengthMeter: Double,
+        widthMeter: Double,
+        heightMeter: Double?,
+        remark: String,
+        measuredQuantity: Double?,
+        measuredNote: String
+    ) -> Unit
 ) {
     // 表单状态（数据库存厘米，弹窗显示米，需除以100）
     // 注意：remember 必须传入 subproject.id 和 subproject.remark 作为 key，
@@ -1143,12 +1161,36 @@ fun SubprojectEditDialog(
     var constructionScheme by remember(subproject.id) { mutableStateOf(subproject.constructionPlanName) }
     var length by remember(subproject.id) { mutableStateOf(formatNumber(subproject.length / 100.0)) }
     var width by remember(subproject.id) { mutableStateOf(formatNumber(subproject.width / 100.0)) }
+    // 高度（米）：仅梯形等三维参数形状使用，从 subproject.height（米）初始化
+    var height by remember(subproject.id, subproject.height) {
+        mutableStateOf(subproject.height?.let { formatNumber(it) } ?: "")
+    }
     var remark by remember(subproject.id, subproject.remark) { mutableStateOf(subproject.remark ?: "") }
+    // 实测数量与实测备注：异形空间场景使用，空表示按长宽计算
+    var measuredQuantity by remember(subproject.id, subproject.measuredQuantity) {
+        mutableStateOf(subproject.measuredQuantity?.let { formatNumber(it) } ?: "")
+    }
+    var measuredNote by remember(subproject.id, subproject.measuredNote) {
+        mutableStateOf(subproject.measuredNote ?: "")
+    }
 
-    // 计算面积（单位：米）
+    // 当前空间形状（决定输入字段渲染）
+    val shape = subproject.spaceTypeShape
+
+    // 计算预览面积（单位：平方米），按 shape 选择公式
     val lengthValue = length.toDoubleOrNull() ?: 0.0
     val widthValue = width.toDoubleOrNull() ?: 0.0
-    val area = lengthValue * widthValue
+    val heightValue = height.toDoubleOrNull() ?: 0.0
+    val previewArea = when (shape) {
+        "right_triangle" -> 0.5 * lengthValue * widthValue
+        "trapezoid" -> 0.5 * (lengthValue + widthValue) * heightValue
+        "circle" -> Math.PI * (lengthValue / 2) * (lengthValue / 2)
+        "rectangle" -> lengthValue * widthValue
+        else -> lengthValue * widthValue
+    }
+    // 实测数量解析
+    val measuredValue = measuredQuantity.toDoubleOrNull()
+    val hasMeasured = measuredValue != null && measuredValue > 0
 
     // 使用 Dialog + usePlatformDefaultWidth=false，宽度自适应屏幕（窄屏不被截断）
     Dialog(
@@ -1198,23 +1240,59 @@ fun SubprojectEditDialog(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
-                // 长度（米）
+                // 主参数（length）标签随形状变化
+                val primaryLabel = when (shape) {
+                    "right_triangle" -> "底(米)"
+                    "trapezoid" -> "上底(米)"
+                    "circle" -> "直径(米)"
+                    "rectangle" -> "长度(米)"
+                    else -> "长度(米)"
+                }
                 OutlinedTextField(
                     value = length,
                     onValueChange = { length = it },
-                    label = { Text("长度(米)") },
+                    label = { Text(primaryLabel) },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    shape = RoundedCornerShape(8.dp)
                 )
-                // 宽度（米）
-                OutlinedTextField(
-                    value = width,
-                    onValueChange = { width = it },
-                    label = { Text("宽度(米)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                // 计算预览
+                // 次参数（width）：圆形不显示
+                if (shape != "circle") {
+                    val secondaryLabel = when (shape) {
+                        "right_triangle" -> "高(米)"
+                        "trapezoid" -> "下底(米)"
+                        "rectangle" -> "宽度(米)"
+                        else -> "宽度(米)"
+                    }
+                    OutlinedTextField(
+                        value = width,
+                        onValueChange = { width = it },
+                        label = { Text(secondaryLabel) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
+                // 高度（height）：仅梯形显示
+                if (shape == "trapezoid") {
+                    OutlinedTextField(
+                        value = height,
+                        onValueChange = { input ->
+                            // 只允许数字与小数点
+                            if (input.isEmpty() || input.matches(Regex("^\\d*(\\.\\d*)?$"))) {
+                                height = input
+                            }
+                        },
+                        label = { Text("高(米)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
+                // 计算预览：有实测值时显示实测数量，否则显示按 shape 计算的面积
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1223,12 +1301,40 @@ fun SubprojectEditDialog(
                         .padding(10.dp)
                 ) {
                     Text(
-                        "${formatNumber(area)} m²",
+                        if (hasMeasured) "实测 ${formatNumber(measuredValue!!)}（覆盖计算值）"
+                        else "${formatNumber(previewArea)} m²",
                         fontSize = 13.sp,
                         color = AppColors.Green400,
                         fontWeight = FontWeight.Medium
                     )
                 }
+                // 实测数量（异形空间现场实测值，可选）
+                // 填入后覆盖按长宽计算的数量，适用于L形/多边形/圆形等非矩形空间
+                OutlinedTextField(
+                    value = measuredQuantity,
+                    onValueChange = { input ->
+                        // 只允许数字与小数点
+                        if (input.isEmpty() || input.matches(Regex("^\\d*(\\.\\d*)?$"))) {
+                            measuredQuantity = input
+                        }
+                    },
+                    label = { Text("实测数量（可选，覆盖计算值）") },
+                    placeholder = { Text("异形空间填实测值") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                )
+                // 实测备注（记录实测方式或现场说明，可选）
+                OutlinedTextField(
+                    value = measuredNote,
+                    onValueChange = { measuredNote = it },
+                    label = { Text("实测备注（可选）") },
+                    placeholder = { Text("如：L形客厅周长实测") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                )
                 // 备注（自适应高度，最多200dp避免占用过多屏幕）
                 // 样式与编辑工程弹窗的"工程备注"保持一致：label在框内 + placeholder + 自适应高度
                 OutlinedTextField(
@@ -1258,10 +1364,31 @@ fun SubprojectEditDialog(
                             // 原因：kotlinx.serialization 默认 encodeDefaults=false，
                             // null 字段不会被序列化到 JSON，导致后端 updates.remark === undefined 不更新备注
                             // 传空字符串确保 JSON 中包含 remark 字段，后端将空字符串转为 null 存储
-                            onConfirm(lengthValue, widthValue, remark.trim().ifBlank { "" })
+                            // 高度：仅梯形传值，其他形状传 null 让后端清除
+                            val heightToSend = if (shape == "trapezoid") {
+                                heightValue.takeIf { it > 0 }
+                            } else null
+                            onConfirm(
+                                lengthValue,
+                                widthValue,
+                                heightToSend,
+                                remark.trim().ifBlank { "" },
+                                // 实测数量：空或非正数时传 null 表示清除实测回退到按长宽计算
+                                measuredValue?.takeIf { it > 0 },
+                                measuredNote.trim()
+                            )
                         },
-                        // 长度和宽度都必须大于0（面积型方案需要两个维度都有有效值）
-                        enabled = !saving && lengthValue > 0 && widthValue > 0,
+                        // 启用条件：有实测值时长度/宽度/高度可为0；否则按 shape 校验必填字段
+                        enabled = !saving && run {
+                            if (hasMeasured) true
+                            else when (shape) {
+                                "circle" -> lengthValue > 0
+                                "trapezoid" -> lengthValue > 0 && widthValue > 0 && heightValue > 0
+                                "right_triangle" -> lengthValue > 0 && widthValue > 0
+                                "rectangle" -> lengthValue > 0 && widthValue > 0
+                                else -> lengthValue > 0 && widthValue > 0
+                            }
+                        },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = AppColors.Green400,
                             contentColor = Color.White

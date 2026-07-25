@@ -3,6 +3,7 @@ package com.salary.manager.feature.profile
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -35,7 +36,7 @@ fun DictionaryScreen(
     spaceTypes: List<DictionaryItemDto> = emptyList(),
     constructionPlans: List<DictionaryItemDto> = emptyList(),
     wageDistributionTypes: List<DictionaryItemDto> = emptyList(),
-    onAddSpaceType: (name: String, description: String?, callback: (String?) -> Unit) -> Unit = { _, _, callback -> callback(null) },
+    onAddSpaceType: (name: String, description: String?, shape: String?, callback: (String?) -> Unit) -> Unit = { _, _, _, callback -> callback(null) },
     onDeleteSpaceType: (id: Int, callback: (String?) -> Unit) -> Unit = { _, callback -> callback(null) },
     // 施工方案需要单位与单价，签名与空间类型不同
     onAddConstructionPlan: (name: String, unit: String, price: Double, callback: (String?) -> Unit) -> Unit = { _, _, _, callback -> callback(null) },
@@ -78,8 +79,7 @@ fun DictionaryScreen(
 
             // 内容区域
             when (selectedTab) {
-                0 -> DictionaryListSection(
-                    title = "空间类型",
+                0 -> SpaceTypeSection(
                     items = spaceTypes,
                     onAdd = onAddSpaceType,
                     onDelete = onDeleteSpaceType
@@ -97,6 +97,221 @@ fun DictionaryScreen(
                     onAdd = { _, _, callback -> callback("工资分配类型暂不支持新增") },
                     onDelete = { _, callback -> callback("工资分配类型暂不支持删除") }
                 )
+            }
+        }
+    }
+}
+
+/**
+ * 空间类型列表区域
+ *
+ * 与通用字典列表区别：
+ * 1) 列表项需展示 shape（空间形状）标签；
+ * 2) 新增弹窗需选择空间形状，且无需 description 字段。
+ */
+@Composable
+private fun SpaceTypeSection(
+    items: List<DictionaryItemDto>,
+    onAdd: (name: String, description: String?, shape: String?, callback: (String?) -> Unit) -> Unit,
+    onDelete: (id: Int, callback: (String?) -> Unit) -> Unit
+) {
+    var showAddDialog by remember { mutableStateOf(false) }
+    var errorDialog by remember { mutableStateOf<String?>(null) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("空间类型", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AppColors.TextPrimary)
+            TextButton(onClick = { showAddDialog = true }) {
+                Text("+ 新增", fontSize = 14.sp, color = AppColors.Green400, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        ) {
+            if (items.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("暂无数据", fontSize = 14.sp, color = AppColors.TextTertiary)
+                }
+            } else {
+                LazyColumn {
+                    items(items, key = { it.id }) { item ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    item.name,
+                                    fontSize = 15.sp,
+                                    color = AppColors.TextPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                // 展示空间形状标签，便于管理员核对计算规则
+                                val shapeLabel = when (item.shape) {
+                                    "rectangle" -> "矩形"
+                                    "right_triangle" -> "直角三角形"
+                                    "trapezoid" -> "梯形"
+                                    "circle" -> "圆形"
+                                    else -> "矩形"
+                                }
+                                Text(
+                                    "形状：$shapeLabel",
+                                    fontSize = 12.sp,
+                                    color = AppColors.TextTertiary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            TextButton(onClick = {
+                                onDelete(item.id) { error ->
+                                    if (error != null) errorDialog = error
+                                }
+                            }) {
+                                Text("删除", fontSize = 13.sp, color = AppColors.Error)
+                            }
+                        }
+                        if (item != items.last()) {
+                            HorizontalDivider(color = AppColors.SurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showAddDialog) {
+        AddSpaceTypeDialog(
+            onDismiss = { showAddDialog = false },
+            onConfirm = { name, shape ->
+                onAdd(name, null, shape) { error ->
+                    if (error != null) {
+                        showAddDialog = false
+                        errorDialog = error
+                    } else {
+                        showAddDialog = false
+                    }
+                }
+            }
+        )
+    }
+
+    val err = errorDialog
+    if (err != null) {
+        DictionaryErrorDialog(
+            message = err,
+            onDismiss = { errorDialog = null }
+        )
+    }
+}
+
+/**
+ * 新增空间类型弹窗
+ *
+ * 字段：名称、空间形状（rectangle/right_triangle/trapezoid/circle）。
+ * 形状决定录入表单的参数组与计算公式。
+ */
+@Composable
+private fun AddSpaceTypeDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (name: String, shape: String) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    // 默认矩形，与后端 DEFAULT 'rectangle' 保持一致
+    var selectedShape by remember { mutableStateOf("rectangle") }
+
+    val shapeOptions = listOf(
+        "rectangle" to "矩形（长×宽）",
+        "right_triangle" to "直角三角形（底×高/2）",
+        "trapezoid" to "梯形（(上底+下底)×高/2）",
+        "circle" to "圆形（π×r²）"
+    )
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(0.92f),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    "新增空间类型",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = AppColors.TextPrimary
+                )
+                OutlinedTextField(
+                    value = name, onValueChange = { name = it },
+                    label = { Text("名称", fontSize = 13.sp) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    singleLine = true
+                )
+                Text(
+                    "空间形状",
+                    fontSize = 13.sp,
+                    color = AppColors.TextSecondary
+                )
+                shapeOptions.forEach { (code, label) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedShape = code }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedShape == code,
+                            onClick = { selectedShape = code },
+                            colors = RadioButtonDefaults.colors(selectedColor = AppColors.Green400)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(label, fontSize = 14.sp, color = AppColors.TextPrimary)
+                    }
+                }
+                // 操作按钮右对齐
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) { Text("取消") }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    TextButton(onClick = {
+                        if (name.isBlank()) return@TextButton
+                        onConfirm(name.trim(), selectedShape)
+                    }) {
+                        Text("确定", color = AppColors.Green400, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
         }
     }

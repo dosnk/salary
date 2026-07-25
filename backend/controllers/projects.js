@@ -10,7 +10,7 @@ const logger = require('../config/logger');
  * 从请求体提取参数，调用 projectService.createProject 处理业务逻辑
  */
 const createProject = async (ctx) => {
-  const { name, spaceType, constructionScheme, length, width, salaryDistribution, constructors, remark, workerWorkDays } = ctx.request.body;
+  const { name, spaceType, constructionScheme, length, width, salaryDistribution, constructors, remark, workerWorkDays, measuredQuantity, measuredNote, height } = ctx.request.body;
   const userId = ctx.state.user.id;
   const userRole = ctx.state.user.role;
 
@@ -27,6 +27,11 @@ const createProject = async (ctx) => {
       workerWorkDays,
       userId,
       userRole,
+      // 实测数量与备注（异形空间现场实测值，可选）
+      measuredQuantity,
+      measuredNote,
+      // 高度（厘米，仅梯形等需要三维参数的形状使用，可选）
+      height,
     });
     ctx.success(result);
   } catch (error) {
@@ -188,7 +193,7 @@ const getProjectHistory = async (ctx) => {
  */
 const updateSubproject = async (ctx) => {
   const { id, subprojectId } = ctx.params;
-  const { spaceType, constructionScheme, length, width, remark } = ctx.request.body;
+  const { spaceType, constructionScheme, length, width, remark, measuredQuantity, measuredNote, height } = ctx.request.body;
   const userId = ctx.state.user.id;
 
   try {
@@ -198,6 +203,11 @@ const updateSubproject = async (ctx) => {
       length,
       width,
       remark,
+      // 实测数量与备注（异形空间现场实测值，可选；空字符串/null 表示清除实测回退到按长宽计算）
+      measuredQuantity,
+      measuredNote,
+      // 高度（厘米，仅梯形等需要三维参数的形状使用，可选；空字符串/null 表示清除）
+      height,
     }, userId);
     ctx.success(result);
   } catch (error) {
@@ -384,7 +394,19 @@ const createProjectSchema = Joi.object({
   workerWorkDays: Joi.array().items(Joi.object({
     userId: Joi.number().integer().positive().required(),
     workdays: Joi.number().min(0).required()
-  })).optional()
+  })).optional(),
+  // 实测数量（异形空间现场实测值，提供时覆盖按长宽计算的 quantity；可选）
+  measuredQuantity: Joi.number().positive().allow(null).optional().messages({
+    'number.positive': '实测数量必须大于0'
+  }),
+  // 实测备注（记录实测方式或现场说明，可选）
+  measuredNote: Joi.string().max(200).allow('', null).optional().messages({
+    'string.max': '实测备注不能超过200个文字'
+  }),
+  // 高度（厘米，仅梯形等需要三维参数的形状使用，可选）
+  height: Joi.number().positive().allow(null).optional().messages({
+    'number.positive': '高度必须大于0'
+  })
 });
 
 const getProjectsSchema = Joi.object({
@@ -470,6 +492,18 @@ const updateSubprojectSchema = Joi.object({
   }),
   remark: Joi.string().max(500).allow('').messages({
     'string.max': '备注不能超过500个文字'
+  }),
+  // 实测数量（异形空间现场实测值，空字符串/null 表示清除实测回退到按长宽计算）
+  measuredQuantity: Joi.number().positive().allow(null, '').optional().messages({
+    'number.positive': '实测数量必须大于0'
+  }),
+  // 实测备注
+  measuredNote: Joi.string().max(200).allow('', null).optional().messages({
+    'string.max': '实测备注不能超过200个文字'
+  }),
+  // 高度（厘米，仅梯形等需要三维参数的形状使用，空字符串/null 表示清除）
+  height: Joi.number().positive().allow(null, '').optional().messages({
+    'number.positive': '高度必须大于0'
   })
 }).min(3).messages({
   'object.min': '至少需要提供一个字段进行更新'

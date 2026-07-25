@@ -11,6 +11,7 @@ import com.salary.core.network.dto.CreateProjectRequest
 import com.salary.core.network.dto.CreateProjectResponse
 import com.salary.core.network.dto.UpdateProjectRequest
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 import retrofit2.http.*
 
 /**
@@ -85,8 +86,10 @@ interface ProjectApi {
 
 /**
  * 更新子项目请求
- * 后端期望字段：spaceType, constructionScheme, length, width, remark
- * 注意：length/width 单位为厘米（后端统一存储厘米）
+ * 后端期望字段：spaceType, constructionScheme, length, width, height, remark, measuredQuantity, measuredNote
+ * 注意：length/width/height 单位为厘米（后端统一存储厘米）
+ * measuredQuantity 为空字符串/null 时表示清除实测值，回退到按长宽计算
+ * height 为 null 时表示清除高度（梯形以外的形状不使用 height）
  */
 @Serializable
 data class UpdateSubprojectRequest(
@@ -94,5 +97,13 @@ data class UpdateSubprojectRequest(
     val constructionScheme: String? = null,
     val length: Double? = null,
     val width: Double? = null,
-    val remark: String? = null
+    /** 高度（厘米，仅梯形等需要三维参数的形状使用，null时后端清除高度） */
+    val height: Double? = null,
+    val remark: String? = null,
+    /** 实测数量（异形空间现场实测值，null时后端清除实测回退到按长宽计算） */
+    @SerialName("measuredQuantity")
+    val measuredQuantity: Double? = null,
+    /** 实测备注 */
+    @SerialName("measuredNote")
+    val measuredNote: String? = null
 )
