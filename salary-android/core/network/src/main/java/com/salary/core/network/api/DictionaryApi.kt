@@ -38,13 +38,13 @@ interface DictionaryApi {
     @GET("v1/dictionary/construction-plans")
     suspend fun getConstructionPlans(): ApiResponse<List<DictionaryItemDto>>
 
-    /** 创建施工方案（admin） */
+    /** 创建施工方案（admin），需提供名称/单位/单价 */
     @POST("v1/dictionary/construction-plans")
-    suspend fun createConstructionPlan(@Body body: CreateDictionaryRequest): ApiResponse<DictionaryItemDto>
+    suspend fun createConstructionPlan(@Body body: CreateConstructionPlanRequest): ApiResponse<DictionaryItemDto>
 
     /** 更新施工方案（admin） */
     @PUT("v1/dictionary/construction-plans/{id}")
-    suspend fun updateConstructionPlan(@Path("id") id: Int, @Body body: UpdateDictionaryRequest): ApiResponse<Unit>
+    suspend fun updateConstructionPlan(@Path("id") id: Int, @Body body: CreateConstructionPlanRequest): ApiResponse<Unit>
 
     /** 删除施工方案（admin） */
     @DELETE("v1/dictionary/construction-plans/{id}")
@@ -85,6 +85,19 @@ data class DictionaryItemDto(
 data class CreateDictionaryRequest(
     val name: String,
     val description: String? = null
+)
+
+/**
+ * 施工方案专属新增/修改请求体
+ *
+ * 后端强校验：name / unit / price 均为必填；数据库无 description 字段。
+ * unit 取值：area=面积、perimeter=周长、length=长度。
+ */
+@Serializable
+data class CreateConstructionPlanRequest(
+    val name: String,
+    val unit: String,
+    val price: Double
 )
 
 @Serializable

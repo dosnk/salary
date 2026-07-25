@@ -193,11 +193,13 @@ class ProfileApiViewModel @Inject constructor(
         }
     }
 
-    /** 添加施工方案 */
-    fun addConstructionPlan(name: String, description: String?, callback: (String?) -> Unit) {
+    /** 添加施工方案（需提供名称、单位、单价） */
+    fun addConstructionPlan(name: String, unit: String, price: Double, callback: (String?) -> Unit) {
         viewModelScope.launch {
             try {
-                val response = dictionaryApi.createConstructionPlan(CreateDictionaryRequest(name, description))
+                val response = dictionaryApi.createConstructionPlan(
+                    CreateConstructionPlanRequest(name = name, unit = unit, price = price)
+                )
                 if (response.code == 200) { loadDictionaries(); callback(null) }
                 else callback(NetworkErrorHandler.translateServerError(response.msg, "添加施工方案失败"))
             } catch (e: Exception) { callback(NetworkErrorHandler.translate(e, "添加施工方案失败")) }

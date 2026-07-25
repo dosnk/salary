@@ -18,6 +18,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
 import com.salary.core.design.theme.AppColors
 import com.salary.core.network.api.CreateUserRequest
@@ -43,6 +45,8 @@ fun UserManagementScreen(
     var resetTarget by remember { mutableStateOf<UserDto?>(null) }
     // 待删除的目标用户（null 表示未打开弹窗）
     var deleteTarget by remember { mutableStateOf<UserDto?>(null) }
+    // 因存在关联数据被后端拒绝删除时的提示（Pair<用户昵称, 后端返回的明细>）
+    var blockedInfo by remember { mutableStateOf<Pair<String, String>?>(null) }
     // 结果反馈用 Snackbar，重置成功后展示"已将 xx 的密码重置为默认密码"
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -162,7 +166,17 @@ fun UserManagementScreen(
             onConfirm = {
                 onDeleteUser(del.id) { error ->
                     if (error != null) {
-                        errorMessage = error
+                        // 后端返回错误：若是"存在关联业务数据"类拒绝，
+                        // 一级弹窗保持不动，只在其上层叠一个小一圈的二级弹窗，
+                        // 形成"提示叠在确认之上"的层级观感。
+                        if (isBlockedByRelations(error)) {
+                            errorMessage = null
+                            blockedInfo = del.nickname to error
+                            // 不关闭 deleteTarget，保留一级弹窗
+                        } else {
+                            // 其他错误（网络异常、权限、5001 等）保留原有顶部错误提示
+                            errorMessage = error
+                        }
                     } else {
                         deleteTarget = null
                         errorMessage = null
@@ -174,6 +188,16 @@ fun UserManagementScreen(
                     }
                 }
             }
+        )
+    }
+
+    // 关联数据阻拦提示弹窗：叠在一级 DeleteUserDialog 上方的小一圈弹窗
+    val blocked = blockedInfo
+    if (blocked != null) {
+        BlockedDeleteDialog(
+            nickname = blocked.first,
+            detail = blocked.second,
+            onDismiss = { blockedInfo = null }
         )
     }
 }
@@ -352,6 +376,93 @@ private fun AddUserDialog(
             TextButton(onClick = onDismiss) { Text("取消") }
         }
     )
+}
+
+/**
+ * 关联数据阻拦提示弹窗（二级弹窗）
+ *
+ * 使用自定义 Dialog + usePlatformDefaultWidth=false 实现更窄的宽度，
+ * 叠在一级 DeleteUserDialog 之上，形成层级观感：
+ * - 宽度：屏幕 72% 左右（一级 AlertDialog 默认约 88%），显得小一圈
+ * - 圆角略小（20dp vs 24dp），标题下移，视觉更"次级"
+ * - 二级仍保留半透明遮罩，一级弹窗透过遮罩隐约可见
+ */
+@Composable
+private fun BlockedDeleteDialog(
+    nickname: String,
+    detail: String,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        // 外层填满屏幕以承接遮罩点击关闭；内层 Surface 才是真正的弹窗内容
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 44.dp), // 比一级 AlertDialog(约 24dp) 更内收，视觉小一圈
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = Color.White,
+                shadowElevation = 8.dp
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        "无法删除",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = AppColors.Error
+                    )
+                    Text(
+                        "用户「$nickname」存在关联业务数据，已阻止删除。",
+                        fontSize = 14.sp,
+                        color = AppColors.TextPrimary,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        detail,
+                        fontSize = 12.sp,
+                        color = AppColors.TextSecondary
+                    )
+                    Text(
+                        "请先将相关工作转派给其他人员或清理相关数据后，再执行删除。",
+                        fontSize = 11.sp,
+                        color = AppColors.TextTertiary
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = onDismiss) {
+                            Text(
+                                "知道了",
+                                color = AppColors.Green400,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 判断后端返回的错误是否属于"因存在关联业务数据被拒绝删除"。
+ *
+ * 后端 controllers/users.js deleteUser 在检出关联数据时会调用
+ * ctx.fail(2011, `该用户存在关联业务数据，无法删除：...`)，
+ * NetworkErrorHandler.translateServerError 默认会透传自定义 msg，
+ * 因此这里通过关键字匹配识别；关键字与 error-codes.js 中 2011 默认文案保持一致。
+ */
+private fun isBlockedByRelations(errorMsg: String): Boolean {
+    return errorMsg.contains("关联业务数据") || errorMsg.contains("无法删除")
 }
 
 /**

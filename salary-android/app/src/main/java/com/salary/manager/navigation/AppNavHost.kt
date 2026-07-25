@@ -476,8 +476,8 @@ fun MainScaffold(
                                     onDeleteSpaceType = { id, callback ->
                                         profileApiViewModel.deleteSpaceType(id, callback)
                                     },
-                                    onAddConstructionPlan = { name, desc, callback ->
-                                        profileApiViewModel.addConstructionPlan(name, desc, callback)
+                                    onAddConstructionPlan = { name, unit, price, callback ->
+                                        profileApiViewModel.addConstructionPlan(name, unit, price, callback)
                                     },
                                     onDeleteConstructionPlan = { id, callback ->
                                         profileApiViewModel.deleteConstructionPlan(id, callback)
