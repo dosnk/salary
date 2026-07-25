@@ -227,8 +227,8 @@ module.exports.rules = {
     'any.only': '角色必须是admin、documenter或constructor'
   }),
   
-  status: Joi.string().valid('preparing', 'constructing', 'completed', 'canceled').required().messages({
-    'any.only': '状态必须是preparing、constructing、completed或canceled'
+  status: Joi.string().valid('preparing', 'constructing', 'completed', 'settled', 'canceled').required().messages({
+    'any.only': '状态必须是preparing、constructing、completed、settled或canceled'
   }),
   
   subprojectStatus: Joi.string().valid('pending', 'completed', 'canceled').required().messages({

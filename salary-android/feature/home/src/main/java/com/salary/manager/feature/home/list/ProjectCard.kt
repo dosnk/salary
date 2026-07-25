@@ -386,8 +386,10 @@ private fun ButtonSection(
                     Text("统计中", fontSize = 15.sp, fontWeight = FontWeight.Medium)
                 }
             }
-            project.status == "completed" && project.settlementStatus == "settled" -> {
-                // 已完工 + 已结算（灰色背景描边按钮，与统计中按钮区分）
+            project.status == "settled" || (project.status == "completed" && project.settlementStatus == "settled") -> {
+                // 已结算（灰色背景描边按钮，与统计中按钮区分）
+                // 新流程：confirmSettlement 后工程 status 自动变更为 settled
+                // 兼容旧数据：status 仍为 completed 但 settlementStatus=settled
                 OutlinedButton(
                     onClick = onSettledClick,
                     modifier = Modifier.weight(1f),

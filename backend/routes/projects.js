@@ -271,8 +271,8 @@ router.post('/', auth.authenticate, deduplicate({ duration: 5 }), dynamicCreateP
  *         name: status
  *         schema:
  *           type: string
- *           enum: ['preparing', 'constructing', 'completed', 'canceled']
- *           description: 状态筛选
+ *           enum: ['preparing', 'constructing', 'completed', 'settled', 'canceled']
+ *           description: 状态筛选（settled 表示已结算，由结算确认后自动设置）
  *           example: 'constructing'
  *       - in: query
  *         name: creatorNickname

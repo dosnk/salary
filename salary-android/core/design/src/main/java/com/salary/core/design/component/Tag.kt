@@ -40,6 +40,7 @@ fun ProjectStatusTag(status: String) {
         "preparing" -> "备料中" to AppColors.Warning
         "constructing" -> "施工中" to AppColors.Green400
         "completed" -> "已完工" to AppColors.Success
+        "settled" -> "已结算" to AppColors.Success
         "canceled" -> "已取消" to AppColors.TextTertiary
         else -> status to AppColors.TextSecondary
     }

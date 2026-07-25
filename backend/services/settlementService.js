@@ -1024,12 +1024,44 @@ module.exports = {
         [settlement.project_id || 0, `用户确认结算：${settlement.settlement_no}`, currentUserId]
       );
 
+      // 7. 自动将涉及的工程状态更新为"已结算"(settled)
+      // 业务规则：施工员确认结算完成后，工程状态从 completed 变更为 settled，
+      // 防止已结算工程再次进入结算选择列表，确保工程只能结算一次
+      // project_ids 字段为 JSONB 类型，存储该结算单涉及的所有工程ID
+      const settledProjectIdsResult = await client.query(
+        `SELECT DISTINCT (jsonb_array_elements_text(project_ids))::int AS project_id
+         FROM wage_settlements
+         WHERE id = $1`,
+        [settlementId]
+      );
+      const settledProjectIds = settledProjectIdsResult.rows.map(r => r.project_id);
+
+      if (settledProjectIds.length > 0) {
+        // 批量更新工程状态为 settled
+        await client.query(
+          `UPDATE projects SET status = 'settled', updated_at = CURRENT_TIMESTAMP
+           WHERE id = ANY($1) AND status = 'completed'`,
+          [settledProjectIds]
+        );
+
+        // 为每个工程添加状态变更历史记录
+        for (const pid of settledProjectIds) {
+          await client.query(
+            `INSERT INTO project_history (project_id, action, description, performed_by)
+             VALUES ($1, 'SETTLE_COMPLETE', $2, $3)`,
+            [pid, `工程已结算完成，状态自动变更为已结算`, currentUserId]
+          );
+        }
+
+        logger.info('工程状态已自动变更为已结算', { settlementId, settledProjectIds });
+      }
+
       await client.query('COMMIT');
 
-      // 7. 异步刷新物化视图（不等待完成，避免阻塞响应）
+      // 8. 异步刷新物化视图（不等待完成，避免阻塞响应）
       refreshMvAsync();
 
-      // 8. 创建结算历史快照（事务外执行，失败不影响主流程）
+      // 9. 创建结算历史快照（事务外执行，失败不影响主流程）
       try {
         await createSettlementSnapshot(settlementId, currentUserId);
       } catch (snapshotError) {
@@ -1037,7 +1069,7 @@ module.exports = {
         logger.warn('创建结算快照失败，不影响主流程', { settlementId, error: snapshotError.message });
       }
 
-      // 8. 清除缓存
+      // 10. 清除缓存
       await invalidateCache(currentUserId);
 
       logger.info('确认结算成功', { settlementId, currentUserId });

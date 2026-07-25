@@ -416,7 +416,7 @@ const getProjectsSchema = Joi.object({
   yearMonth: Joi.string().pattern(/^\d{4}-\d{2}(-\d{2})?$/),
   year: Joi.number().integer().min(2000).max(2100),
   keyword: Joi.string().max(100),
-  status: Joi.string().valid('preparing', 'constructing', 'completed', 'canceled'),
+  status: Joi.string().valid('preparing', 'constructing', 'completed', 'settled', 'canceled'),
   creatorNickname: Joi.string().max(50),
   workerNickname: Joi.string().max(50),
   startDate: Joi.date(),
@@ -439,7 +439,7 @@ const updateProjectSchema = Joi.object({
   remark: Joi.string().max(500).allow('').messages({
     'string.max': '工程备注不能超过500个文字'
   }),
-  status: Joi.string().valid('preparing', 'constructing', 'completed', 'canceled').messages({
+  status: Joi.string().valid('preparing', 'constructing', 'completed', 'settled', 'canceled').messages({
     'any.only': '工程状态无效'
   }),
   salaryDistribution: Joi.string().valid('average', 'work_days').messages({

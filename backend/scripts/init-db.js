@@ -1076,6 +1076,110 @@ const MIGRATIONS = [
       ALTER TABLE space_types DROP COLUMN IF EXISTS shape;
       ALTER TABLE subprojects DROP COLUMN IF EXISTS height;
     `
+  },
+  {
+    version: 'V2.5',
+    description: '工程状态增加 settled（已结算）：施工员确认结算后工程状态从 completed 自动变更为 settled，防止重复结算；同步重建物化视图识别新状态',
+    up: `
+      -- 重建物化视图 mv_project_user_settlement_status
+      -- 修改点：CASE WHEN 增加 p.status = 'settled' 分支，确保已结算工程状态正确识别
+      -- 注意：使用 DROP + CREATE 强制重建，避免 IF NOT EXISTS 导致陈旧定义保留
+      DROP MATERIALIZED VIEW IF EXISTS mv_project_user_settlement_status;
+
+      CREATE MATERIALIZED VIEW mv_project_user_settlement_status AS
+      -- 第一部分：施工人员的结算状态
+      SELECT
+        COALESCE(pus.id, ROW_NUMBER() OVER (ORDER BY p.id, u.id)) AS id,
+        p.id AS project_id,
+        u.id AS user_id,
+        COALESCE(
+          pus.settlement_status,
+          CASE
+            WHEN ws.id IS NOT NULL THEN 'settled'
+            WHEN p.status = 'settled' THEN 'settled'
+            WHEN p.status = 'completed' THEN 'settling'
+            WHEN EXISTS (
+              SELECT 1 FROM subprojects sp
+              WHERE sp.project_id = p.id
+              AND sp.status = 'completed'
+            ) THEN 'settling'
+            ELSE 'unsettled'
+          END
+        ) AS settlement_status,
+        COALESCE(pus.settlement_id, ws.id) AS settlement_id,
+        COALESCE(pus.settled_at, ws.settled_at) AS settled_at,
+        COALESCE(pus.created_at, CURRENT_TIMESTAMP) AS created_at,
+        COALESCE(pus.updated_at, CURRENT_TIMESTAMP) AS updated_at
+      FROM projects p
+      JOIN project_workers pw ON pw.project_id = p.id
+      JOIN users u ON u.id = pw.user_id
+      LEFT JOIN project_user_status pus ON pus.project_id = p.id AND pus.user_id = u.id
+      LEFT JOIN LATERAL (
+        SELECT id, settled_at
+        FROM wage_settlements
+        WHERE user_id = u.id
+          AND (project_id = p.id OR project_ids::jsonb @> to_jsonb(p.id))
+        ORDER BY settled_at DESC NULLS LAST, id DESC
+        LIMIT 1
+      ) ws ON true
+      WHERE u.role = 'constructor'
+      UNION
+      -- 第二部分：管理员和资料员可以查看所有工程
+      SELECT
+        COALESCE(pus.id, ROW_NUMBER() OVER (ORDER BY p.id, u.id) + 100000) AS id,
+        p.id AS project_id,
+        u.id AS user_id,
+        COALESCE(
+          pus.settlement_status,
+          CASE
+            WHEN ws.id IS NOT NULL THEN 'settled'
+            WHEN p.status = 'settled' THEN 'settled'
+            WHEN p.status = 'completed' THEN 'settling'
+            WHEN EXISTS (
+              SELECT 1 FROM subprojects sp
+              WHERE sp.project_id = p.id
+              AND sp.status = 'completed'
+            ) THEN 'settling'
+            ELSE 'unsettled'
+          END
+        ) AS settlement_status,
+        COALESCE(pus.settlement_id, ws.id) AS settlement_id,
+        COALESCE(pus.settled_at, ws.settled_at) AS settled_at,
+        COALESCE(pus.created_at, CURRENT_TIMESTAMP) AS created_at,
+        COALESCE(pus.updated_at, CURRENT_TIMESTAMP) AS updated_at
+      FROM projects p
+      CROSS JOIN users u
+      LEFT JOIN project_user_status pus ON pus.project_id = p.id AND pus.user_id = u.id
+      LEFT JOIN LATERAL (
+        SELECT id, settled_at
+        FROM wage_settlements
+        WHERE user_id = u.id
+          AND (project_id = p.id OR project_ids::jsonb @> to_jsonb(p.id))
+        ORDER BY settled_at DESC NULLS LAST, id DESC
+        LIMIT 1
+      ) ws ON true
+      WHERE u.role IN ('admin', 'documenter')
+        AND NOT EXISTS (
+          SELECT 1 FROM project_workers pw2
+          WHERE pw2.project_id = p.id AND pw2.user_id = u.id
+        )
+      WITH DATA;
+
+      -- 物化视图的唯一索引（REFRESH CONCURRENTLY 必须）
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_puss_id ON mv_project_user_settlement_status(id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_puss_project_user ON mv_project_user_settlement_status(project_id, user_id);
+      CREATE INDEX IF NOT EXISTS idx_mv_puss_user_status ON mv_project_user_settlement_status(user_id, settlement_status);
+      CREATE INDEX IF NOT EXISTS idx_mv_puss_project_status ON mv_project_user_settlement_status(project_id, settlement_status);
+
+      -- 兼容层：创建普通视图指向物化视图
+      CREATE OR REPLACE VIEW v_project_user_settlement_status AS
+        SELECT * FROM mv_project_user_settlement_status;
+    `,
+    down: `
+      DROP MATERIALIZED VIEW IF EXISTS mv_project_user_settlement_status;
+      DROP VIEW IF EXISTS v_project_user_settlement_status;
+    `,
+    tables: ['mv_project_user_settlement_status']
   }
 ];
 

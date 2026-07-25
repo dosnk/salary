@@ -1825,9 +1825,13 @@ fun EditProjectDialog(
         add("preparing" to "备料中")
         add("constructing" to "施工中")
         add("canceled" to "已取消")
-        // 仅当工程当前状态为已完工时才加入选项，用于显示选中态
+        // 仅当工程当前状态为已完工/已结算时才加入对应选项，用于显示选中态
+        // settled 状态由结算确认后自动设置，不可手动变更，仅作显示
         if (detail.status == "completed") {
             add("completed" to "已完工")
+        }
+        if (detail.status == "settled") {
+            add("settled" to "已结算")
         }
     }
     // 工资分配方式选项

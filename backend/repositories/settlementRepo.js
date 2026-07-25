@@ -713,11 +713,18 @@ module.exports = {
       JOIN space_types st ON sp.space_type_id = st.id
       JOIN construction_plans cp ON sp.construction_plan_id = cp.id
       WHERE sp.status = 'completed'
+        AND p.status NOT IN ('settled', 'canceled')
         AND sp.created_at >= $1::date
         AND sp.created_at <= $2::date
         AND sp.id NOT IN (
           SELECT DISTINCT wd.subproject_id
           FROM wage_distributions wd
+          WHERE wd.settlement_id IS NOT NULL
+        )
+        AND sp.project_id NOT IN (
+          SELECT DISTINCT sp2.project_id
+          FROM wage_distributions wd
+          JOIN subprojects sp2 ON wd.subproject_id = sp2.id
           WHERE wd.settlement_id IS NOT NULL
         )
     `;
