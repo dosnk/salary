@@ -607,7 +607,8 @@ const MIGRATIONS = [
       LEFT JOIN project_user_status pus ON pus.project_id = p.id AND pus.user_id = u.id
       WHERE u.role IN ('admin', 'documenter');
     `,
-    down: `DROP VIEW IF EXISTS v_project_user_settlement_status;`
+    down: `DROP VIEW IF EXISTS v_project_user_settlement_status;`,
+    tables: ['v_project_user_settlement_status']
   },
   {
     version: 'V1.5',
@@ -724,7 +725,8 @@ const MIGRATIONS = [
         AND (ws.project_id = p.id OR ws.project_ids::jsonb @> to_jsonb(p.id))
       WHERE u.role IN ('admin', 'documenter');
     `,
-    down: `DROP VIEW IF EXISTS v_project_user_settlement_status;`
+    down: `DROP VIEW IF EXISTS v_project_user_settlement_status;`,
+    tables: ['v_project_user_settlement_status']
   },
   {
     version: 'V1.7',
@@ -1048,7 +1050,8 @@ const MIGRATIONS = [
       ALTER TABLE subproject_transfers ALTER COLUMN from_user_id SET NOT NULL;
       ALTER TABLE subproject_transfers ALTER COLUMN to_user_id SET NOT NULL;
       ALTER TABLE subproject_transfers ALTER COLUMN transferred_by SET NOT NULL;
-    `
+    `,
+    tables: ['subprojects', 'project_history', 'files', 'wage_advances', 'subproject_transfers']
   },
   {
     version: 'V2.3',
@@ -1060,7 +1063,8 @@ const MIGRATIONS = [
     down: `
       ALTER TABLE subprojects DROP COLUMN IF EXISTS measured_quantity;
       ALTER TABLE subprojects DROP COLUMN IF EXISTS measured_note;
-    `
+    `,
+    tables: ['subprojects']
   },
   {
     version: 'V2.4',
@@ -1075,7 +1079,8 @@ const MIGRATIONS = [
     down: `
       ALTER TABLE space_types DROP COLUMN IF EXISTS shape;
       ALTER TABLE subprojects DROP COLUMN IF EXISTS height;
-    `
+    `,
+    tables: ['space_types', 'subprojects']
   },
   {
     version: 'V2.5',
@@ -1182,6 +1187,59 @@ const MIGRATIONS = [
       DROP VIEW IF EXISTS v_project_user_settlement_status;
     `,
     tables: ['mv_project_user_settlement_status']
+  },
+  {
+    version: 'V2.6',
+    description: 'messages 唯一索引改用 md5(content)：避免 content 超长时超出 btree 索引 2704 字节上限',
+    up: `
+      -- 背景：V1.2 创建的 idx_messages_unique 直接把 TEXT 类型的 content 参与唯一索引，
+      -- 当 content 超过约 2704 字节时会报错 "index row size exceeds btree version 4 maximum"。
+      -- 解决方案：用 md5(content) 代替 content 参与唯一约束，索引固定 32 字节。
+      -- 冲突语义保持不变：md5 一致视为同一消息（碰撞概率忽略不计）。
+      DROP INDEX IF EXISTS idx_messages_unique;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_unique
+        ON messages(user_id, title, md5(content), type, related_type, related_id);
+    `,
+    down: `
+      DROP INDEX IF EXISTS idx_messages_unique;
+      -- 回滚为原索引定义（如果历史数据 content 全部较短则可用；否则不建议回滚）
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_unique
+        ON messages(user_id, title, content, type, related_type, related_id);
+    `,
+    tables: []
+  },
+  {
+    version: 'V2.7',
+    description: 'AI 模块表时间字段统一升级为 TIMESTAMPTZ：避免跨时区服务器上与业务表时间戳不一致',
+    up: `
+      -- 背景：V1.7 创建的 material_categories / material_params / ai_chat_history / ai_knowledge_chunks
+      --      使用了 TIMESTAMP（无时区），而其他业务表都用 TIMESTAMPTZ（含时区）
+      --      跨时区展示时会出现 1~8 小时偏差。统一为 TIMESTAMPTZ。
+      -- 说明：PostgreSQL 会自动按 session 时区把已有值转换为 UTC 存储，历史数据无需手工回填。
+      ALTER TABLE material_categories ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at AT TIME ZONE 'Asia/Shanghai';
+      ALTER TABLE material_categories ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at AT TIME ZONE 'Asia/Shanghai';
+
+      ALTER TABLE material_params ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at AT TIME ZONE 'Asia/Shanghai';
+      ALTER TABLE material_params ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at AT TIME ZONE 'Asia/Shanghai';
+
+      -- ai_chat_history.created_at 已是 TIMESTAMPTZ，跳过
+      -- 注意：如果历史初始化过 TIMESTAMP，也顺带修正一次
+      ALTER TABLE ai_chat_history ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at AT TIME ZONE 'Asia/Shanghai';
+
+      ALTER TABLE ai_knowledge_chunks ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at AT TIME ZONE 'Asia/Shanghai';
+      ALTER TABLE ai_knowledge_chunks ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at AT TIME ZONE 'Asia/Shanghai';
+    `,
+    down: `
+      -- 回滚：改回 TIMESTAMP（无时区），使用 Asia/Shanghai 时区转换
+      ALTER TABLE material_categories ALTER COLUMN created_at TYPE TIMESTAMP USING created_at AT TIME ZONE 'Asia/Shanghai';
+      ALTER TABLE material_categories ALTER COLUMN updated_at TYPE TIMESTAMP USING updated_at AT TIME ZONE 'Asia/Shanghai';
+      ALTER TABLE material_params ALTER COLUMN created_at TYPE TIMESTAMP USING created_at AT TIME ZONE 'Asia/Shanghai';
+      ALTER TABLE material_params ALTER COLUMN updated_at TYPE TIMESTAMP USING updated_at AT TIME ZONE 'Asia/Shanghai';
+      ALTER TABLE ai_chat_history ALTER COLUMN created_at TYPE TIMESTAMP USING created_at AT TIME ZONE 'Asia/Shanghai';
+      ALTER TABLE ai_knowledge_chunks ALTER COLUMN created_at TYPE TIMESTAMP USING created_at AT TIME ZONE 'Asia/Shanghai';
+      ALTER TABLE ai_knowledge_chunks ALTER COLUMN updated_at TYPE TIMESTAMP USING updated_at AT TIME ZONE 'Asia/Shanghai';
+    `,
+    tables: []
   }
 ];
 
@@ -1203,25 +1261,37 @@ const isMigrationApplied = async (client, version) => {
 };
 
 /**
- * 校验迁移创建的关键表是否真实存在
- * 防止"版本记录存在但表不存在"的脏数据场景（如事务提交后数据库崩溃、手动误删表等）
+ * 校验迁移创建的关键对象是否真实存在
+ * 防止"版本记录存在但对象不存在"的脏数据场景（如事务提交后数据库崩溃、手动误删表/视图等）
+ *
+ * 支持的对象类型：
+ *  - 普通表 (pg_class.relkind = 'r')
+ *  - 物化视图 (pg_class.relkind = 'm')
+ *  - 普通视图 (pg_class.relkind = 'v')
+ *  - 分区表 (pg_class.relkind = 'p')
  *
  * @param {object} client - pg Client
- * @param {string[]} tables - 该迁移创建的表名数组
- * @returns {Promise<boolean>} true=表都存在，false=有表缺失
+ * @param {string[]} tables - 该迁移创建的对象名数组（可以是表、视图或物化视图）
+ * @returns {Promise<boolean>} true=对象都存在，false=有对象缺失
  */
 const verifyMigrationObjects = async (client, tables) => {
   if (!tables || tables.length === 0) {
     return true;
   }
+  // 使用 pg_class 统一查询，兼容普通表/物化视图/普通视图/分区表
   const result = await client.query(
-    `SELECT tablename FROM pg_tables WHERE tablename = ANY($1)`,
+    `SELECT c.relname AS name
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relkind IN ('r', 'm', 'v', 'p')
+        AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+        AND c.relname = ANY($1)`,
     [tables]
   );
-  const existingTables = result.rows.map(r => r.tablename);
-  const missingTables = tables.filter(t => !existingTables.includes(t));
-  if (missingTables.length > 0) {
-    log.warn(`发现缺失的表: ${missingTables.join(', ')}（版本记录存在但表不存在，将重新执行迁移）`);
+  const existingNames = result.rows.map(r => r.name);
+  const missing = tables.filter(t => !existingNames.includes(t));
+  if (missing.length > 0) {
+    log.warn(`发现缺失的对象: ${missing.join(', ')}（版本记录存在但对象不存在，将重新执行迁移）`);
     return false;
   }
   return true;
@@ -1246,6 +1316,10 @@ const recordMigration = async (client, version, description) => {
 };
 
 // ===================== 7. 执行增量迁移 =====================
+// PostgreSQL advisory lock 的全局唯一 ID，用于防止多实例并发执行迁移。
+// 数值随机选定，只要所有迁移进程使用同一个 ID 即可。
+const MIGRATION_ADVISORY_LOCK_ID = 20261234567;
+
 const runMigrations = async () => {
   // 先进行连接预测试
   const connectionOk = await testConnection();
@@ -1254,11 +1328,25 @@ const runMigrations = async () => {
   }
 
   let client;
+  let lockAcquired = false;
   try {
     client = await pool.connect();
     if (isProduction) {
       log.info('生产环境模式：SSL已启用');
     }
+
+    // 获取 PostgreSQL advisory lock，阻止并发迁移导致的唯一键冲突/物化视图重复重建
+    // 使用 pg_try_advisory_lock（非阻塞），若锁被占用直接退出让运维排查
+    const lockResult = await client.query(
+      'SELECT pg_try_advisory_lock($1) AS ok',
+      [MIGRATION_ADVISORY_LOCK_ID]
+    );
+    lockAcquired = lockResult.rows[0].ok;
+    if (!lockAcquired) {
+      log.error('检测到另一个迁移进程正在执行（advisory lock 已被占用），请等待其完成后再重试');
+      process.exit(1);
+    }
+    log.info('已获取迁移 advisory lock，开始执行迁移');
 
     log.info('开始执行增量数据库迁移...');
     log.info(`共 ${MIGRATIONS.length} 个迁移版本需要检查`);
@@ -1316,13 +1404,24 @@ const runMigrations = async () => {
     log.success(`数据库迁移完成！已应用: ${appliedCount}，已跳过: ${skippedCount}`);
 
     if (appliedCount > 0 && DEFAULT_USERS.length > 0) {
-      log.warn(`预置用户默认密码：${DEFAULT_PASSWORD}，请登录后及时修改！`);
+      // 密码脱敏：生产环境不打印明文，避免被日志采集系统落盘
+      const displayPwd = isProduction ? '****** (见 .env DEFAULT_PASSWORD)' : DEFAULT_PASSWORD;
+      log.warn(`预置用户默认密码：${displayPwd}，请登录后及时修改！`);
     }
 
   } catch (error) {
     log.error(`数据库迁移失败: ${error.message}`);
     throw error;
   } finally {
+    // 释放 advisory lock（若成功获取）
+    if (client && lockAcquired) {
+      try {
+        await client.query('SELECT pg_advisory_unlock($1)', [MIGRATION_ADVISORY_LOCK_ID]);
+        log.info('迁移 advisory lock 已释放');
+      } catch (err) {
+        log.warn(`释放 advisory lock 失败（连接关闭后会自动释放）: ${err.message}`);
+      }
+    }
     if (client) {
       try {
         client.release();
@@ -1365,10 +1464,12 @@ const insertDefaultUsers = async (client) => {
 
   // 重置密码模式
   if (RESET_PASSWORDS) {
+    // 密码脱敏：生产环境不在日志中打印明文密码
+    const displayPwd = isProduction ? '****** (见 .env DEFAULT_PASSWORD)' : DEFAULT_PASSWORD;
     if (FORCE_RESET_ALL) {
-      log.warn(`[强制重置模式] 将所有默认用户密码重置为: ${DEFAULT_PASSWORD}（包括已修改过的密码）`);
+      log.warn(`[强制重置模式] 将所有默认用户密码重置为: ${displayPwd}（包括已修改过的密码）`);
     } else {
-      log.warn(`[重置模式] 将未修改过密码的默认用户重置为: ${DEFAULT_PASSWORD}（已修改过密码的用户将被跳过）`);
+      log.warn(`[重置模式] 将未修改过密码的默认用户重置为: ${displayPwd}（已修改过密码的用户将被跳过）`);
     }
 
     for (const user of DEFAULT_USERS) {
@@ -1453,7 +1554,9 @@ const insertDefaultUsers = async (client) => {
         if (!isDefaultPassword) {
           // 密码不是 990066：可能是历史错误 hash 或用户已主动修改
           // 不自动重置（避免覆盖用户改过的密码），仅提示
-          log.warn(`  - 用户 ${user.username} 密码不是默认密码 ${DEFAULT_PASSWORD}（可能已修改或为历史错误hash），如需重置请使用 --reset-passwords 参数`);
+          // 密码脱敏：生产环境不打印明文
+          const displayPwd = isProduction ? '默认密码' : DEFAULT_PASSWORD;
+          log.warn(`  - 用户 ${user.username} 密码不是${displayPwd}（可能已修改或为历史错误hash），如需重置请使用 --reset-passwords 参数`);
         }
       }
     } catch (error) {
@@ -1475,8 +1578,21 @@ const rollbackMigration = async (targetVersion) => {
   }
 
   let client;
+  let lockAcquired = false;
   try {
     client = await pool.connect();
+
+    // 回滚同样使用 advisory lock，避免与并发迁移互相破坏
+    const lockResult = await client.query(
+      'SELECT pg_try_advisory_lock($1) AS ok',
+      [MIGRATION_ADVISORY_LOCK_ID]
+    );
+    lockAcquired = lockResult.rows[0].ok;
+    if (!lockAcquired) {
+      log.error('检测到另一个迁移/回滚进程正在执行（advisory lock 已被占用），请等待其完成后再重试');
+      process.exit(1);
+    }
+    log.info('已获取回滚 advisory lock');
 
     // 找到目标版本
     const targetIndex = MIGRATIONS.findIndex(m => m.version === targetVersion);
@@ -1544,6 +1660,14 @@ const rollbackMigration = async (targetVersion) => {
     log.error(`回滚失败: ${error.message}`);
     throw error;
   } finally {
+    if (client && lockAcquired) {
+      try {
+        await client.query('SELECT pg_advisory_unlock($1)', [MIGRATION_ADVISORY_LOCK_ID]);
+        log.info('回滚 advisory lock 已释放');
+      } catch (err) {
+        log.warn(`释放 advisory lock 失败（连接关闭后会自动释放）: ${err.message}`);
+      }
+    }
     if (client) {
       client.release();
     }
