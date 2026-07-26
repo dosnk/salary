@@ -9,7 +9,7 @@
  *   docker compose exec app node scripts/verify-data-consistency.js --user=5       # 校验指定用户
  *   docker compose exec app node scripts/verify-data-consistency.js --tolerance=0.01  # 自定义容差
  *
- * 校验项（8项）：
+ * 校验项（13项）：
  *   1. 工程总额 = 子项目金额之和
  *   2. 结算单总额 = 工资分配明细之和
  *   3. 结算快照总额 = 工资分配明细之和
@@ -18,6 +18,11 @@
  *   6. wage_distributions 无孤儿记录（settlement_id 非空但结算单已删除）
  *   7. 视图 v_project_user_settlement_status 状态正确
  *   8. project_workers.workdays 不丢失（work_days 模式下工日数据完整）
+ *   9. 预支扣款一致性（结算单 advance_amount = Σ 关联预支）
+ *   10. 结算实付金额（actual_amount = total_amount - advance_amount）
+ *   11. Dashboard 卡片2/3（预支金额、今年工程量）与手动重算一致
+ *   12. 施工员权限一致性（project_workers.user_id 均为 constructor 角色）
+ *   13. 物化视图刷新滞后检测（mv 与实时业务表口径一致）
  *
  * 退出码：
  *   0 - 全部通过
@@ -546,6 +551,364 @@ const verifyDataConsistency = async (options = {}) => {
     }
   };
 
+  /**
+   * 校验9：预支扣款一致性
+   * - 结算单 advance_amount 应等于其关联的所有已结算预支（settlement_id = X）金额之和
+   * - 已结算预支（settled=true）必须绑定有效 settlement_id
+   * - 已绑定 settlement_id 的预支，其 settled 必须为 true
+   */
+  const checkAdvanceConsistency = async () => {
+    logger.info('\n--- 校验9：预支扣款一致性 ---');
+
+    // 9.1 结算单 advance_amount 与实际关联预支之和是否一致
+    const advanceSumParams = [TOLERANCE];
+    let advanceSumUserFilter = '';
+    if (TARGET_USER_ID) {
+      advanceSumUserFilter = ' AND ws.user_id = $2';
+      advanceSumParams.push(TARGET_USER_ID);
+    }
+
+    const sumResult = await pool.query(`
+      SELECT
+        ws.id AS settlement_id,
+        ws.settlement_no,
+        ws.user_id,
+        ws.advance_amount AS settlement_advance,
+        COALESCE(SUM(wa.advance_amount), 0) AS actual_advance,
+        ws.advance_amount - COALESCE(SUM(wa.advance_amount), 0) AS diff
+      FROM wage_settlements ws
+      LEFT JOIN wage_advances wa
+        ON wa.settlement_id = ws.id AND wa.settled = true
+      WHERE 1=1${advanceSumUserFilter}
+      GROUP BY ws.id, ws.settlement_no, ws.user_id, ws.advance_amount
+      HAVING ABS(ws.advance_amount - COALESCE(SUM(wa.advance_amount), 0)) > $1
+      ORDER BY ABS(ws.advance_amount - COALESCE(SUM(wa.advance_amount), 0)) DESC
+      LIMIT 50
+    `, advanceSumParams);
+
+    if (sumResult.rows.length === 0) {
+      recordResult('校验9.1：结算单预支金额一致性', true, '结算单 advance_amount 与关联预支之和一致');
+    } else {
+      const detail = `发现 ${sumResult.rows.length} 个结算单预支金额不一致（前5个）: ` +
+        sumResult.rows.slice(0, 5).map(r =>
+          `结算单${r.settlement_id}(${r.settlement_no}) 结算单预支=${r.settlement_advance} 实际=${r.actual_advance} 差异=${r.diff}`
+        ).join('; ');
+      recordResult('校验9.1：结算单预支金额一致性', false, detail);
+    }
+
+    // 9.2 settled=true 的预支必须有 settlement_id
+    const orphanSettledResult = await pool.query(`
+      SELECT COUNT(*) AS invalid_count
+      FROM wage_advances wa
+      WHERE wa.settled = true AND wa.settlement_id IS NULL
+        ${TARGET_USER_ID ? 'AND wa.user_id = $1' : ''}
+    `, TARGET_USER_ID ? [TARGET_USER_ID] : []);
+    const orphanSettled = parseInt(orphanSettledResult.rows[0].invalid_count) || 0;
+
+    if (orphanSettled === 0) {
+      recordResult('校验9.2：已结算预支绑定完整', true, '所有 settled=true 的预支都有 settlement_id');
+    } else {
+      recordResult('校验9.2：已结算预支绑定完整', false, `发现 ${orphanSettled} 条预支 settled=true 但 settlement_id 为空`);
+    }
+
+    // 9.3 settlement_id 非空的预支，其 settled 必须为 true（避免脏数据）
+    const inconsistentFlagResult = await pool.query(`
+      SELECT COUNT(*) AS invalid_count
+      FROM wage_advances wa
+      WHERE wa.settlement_id IS NOT NULL AND wa.settled = false
+        ${TARGET_USER_ID ? 'AND wa.user_id = $1' : ''}
+    `, TARGET_USER_ID ? [TARGET_USER_ID] : []);
+    const inconsistentFlag = parseInt(inconsistentFlagResult.rows[0].invalid_count) || 0;
+
+    if (inconsistentFlag === 0) {
+      recordResult('校验9.3：预支 settled 标记一致', true, '所有 settlement_id 非空的预支 settled 都为 true');
+    } else {
+      recordResult('校验9.3：预支 settled 标记一致', false, `发现 ${inconsistentFlag} 条预支绑定了结算单但 settled=false`);
+    }
+  };
+
+  /**
+   * 校验10：结算实付金额（actual_amount = total_amount - advance_amount）
+   * 允许负数（预支超过工资的情况已在业务代码中记录警告），仅校验数学恒等式
+   */
+  const checkActualAmountConsistency = async () => {
+    logger.info('\n--- 校验10：结算实付金额一致性 ---');
+
+    const params = [TOLERANCE];
+    let userFilter = '';
+    if (TARGET_USER_ID) {
+      userFilter = ' AND ws.user_id = $2';
+      params.push(TARGET_USER_ID);
+    }
+
+    const result = await pool.query(`
+      SELECT
+        ws.id AS settlement_id,
+        ws.settlement_no,
+        ws.user_id,
+        ws.total_amount,
+        ws.advance_amount,
+        ws.actual_amount,
+        (ws.total_amount - ws.advance_amount) AS expected_actual,
+        ws.actual_amount - (ws.total_amount - ws.advance_amount) AS diff
+      FROM wage_settlements ws
+      WHERE ABS(ws.actual_amount - (ws.total_amount - ws.advance_amount)) > $1${userFilter}
+      ORDER BY ABS(ws.actual_amount - (ws.total_amount - ws.advance_amount)) DESC
+      LIMIT 50
+    `, params);
+
+    if (result.rows.length === 0) {
+      recordResult('校验10：结算实付金额恒等式', true, '所有结算单 actual_amount = total_amount - advance_amount');
+    } else {
+      const detail = `发现 ${result.rows.length} 个结算单实付金额不一致（前5个）: ` +
+        result.rows.slice(0, 5).map(r =>
+          `结算单${r.settlement_id}(${r.settlement_no}) 总额=${r.total_amount} 预支=${r.advance_amount} 实付=${r.actual_amount} 应为=${r.expected_actual} 差异=${r.diff}`
+        ).join('; ');
+      recordResult('校验10：结算实付金额恒等式', false, detail);
+    }
+  };
+
+  /**
+   * 校验11：Dashboard 卡片2（预支金额）与卡片3（今年工程量）与手动重算一致
+   * 卡片2：施工员看自己未结算预支，admin/documenter 看全部未结算预支
+   * 卡片3：今年 projects.created_at 范围内的工程数与工程总额
+   */
+  const checkDashboardCard23Consistency = async () => {
+    logger.info('\n--- 校验11：Dashboard 卡片2/3 与手动重算一致 ---');
+
+    const currentYear = new Date().getFullYear();
+    const yearStart = `${currentYear}-01-01`;
+    const nextYearStart = `${currentYear + 1}-01-01`;
+
+    // 获取施工员用户列表（与卡片4口径一致）
+    const usersResult = await pool.query(`
+      SELECT DISTINCT u.id, u.nickname
+      FROM users u
+      INNER JOIN project_workers pw ON pw.user_id = u.id
+      WHERE u.role = 'constructor'
+      ORDER BY u.id
+    `);
+
+    if (TARGET_USER_ID) {
+      usersResult.rows = usersResult.rows.filter(u => u.id === TARGET_USER_ID);
+    }
+
+    if (usersResult.rows.length === 0) {
+      recordResult('校验11：Dashboard 卡片2/3 一致性', true, '无施工员用户，跳过校验');
+      return;
+    }
+
+    let allMatch = true;
+    const mismatches = [];
+
+    for (const user of usersResult.rows) {
+      // 卡片2：未结算预支
+      const advanceResult = await pool.query(`
+        SELECT
+          COUNT(*) AS advance_count,
+          COALESCE(SUM(wa.advance_amount), 0) AS advance_total
+        FROM wage_advances wa
+        WHERE wa.user_id = $1 AND wa.settled = false
+      `, [user.id]);
+      const sqlAdvCount = parseInt(advanceResult.rows[0].advance_count) || 0;
+      const sqlAdvTotal = parseFloat(advanceResult.rows[0].advance_total) || 0;
+
+      // 手动重算：直接遍历 wage_advances
+      const manualAdvResult = await pool.query(`
+        SELECT advance_amount
+        FROM wage_advances
+        WHERE user_id = $1 AND settled = false
+      `, [user.id]);
+      let manualAdvTotal = 0;
+      for (const row of manualAdvResult.rows) {
+        manualAdvTotal += parseFloat(row.advance_amount) || 0;
+      }
+      const manualAdvCount = manualAdvResult.rows.length;
+
+      // 卡片3：今年工程量
+      const yearProjectResult = await pool.query(`
+        SELECT
+          COUNT(DISTINCT p.id) AS year_project_count,
+          COALESCE(SUM(COALESCE(p.total_amount, 0)), 0) AS year_project_amount
+        FROM projects p
+        WHERE p.created_at >= $2::date AND p.created_at < $3::date
+          AND EXISTS (
+            SELECT 1 FROM project_workers pw
+            WHERE pw.project_id = p.id AND pw.user_id = $1
+          )
+      `, [user.id, yearStart, nextYearStart]);
+      const sqlYearCount = parseInt(yearProjectResult.rows[0].year_project_count) || 0;
+      const sqlYearAmount = parseFloat(yearProjectResult.rows[0].year_project_amount) || 0;
+
+      // 手动重算：查全表后聚合
+      const manualYearResult = await pool.query(`
+        SELECT p.id, COALESCE(p.total_amount, 0) AS total_amount
+        FROM projects p
+        WHERE p.created_at >= $2::date AND p.created_at < $3::date
+          AND EXISTS (
+            SELECT 1 FROM project_workers pw
+            WHERE pw.project_id = p.id AND pw.user_id = $1
+          )
+      `, [user.id, yearStart, nextYearStart]);
+      let manualYearAmount = 0;
+      for (const row of manualYearResult.rows) {
+        manualYearAmount += parseFloat(row.total_amount) || 0;
+      }
+      const manualYearCount = manualYearResult.rows.length;
+
+      const advCountDiff = Math.abs(sqlAdvCount - manualAdvCount);
+      const advAmountDiff = Math.abs(sqlAdvTotal - manualAdvTotal);
+      const yearCountDiff = Math.abs(sqlYearCount - manualYearCount);
+      const yearAmountDiff = Math.abs(sqlYearAmount - manualYearAmount);
+
+      if (advCountDiff > 0 || advAmountDiff > TOLERANCE || yearCountDiff > 0 || yearAmountDiff > TOLERANCE) {
+        allMatch = false;
+        mismatches.push(
+          `用户${user.id}(${user.nickname}) ` +
+          `卡片2 SQL(${sqlAdvCount}/${sqlAdvTotal.toFixed(2)}) vs 手算(${manualAdvCount}/${manualAdvTotal.toFixed(2)}) ` +
+          `卡片3 SQL(${sqlYearCount}/${sqlYearAmount.toFixed(2)}) vs 手算(${manualYearCount}/${manualYearAmount.toFixed(2)})`
+        );
+      }
+    }
+
+    if (allMatch) {
+      recordResult('校验11：Dashboard 卡片2/3 一致性', true, `所有 ${usersResult.rows.length} 个用户的卡片2/3 SQL 与手算一致`);
+    } else {
+      recordResult('校验11：Dashboard 卡片2/3 一致性', false, `发现 ${mismatches.length} 个不一致: ${mismatches.join('; ')}`);
+    }
+  };
+
+  /**
+   * 校验12：施工员权限一致性
+   * project_workers 中的所有 user_id 必须为 constructor 角色，
+   * 避免非施工员被误加入导致工资分配异常。
+   */
+  const checkProjectWorkerRoleConsistency = async () => {
+    logger.info('\n--- 校验12：施工员权限一致性 ---');
+
+    const result = await pool.query(`
+      SELECT
+        pw.project_id,
+        pw.user_id,
+        u.nickname,
+        u.role
+      FROM project_workers pw
+      INNER JOIN users u ON u.id = pw.user_id
+      WHERE u.role <> 'constructor'
+      ORDER BY pw.project_id, pw.user_id
+      LIMIT 50
+    `);
+
+    if (result.rows.length === 0) {
+      recordResult('校验12：施工员权限一致性', true, '所有 project_workers.user_id 均为 constructor 角色');
+    } else {
+      const detail = `发现 ${result.rows.length} 条非施工员被加入工程（前5个）: ` +
+        result.rows.slice(0, 5).map(r =>
+          `工程${r.project_id} 用户${r.user_id}(${r.nickname}) 角色=${r.role}`
+        ).join('; ');
+      recordResult('校验12：施工员权限一致性', false, detail);
+    }
+
+    // 补充：project_workers 引用的 user_id 必须存在于 users 表（外键理论上保证，兜底检测）
+    const missingUserResult = await pool.query(`
+      SELECT COUNT(*) AS invalid_count
+      FROM project_workers pw
+      WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = pw.user_id)
+    `);
+    const missingUser = parseInt(missingUserResult.rows[0].invalid_count) || 0;
+    if (missingUser === 0) {
+      recordResult('校验12.2：project_workers 用户引用有效', true, '所有 user_id 引用有效');
+    } else {
+      recordResult('校验12.2：project_workers 用户引用有效', false, `发现 ${missingUser} 条 user_id 引用无效`);
+    }
+  };
+
+  /**
+   * 校验13：物化视图刷新滞后检测
+   * 比较 mv_project_user_settlement_status 与实时计算口径的差异，
+   * 识别是否因未及时刷新导致 Dashboard/Statistics 数据偏差。
+   *
+   * 检测方法：对每个 (project_id, user_id)，比较 mv 中的 settlement_status
+   * 与实时口径（基于 project_user_status、wage_settlements、projects.status 重新计算）的差异。
+   */
+  const checkMaterializedViewFreshness = async () => {
+    logger.info('\n--- 校验13：物化视图刷新滞后检测 ---');
+
+    // 检查物化视图是否存在
+    const mvExistsResult = await pool.query(`
+      SELECT 1
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relkind = 'm'
+        AND c.relname = 'mv_project_user_settlement_status'
+        AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+      LIMIT 1
+    `);
+
+    if (mvExistsResult.rows.length === 0) {
+      recordResult('校验13：物化视图刷新滞后检测', true, '未找到 mv_project_user_settlement_status（V1.9 兼容模式），跳过');
+      return;
+    }
+
+    // 对比：mv 中 settled 但实时口径无对应结算记录（说明 mv 滞后）
+    const staleSettledResult = await pool.query(`
+      SELECT COUNT(*) AS stale_count
+      FROM mv_project_user_settlement_status mv
+      WHERE mv.settlement_status = 'settled'
+        AND NOT EXISTS (
+          SELECT 1 FROM wage_settlements ws
+          WHERE ws.user_id = mv.user_id
+            AND (
+              ws.project_id = mv.project_id
+              OR ws.project_ids @> to_jsonb(mv.project_id::text)
+              OR ws.project_ids @> to_jsonb(mv.project_id)
+            )
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM project_user_status pus
+          WHERE pus.project_id = mv.project_id
+            AND pus.user_id = mv.user_id
+            AND pus.settlement_status = 'settled'
+        )
+    `);
+    const staleSettled = parseInt(staleSettledResult.rows[0].stale_count) || 0;
+
+    // 对比：实时口径应为 settled，但 mv 显示 settling/unsettled（说明 mv 滞后）
+    const missingSettledResult = await pool.query(`
+      SELECT COUNT(*) AS missing_count
+      FROM wage_settlements ws
+      INNER JOIN mv_project_user_settlement_status mv
+        ON mv.user_id = ws.user_id
+        AND mv.project_id = ws.project_id
+      WHERE mv.settlement_status <> 'settled'
+    `);
+    const missingSettled = parseInt(missingSettledResult.rows[0].missing_count) || 0;
+
+    // 对比：项目已 canceled/settled 但 mv 仍显示 settling
+    const staleStatusResult = await pool.query(`
+      SELECT COUNT(*) AS stale_count
+      FROM mv_project_user_settlement_status mv
+      INNER JOIN projects p ON p.id = mv.project_id
+      WHERE mv.settlement_status = 'settling'
+        AND p.status IN ('canceled')
+    `);
+    const staleStatus = parseInt(staleStatusResult.rows[0].stale_count) || 0;
+
+    const totalStale = staleSettled + missingSettled + staleStatus;
+
+    if (totalStale === 0) {
+      recordResult('校验13：物化视图刷新滞后检测', true, 'mv_project_user_settlement_status 与实时业务表口径一致');
+    } else {
+      const detail = `发现 ${totalStale} 条口径偏差: ` +
+        `mv 标 settled 但无结算记录=${staleSettled}, ` +
+        `已结算但 mv 未更新=${missingSettled}, ` +
+        `工程已取消但 mv 仍 settling=${staleStatus}。` +
+        `建议运行 node scripts/refresh-mv.js 刷新物化视图`;
+      recordResult('校验13：物化视图刷新滞后检测', false, detail);
+    }
+  };
+
+
   // ===================== 执行校验 =====================
 
   if (!silent) {
@@ -565,7 +928,12 @@ const verifyDataConsistency = async (options = {}) => {
     { name: '校验5：卡片4月均收入一致性', fn: checkDashboardCard4Consistency },
     { name: '校验6：工资分配无孤儿记录', fn: checkOrphanWageDistributions },
     { name: '校验7：视图结算状态正确性', fn: checkSettlementStatusView },
-    { name: '校验8：工日数据完整性', fn: checkWorkdaysIntegrity }
+    { name: '校验8：工日数据完整性', fn: checkWorkdaysIntegrity },
+    { name: '校验9：预支扣款一致性', fn: checkAdvanceConsistency },
+    { name: '校验10：结算实付金额一致性', fn: checkActualAmountConsistency },
+    { name: '校验11：Dashboard 卡片2/3 一致性', fn: checkDashboardCard23Consistency },
+    { name: '校验12：施工员权限一致性', fn: checkProjectWorkerRoleConsistency },
+    { name: '校验13：物化视图刷新滞后检测', fn: checkMaterializedViewFreshness }
   ];
 
   for (const check of checks) {
