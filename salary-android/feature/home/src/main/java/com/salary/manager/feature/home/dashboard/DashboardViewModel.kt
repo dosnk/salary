@@ -139,6 +139,11 @@ data class DashboardUiState(
     val measuredQuantity: String = "",
     /** 实测备注（记录实测方式或现场说明，可选） */
     val measuredNote: String = "",
+    /**
+     * 实测信息区展开状态（平时少用，默认折叠；已填写实测数据时默认展开）
+     * 初始值在缓存加载时根据 measuredQuantity/measuredNote 是否非空计算
+     */
+    val isMeasuredSectionExpanded: Boolean = false,
     /** 分配方式：average=平均, work_days=按工日 */
     val salaryDistribution: String = "average",
     /** 已选中的施工人员ID集合 */
@@ -354,7 +359,9 @@ class DashboardViewModel @Inject constructor(
                 workerWorkdays = cache.workerWorkdays,
                 remark = cache.remark,
                 measuredQuantity = cache.measuredQuantity,
-                measuredNote = cache.measuredNote
+                measuredNote = cache.measuredNote,
+                // 已填写实测数据时默认展开，否则折叠（实测字段平时少用）
+                isMeasuredSectionExpanded = cache.measuredQuantity.isNotBlank() || cache.measuredNote.isNotBlank()
             )
             // 恢复施工方案对应的单价
             if (cache.selectedScheme.isNotBlank()) {
@@ -821,6 +828,16 @@ class DashboardViewModel @Inject constructor(
     fun updateMeasuredNote(note: String) {
         _uiState.value = _uiState.value.copy(measuredNote = note)
         saveFormDebounced()
+    }
+
+    /**
+     * 切换实测信息区展开/折叠状态
+     * 实测字段平时少用，默认折叠以简化表单；用户点击标题可展开
+     */
+    fun toggleMeasuredSection() {
+        _uiState.value = _uiState.value.copy(
+            isMeasuredSectionExpanded = !_uiState.value.isMeasuredSectionExpanded
+        )
     }
 
     /**
@@ -1319,6 +1336,8 @@ class DashboardViewModel @Inject constructor(
                         heightCm = "",
                         measuredQuantity = "",
                         measuredNote = "",
+                        // 重置后实测区折叠（新建工程默认无实测数据）
+                        isMeasuredSectionExpanded = false,
                         remark = "",
                         unitPrice = 0.0,
                         quantity = 0.0,

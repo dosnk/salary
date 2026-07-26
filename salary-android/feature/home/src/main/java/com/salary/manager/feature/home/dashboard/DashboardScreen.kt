@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -462,37 +463,96 @@ fun DashboardScreen(
                             )
                         }
 
-                        // 实测数量（异形空间现场实测值，可选）
-                        // 填入后覆盖按长宽计算的数量，适用于L形/多边形/圆形等非矩形空间
-                        OutlinedTextField(
-                            value = uiState.measuredQuantity,
-                            onValueChange = { viewModel.updateMeasuredQuantity(it) },
-                            label = { Text("实测数量（可选，覆盖计算值）") },
-                            placeholder = { Text("异形空间填实测值") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = AppColors.Green400,
-                                focusedLabelColor = AppColors.Green400
-                            ),
-                            shape = RoundedCornerShape(8.dp)
-                        )
+                        // ===== 实测信息（可折叠，平时少用默认折叠；已填数据时显示标记） =====
+                        // 用 Surface 模拟可点击的折叠标题行，点击切换展开/折叠
+                        val hasMeasuredData = uiState.measuredQuantity.isNotBlank() || uiState.measuredNote.isNotBlank()
+                        Surface(
+                            onClick = { viewModel.toggleMeasuredSection() },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (hasMeasuredData) AppColors.Green50 else Color(0xFFF9FAFB),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("📏", fontSize = 15.sp)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "实测信息（选填）",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = AppColors.TextPrimary
+                                    )
+                                    // 已填写实测数据时显示橙色"已填"标记
+                                    if (hasMeasuredData) {
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "已填",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = Color(0xFFE67E22),
+                                            modifier = Modifier
+                                                .background(
+                                                    color = Color(0xFFFFE8CC),
+                                                    shape = RoundedCornerShape(4.dp)
+                                                )
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                // 展开/收起箭头
+                                Icon(
+                                    imageVector = if (uiState.isMeasuredSectionExpanded)
+                                        Icons.Default.KeyboardArrowUp
+                                    else
+                                        Icons.Default.KeyboardArrowDown,
+                                    contentDescription = if (uiState.isMeasuredSectionExpanded) "收起" else "展开",
+                                    tint = AppColors.TextSecondary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
 
-                        // 实测备注（记录实测方式或现场说明，可选）
-                        OutlinedTextField(
-                            value = uiState.measuredNote,
-                            onValueChange = { viewModel.updateMeasuredNote(it) },
-                            label = { Text("实测备注（可选）") },
-                            placeholder = { Text("如：L形客厅周长实测") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = AppColors.Green400,
-                                focusedLabelColor = AppColors.Green400
-                            ),
-                            shape = RoundedCornerShape(8.dp)
-                        )
+                        // 展开时显示实测数量和实测备注两个输入框
+                        if (uiState.isMeasuredSectionExpanded) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            // 实测数量（异形空间现场实测值，可选）
+                            // 填入后覆盖按长宽计算的数量，适用于L形/多边形/圆形等非矩形空间
+                            OutlinedTextField(
+                                value = uiState.measuredQuantity,
+                                onValueChange = { viewModel.updateMeasuredQuantity(it) },
+                                label = { Text("实测数量（可选，覆盖计算值）") },
+                                placeholder = { Text("异形空间填实测值") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = AppColors.Green400,
+                                    focusedLabelColor = AppColors.Green400
+                                ),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+
+                            // 实测备注（记录实测方式或现场说明，可选）
+                            OutlinedTextField(
+                                value = uiState.measuredNote,
+                                onValueChange = { viewModel.updateMeasuredNote(it) },
+                                label = { Text("实测备注（可选）") },
+                                placeholder = { Text("如：L形客厅周长实测") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = AppColors.Green400,
+                                    focusedLabelColor = AppColors.Green400
+                                ),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        }
 
                         } // end of form_card_basic Column
                     } // end of form_card_basic Surface

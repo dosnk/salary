@@ -41,6 +41,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -1181,6 +1183,12 @@ fun SubprojectEditDialog(
     var measuredNote by remember(subproject.id, subproject.measuredNote) {
         mutableStateOf(subproject.measuredNote ?: "")
     }
+    // 实测信息区展开状态：已填写实测数据时默认展开，否则折叠（实测字段平时少用）
+    var isMeasuredSectionExpanded by remember(subproject.id) {
+        mutableStateOf(
+            (subproject.measuredQuantity?.let { it > 0 } == true) || !subproject.measuredNote.isNullOrBlank()
+        )
+    }
 
     // 当前空间形状（决定输入字段渲染）
     val shape = subproject.spaceTypeShape
@@ -1316,33 +1324,91 @@ fun SubprojectEditDialog(
                         fontWeight = FontWeight.Medium
                     )
                 }
-                // 实测数量（异形空间现场实测值，可选）
-                // 填入后覆盖按长宽计算的数量，适用于L形/多边形/圆形等非矩形空间
-                OutlinedTextField(
-                    value = measuredQuantity,
-                    onValueChange = { input ->
-                        // 只允许数字与小数点
-                        if (input.isEmpty() || input.matches(Regex("^\\d*(\\.\\d*)?$"))) {
-                            measuredQuantity = input
+                // ===== 实测信息（可折叠，平时少用默认折叠；已填数据时显示标记） =====
+                val hasMeasuredData = measuredQuantity.isNotBlank() || measuredNote.isNotBlank()
+                Surface(
+                    onClick = { isMeasuredSectionExpanded = !isMeasuredSectionExpanded },
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (hasMeasuredData) AppColors.Green50 else Color(0xFFF9FAFB),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("📏", fontSize = 15.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "实测信息（选填）",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = AppColors.TextPrimary
+                            )
+                            // 已填写实测数据时显示橙色"已填"标记
+                            if (hasMeasuredData) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "已填",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFFE67E22),
+                                    modifier = Modifier
+                                        .background(
+                                            color = Color(0xFFFFE8CC),
+                                            shape = RoundedCornerShape(4.dp)
+                                        )
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
                         }
-                    },
-                    label = { Text("实测数量（可选，覆盖计算值）") },
-                    placeholder = { Text("异形空间填实测值") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp)
-                )
-                // 实测备注（记录实测方式或现场说明，可选）
-                OutlinedTextField(
-                    value = measuredNote,
-                    onValueChange = { measuredNote = it },
-                    label = { Text("实测备注（可选）") },
-                    placeholder = { Text("如：L形客厅周长实测") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp)
-                )
+                        // 展开/收起箭头
+                        Icon(
+                            imageVector = if (isMeasuredSectionExpanded)
+                                Icons.Default.KeyboardArrowUp
+                            else
+                                Icons.Default.KeyboardArrowDown,
+                            contentDescription = if (isMeasuredSectionExpanded) "收起" else "展开",
+                            tint = AppColors.TextSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                // 展开时显示实测数量和实测备注两个输入框
+                if (isMeasuredSectionExpanded) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    // 实测数量（异形空间现场实测值，可选）
+                    // 填入后覆盖按长宽计算的数量，适用于L形/多边形/圆形等非矩形空间
+                    OutlinedTextField(
+                        value = measuredQuantity,
+                        onValueChange = { input ->
+                            // 只允许数字与小数点
+                            if (input.isEmpty() || input.matches(Regex("^\\d*(\\.\\d*)?$"))) {
+                                measuredQuantity = input
+                            }
+                        },
+                        label = { Text("实测数量（可选，覆盖计算值）") },
+                        placeholder = { Text("异形空间填实测值") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    // 实测备注（记录实测方式或现场说明，可选）
+                    OutlinedTextField(
+                        value = measuredNote,
+                        onValueChange = { measuredNote = it },
+                        label = { Text("实测备注（可选）") },
+                        placeholder = { Text("如：L形客厅周长实测") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
                 // 备注（自适应高度，最多200dp避免占用过多屏幕）
                 // 样式与编辑工程弹窗的"工程备注"保持一致：label在框内 + placeholder + 自适应高度
                 OutlinedTextField(
