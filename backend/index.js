@@ -200,18 +200,45 @@ app.use(aiRouter.routes()).use(aiRouter.allowedMethods());
 app.use(systemRouter.routes()).use(systemRouter.allowedMethods());
 
 // 静态文件服务 - 用于访问上传的文件（放在路由之后，404处理之前）
+// 安全加固：1) 强制JWT鉴权 2) path.resolve + startsWith 防路径穿越
 app.use(async (ctx, next) => {
   if (ctx.path.startsWith('/upload')) {
+    // 1. 鉴权校验：必须登录后才能访问工程附件
+    const authHeader = ctx.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      ctx.status = 401;
+      ctx.body = { code: 4001, message: '未登录，禁止访问附件' };
+      return;
+    }
+    // 复用 jsonwebtoken 验证 token（koa-jwt 内部也使用此包）
+    try {
+      const jwt = require('jsonwebtoken');
+      const token = authHeader.split(' ')[1];
+      ctx.state.user = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (err) {
+      ctx.status = 401;
+      ctx.body = { code: 4001, message: 'Token无效或已过期' };
+      return;
+    }
+
+    // 2. 路径穿越防护：规范化路径后校验仍在 upload 目录内
+    const uploadDir = path.resolve(__dirname, 'upload');
     const filePath = ctx.path.substring(7); // 移除 /upload 前缀
-    const decodedPath = decodeURIComponent(filePath); // 解码URL编码
-    const fullPath = path.join(__dirname, 'upload', decodedPath);
-    
+    const decodedPath = decodeURIComponent(filePath);
+    const fullPath = path.resolve(uploadDir, decodedPath);
+    // 必须以 uploadDir + path.sep 开头，防止通过 .. 逃逸
+    if (!fullPath.startsWith(uploadDir + path.sep) && fullPath !== uploadDir) {
+      ctx.status = 403;
+      ctx.body = { code: 4003, message: '禁止访问该路径' };
+      return;
+    }
+
     try {
       const stats = await fs.promises.stat(fullPath);
       if (stats.isFile()) {
         const ext = path.extname(fullPath).toLowerCase();
         const contentType = getContentType(ext);
-        
+
         ctx.set('Content-Type', contentType);
         ctx.body = fs.createReadStream(fullPath);
         return;

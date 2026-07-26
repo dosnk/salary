@@ -2,7 +2,7 @@ const Router = require('koa-router');
 const authController = require('../controllers/auth');
 const auth = require('../middleware/auth');
 // 登录接口限流：10次/分钟/IP，防止暴力破解密码
-const { loginLimiter } = require('../middleware/rateLimiter');
+const { loginLimiter, registerLimiter, refreshLimiter } = require('../middleware/rateLimiter');
 
 const router = new Router({
   prefix: '/v1/auth'
@@ -114,7 +114,7 @@ const router = new Router({
 router.post('/login', loginLimiter, authController.login);
 
 // 刷新Token接口
-router.post('/refresh', authController.refreshToken);
+router.post('/refresh', refreshLimiter, authController.refreshToken);
 
 /**
  * @swagger
@@ -249,7 +249,7 @@ router.post('/refresh', authController.refreshToken);
  *                   data: null
  *                   msg: '数据库异常'
  */
-router.post('/register', authController.register);
+router.post('/register', registerLimiter, authController.register);
 
 /**
  * @swagger

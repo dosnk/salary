@@ -34,7 +34,7 @@ const createWageDistribution = async (ctx) => {
       amount,
       remark,
       currentUserId,
-      user
+      userRole: user.role
     });
     ctx.success(result);
   } catch (error) {
@@ -61,7 +61,7 @@ const createBatchWageDistributions = async (ctx) => {
       subprojectId,
       distributionType,
       currentUserId,
-      user
+      userRole: user.role
     });
     ctx.success(result);
   } catch (error) {
@@ -89,7 +89,7 @@ const createSettlement = async (ctx) => {
       endMonth,
       remark,
       currentUserId,
-      user
+      userRole: user.role
     });
     ctx.success(result);
   } catch (error) {
@@ -121,7 +121,7 @@ const getSettlements = async (ctx) => {
       endDate,
       projectId,
       userId,
-      user,
+      userRole: user.role,
       currentUserId
     });
     ctx.paginate(result.list, result.total, result.page, result.size);
@@ -147,7 +147,7 @@ const getSettlementDetail = async (ctx) => {
   try {
     const result = await settlementService.getSettlementDetail({
       id,
-      user,
+      userRole: user.role,
       currentUserId
     });
     ctx.success(result);
@@ -175,7 +175,7 @@ const getUserWageSummary = async (ctx) => {
       userId,
       startMonth,
       endMonth,
-      user,
+      userRole: user.role,
       currentUserId
     });
     ctx.success(result);

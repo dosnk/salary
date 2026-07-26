@@ -120,9 +120,25 @@ const sensitiveLimiter = createRateLimiter({
   keyPrefix: 'rl:sensitive'
 });
 
+/** 注册接口限流: 5次/小时，防止恶意批量注册账号 */
+const registerLimiter = createRateLimiter({
+  maxRequests: 5,
+  windowSeconds: 3600,
+  keyPrefix: 'rl:register'
+});
+
+/** Token刷新限流: 10次/分钟，防止暴力探测 refresh token */
+const refreshLimiter = createRateLimiter({
+  maxRequests: 10,
+  windowSeconds: 60,
+  keyPrefix: 'rl:refresh'
+});
+
 module.exports = {
   createRateLimiter,
   globalLimiter,
   loginLimiter,
-  sensitiveLimiter
+  sensitiveLimiter,
+  registerLimiter,
+  refreshLimiter
 };

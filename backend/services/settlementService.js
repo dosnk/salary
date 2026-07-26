@@ -847,7 +847,8 @@ module.exports = {
    * @param {string} userRole - 当前用户角色
    * @returns {Promise<object>} 结算详情（含预支记录和工资分配记录）
    */
-  async getSettlementDetail(settlementId, currentUserId, userRole) {
+  async getSettlementDetail({ id, userRole, currentUserId }) {
+    const settlementId = id;
     // 1. 获取结算记录
     const settlement = await settlementRepo.findSettlementById(settlementId);
     if (!settlement) {

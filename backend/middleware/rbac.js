@@ -230,6 +230,50 @@ const requireAdvanceCreate = () => {
 };
 
 /**
+ * 预支查看权限检查（V2.0: 所有角色可查看，数据范围由 service 层按 role 过滤）
+ * - admin: 全部预支记录
+ * - documenter: 全部预支记录（只读，可按人员筛选）
+ * - constructor: 仅自己的预支记录
+ */
+const requireAdvanceView = () => {
+  return async (ctx, next) => {
+    const user = ctx.state.user;
+    if (!user) {
+      ctx.fail(4001, '用户未登录');
+      return;
+    }
+    // 所有登录角色均可访问，数据范围在 service 层按 role 过滤
+    await next();
+  };
+};
+
+/**
+ * 用户信息查看/修改权限检查（仅自己或 admin）
+ * - admin: 可查看/修改任意用户
+ * - constructor/documenter: 只能查看/修改自己的信息
+ * 路由层显式声明，避免仅依赖 controller 内部校验
+ */
+const requireSelfOrAdmin = () => {
+  return async (ctx, next) => {
+    const user = ctx.state.user;
+    if (!user) {
+      ctx.fail(4001, '用户未登录');
+      return;
+    }
+    if (isAdmin(user)) {
+      await next();
+      return;
+    }
+    const targetId = parseInt(ctx.params.id);
+    if (isNaN(targetId) || user.id !== targetId) {
+      ctx.fail(4002, '只能操作自己的用户信息');
+      return;
+    }
+    await next();
+  };
+};
+
+/**
  * 预支删除权限检查（V2.0: admin也不能删除预支）
  */
 const requireAdvanceDelete = () => {
@@ -326,6 +370,8 @@ module.exports = {
   requireSettlementAccess,
   requireAdvanceCreate,
   requireAdvanceDelete,
+  requireAdvanceView,
+  requireSelfOrAdmin,
   requireStatisticsAccess,
   isProjectParticipant,
   getRoleName

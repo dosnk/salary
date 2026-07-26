@@ -2,7 +2,7 @@ const Router = require('koa-router');
 const advancesController = require('../controllers/advances');
 const auth = require('../middleware/auth');
 const validation = require('../middleware/validation');
-const { requireAdvanceCreate, requireAdvanceDelete } = require('../middleware/rbac');
+const { requireAdvanceCreate, requireAdvanceDelete, requireAdvanceView } = require('../middleware/rbac');
 
 const router = new Router({
   prefix: '/v1/advances'
@@ -236,7 +236,7 @@ router.post('/', auth.authenticate, requireAdvanceCreate(), validation(advancesC
  *                   data: null
  *                   msg: '获取预支记录失败'
  */
-router.get('/', auth.authenticate, validation(advancesController.getAdvancesSchema), advancesController.getAdvances);
+router.get('/', auth.authenticate, requireAdvanceView(), validation(advancesController.getAdvancesSchema), advancesController.getAdvances);
 
 /**
  * @swagger
@@ -311,7 +311,7 @@ router.get('/', auth.authenticate, validation(advancesController.getAdvancesSche
  *                   data: null
  *                   msg: '获取预支总额失败'
  */
-router.get('/total', auth.authenticate, validation(advancesController.getAdvanceTotalSchema), advancesController.getAdvanceTotal);
+router.get('/total', auth.authenticate, requireAdvanceView(), validation(advancesController.getAdvanceTotalSchema), advancesController.getAdvanceTotal);
 
 /**
  * @swagger

@@ -3,7 +3,7 @@ const userController = require('../controllers/users');
 const auth = require('../middleware/auth');
 const validation = require('../middleware/validation');
 const { deduplicate } = require('../middleware/deduplicate');
-const { requireAdmin } = require('../middleware/rbac');
+const { requireAdmin, requireSelfOrAdmin } = require('../middleware/rbac');
 
 const router = new Router({
   prefix: '/v1/users'
@@ -22,9 +22,9 @@ router.put('/profile', auth.authenticate, deduplicate({ duration: 10 }), validat
 
 router.post('/change-password', auth.authenticate, deduplicate({ duration: 10 }), validation(userController.changePasswordSchema), userController.changePassword);
 
-router.get('/:id', auth.authenticate, validation(userController.getUserSchema, { includeParams: true }), userController.getUser);
+router.get('/:id', auth.authenticate, requireSelfOrAdmin(), validation(userController.getUserSchema, { includeParams: true }), userController.getUser);
 
-router.put('/:id', auth.authenticate, deduplicate({ duration: 10 }), validation(userController.updateUserSchema, { includeParams: true }), userController.updateUser);
+router.put('/:id', auth.authenticate, requireSelfOrAdmin(), deduplicate({ duration: 10 }), validation(userController.updateUserSchema, { includeParams: true }), userController.updateUser);
 
 router.delete('/:id', auth.authenticate, requireAdmin(), validation(userController.deleteUserSchema, { includeParams: true }), userController.deleteUser);
 

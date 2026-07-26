@@ -720,6 +720,9 @@ router.get('/history', auth.authenticate, validation(settlementController.getUse
  *                   data: null
  *                   msg: '数据库异常'
  */
+// 结算详情：所有登录角色可访问，数据范围由 service 层按 role 过滤
+// - constructor: 只能查看自己的结算记录（service 层 user_id 校验）
+// - admin/documenter: 可查看全部结算记录
 router.get('/:id', auth.authenticate, settlementController.getSettlementDetail);
 
 /**
@@ -927,6 +930,9 @@ router.post('/:id/confirm', auth.authenticate, requireSettlementAccess(), valida
  */
 router.post('/calculate', auth.authenticate, requireSettlementAccess(), validation(settlementController.calculateSettlementSchema), settlementController.calculateSettlement);
 
+// 结算单导出：所有登录角色可访问，controller 层按 currentUserId 查询快照
+// - 所有用户只能导出自己的结算单（wss.user_id = currentUserId）
+// - 如需 admin/documenter 导出他人结算单，需在 controller 增加 role 判断
 router.get('/history/export/:settlementId', auth.authenticate, settlementController.exportSettlementByIdToExcel);
 
 module.exports = router;
