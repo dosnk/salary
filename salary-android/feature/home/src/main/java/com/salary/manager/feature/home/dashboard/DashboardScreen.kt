@@ -1459,39 +1459,47 @@ private fun SubprojectTable(
         // ===== 子项目备注汇总区：所有有备注的子项目集中显示在表格最下方 =====
         // 不再分散在子项目行之间，避免打断表格视觉连续性
         // 每条备注以"序号. 空间-方案"作为前缀标识所属子项目
-        val remarkList = subprojects.mapIndexedNotNull { index, sub ->
-            if (!sub.remark.isNullOrBlank()) {
-                index to sub
-            } else {
-                null
+        // 同时收集"普通备注"和"实测备注"，统一渲染，实测备注用橙色标签区分
+        data class NoteEntry(val index: Int, val sub: SubprojectUiModel, val label: String, val content: String)
+        val noteList = buildList {
+            subprojects.forEachIndexed { index, sub ->
+                if (!sub.remark.isNullOrBlank()) {
+                    add(NoteEntry(index, sub, "备注", sub.remark))
+                }
+                if (!sub.measuredNote.isNullOrBlank()) {
+                    add(NoteEntry(index, sub, "实测", sub.measuredNote))
+                }
             }
         }
-        if (remarkList.isNotEmpty()) {
+        if (noteList.isNotEmpty()) {
             // 备注区与末行表格保持间距，避免视觉粘连
             Spacer(modifier = Modifier.height(8.dp))
-            remarkList.forEach { (index, sub) ->
+            noteList.forEach { entry ->
                 Row(
                     modifier = Modifier
                         .width(tableWidth)
                         .padding(start = 4.dp, top = 2.dp, bottom = 2.dp),
                     verticalAlignment = Alignment.Top
                 ) {
-                    // 备注标签：浅绿底+绿字小标签
+                    // 标签：浅绿底+绿字小标签（"备注"）；实测标签用浅橙底+橙字区分
+                    val isMeasured = entry.label == "实测"
+                    val labelBg = if (isMeasured) Color(0xFFFFE8CC) else AppColors.Green50
+                    val labelColor = if (isMeasured) Color(0xFFE67E22) else AppColors.Green400
                     Text(
-                        text = "备注",
+                        text = entry.label,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Medium,
-                        color = AppColors.Green400,
+                        color = labelColor,
                         maxLines = 1,
                         modifier = Modifier
-                            .background(color = AppColors.Green50, shape = RoundedCornerShape(4.dp))
+                            .background(color = labelBg, shape = RoundedCornerShape(4.dp))
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     // 备注内容：灰色小字，带序号标识，最多2行省略
                     // 格式："序号. 空间-方案：备注内容"，让用户能定位到具体子项目
                     Text(
-                        text = "${index + 1}. ${sub.spaceTypeName}-${sub.constructionPlanName}：${sub.remark}",
+                        text = "${entry.index + 1}. ${entry.sub.spaceTypeName}-${entry.sub.constructionPlanName}：${entry.content}",
                         fontSize = 11.sp,
                         color = AppColors.TextTertiary,
                         maxLines = 2,
