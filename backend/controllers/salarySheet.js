@@ -6,6 +6,21 @@ const logger = require('../config/logger');
 // 引入计算服务，统一使用 calculateUserWage 计算个人分摊金额
 const calculation = require('../services/calculation');
 
+// 异步刷新物化视图 mv_project_user_settlement_status
+// 结算完成后必须调用，否则统计页面的 settlement_status 会滞后（5分钟定时任务才会自动刷新）
+// 失败只记录日志，不阻断主流程
+let refreshMvAsync;
+try {
+  const { refreshMaterializedView } = require('../scripts/refresh-mv');
+  refreshMvAsync = () => {
+    refreshMaterializedView().catch(err => {
+      logger.warn('[结算] 结算后刷新物化视图失败', { error: err.message });
+    });
+  };
+} catch (e) {
+  refreshMvAsync = () => {};
+}
+
 const getConstructionPlans = async (ctx) => {
   try {
     const result = await pool.query(`
@@ -680,7 +695,51 @@ const settle = async (ctx) => {
         updated_at = CURRENT_TIMESTAMP
     `, [...projectIdsArray, userId, settlementId]);
 
+    // 关键修复：所有施工员都已完成结算的工程，把 projects.status 从 completed 更新为 settled
+    // 之前的Bug：本接口只更新了 project_user_status，未更新 projects.status，
+    // 导致工程管理页仍显示原状态，且统计页因 mv 视图 CASE 优先级问题重复出现待结算工程
+    const projectStatusUpdate = await client.query(`
+      UPDATE projects p
+      SET status = 'settled', updated_at = CURRENT_TIMESTAMP
+      WHERE p.id = ANY($1)
+        AND p.status = 'completed'
+        AND NOT EXISTS (
+          SELECT 1 FROM project_workers pw
+          LEFT JOIN project_user_status pus
+            ON pus.project_id = pw.project_id AND pus.user_id = pw.user_id
+          WHERE pw.project_id = p.id
+            AND (pus.settlement_status IS NULL OR pus.settlement_status <> 'settled')
+        )
+      RETURNING p.id, p.name
+    `, [projectIdsArray]);
+
+    // 为已推进到 settled 的工程写入操作历史，便于审计
+    if (projectStatusUpdate.rows.length > 0) {
+      const historyValues = [];
+      const historyParams = [];
+      projectStatusUpdate.rows.forEach((row, idx) => {
+        const base = idx * 4;
+        historyValues.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`);
+        historyParams.push(
+          row.id,
+          'SETTLE_COMPLETE',
+          `工程已全部结算完成，状态更新为 settled（结算单 #${settlementId}）`,
+          userId
+        );
+      });
+      await client.query(
+        `INSERT INTO project_history (project_id, action, description, performed_by)
+         VALUES ${historyValues.join(', ')}`,
+        historyParams
+      );
+      logger.info(`[结算] 已推进 ${projectStatusUpdate.rows.length} 个工程状态到 settled: ${projectStatusUpdate.rows.map(r => `#${r.id}(${r.name})`).join(', ')}`);
+    }
+
     await client.query('COMMIT');
+
+    // 关键修复：COMMIT 后异步刷新物化视图，避免统计页读到 5 分钟前的旧状态
+    // 不 await：不阻塞响应；失败只记录日志（refreshMvAsync 内部已捕获）
+    refreshMvAsync();
 
     ctx.success({
       settlement_id: allSettlements.length > 0 ? allSettlements[0].settlementId : null,

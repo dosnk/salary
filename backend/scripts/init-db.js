@@ -111,7 +111,7 @@ const DEFAULT_PASSWORD = process.env.DEFAULT_PASSWORD || '990066';
 //   filterConstructorRole: 第一部分是否显式过滤 u.role = 'constructor'
 //     - V1.9: false（依赖 project_workers 隐式过滤）
 //     - V2.5: true（更显式，避免未来角色扩展引入污染）
-const buildMvProjectUserSettlementStatusDDL = ({ includeSettledStatus, useStableId, filterConstructorRole }) => {
+const buildMvProjectUserSettlementStatusDDL = ({ includeSettledStatus, useStableId, filterConstructorRole, wsPriorityOverPus = false }) => {
   // 第一部分 SELECT 的 ID 表达式
   const part1IdExpr = useStableId
     ? "COALESCE(pus.id, ROW_NUMBER() OVER (ORDER BY p.id, u.id)) AS id"
@@ -129,6 +129,45 @@ const buildMvProjectUserSettlementStatusDDL = ({ includeSettledStatus, useStable
     ? "WHERE u.role = 'constructor'"
     : "-- (V1.9 兼容：依赖 project_workers 隐式过滤施工人员)";
 
+  // V2.8+：把 "存在 wage_settlements 记录即 settled" 的判定提到 COALESCE 之前
+  // 原因：COALESCE 遇到 pus.settlement_status 非空即短路，会吃掉 CASE 中的 ws.id 分支，
+  //      导致老结算接口只更新 pus 未更新 projects.status 时，视图状态仍显示旧值
+  const buildStatusExpr = () => {
+    if (wsPriorityOverPus) {
+      return `
+        CASE
+          WHEN ws.id IS NOT NULL THEN 'settled'
+          WHEN pus.settlement_status = 'settled' THEN 'settled'
+          ${settledBranch}
+          WHEN pus.settlement_status IS NOT NULL THEN pus.settlement_status
+          WHEN p.status = 'completed' THEN 'settling'
+          WHEN EXISTS (
+            SELECT 1 FROM subprojects sp
+            WHERE sp.project_id = p.id
+            AND sp.status = 'completed'
+          ) THEN 'settling'
+          ELSE 'unsettled'
+        END
+      `;
+    }
+    return `
+      COALESCE(
+        pus.settlement_status,
+        CASE
+          WHEN ws.id IS NOT NULL THEN 'settled'
+          ${settledBranch}
+          WHEN p.status = 'completed' THEN 'settling'
+          WHEN EXISTS (
+            SELECT 1 FROM subprojects sp
+            WHERE sp.project_id = p.id
+            AND sp.status = 'completed'
+          ) THEN 'settling'
+          ELSE 'unsettled'
+        END
+      )
+    `;
+  };
+
   return `
       CREATE MATERIALIZED VIEW mv_project_user_settlement_status AS
       -- 第一部分：施工人员的结算状态
@@ -136,20 +175,7 @@ const buildMvProjectUserSettlementStatusDDL = ({ includeSettledStatus, useStable
         ${part1IdExpr},
         p.id AS project_id,
         u.id AS user_id,
-        COALESCE(
-          pus.settlement_status,
-          CASE
-            WHEN ws.id IS NOT NULL THEN 'settled'
-            ${settledBranch}
-            WHEN p.status = 'completed' THEN 'settling'
-            WHEN EXISTS (
-              SELECT 1 FROM subprojects sp
-              WHERE sp.project_id = p.id
-              AND sp.status = 'completed'
-            ) THEN 'settling'
-            ELSE 'unsettled'
-          END
-        ) AS settlement_status,
+        ${buildStatusExpr()} AS settlement_status,
         COALESCE(pus.settlement_id, ws.id) AS settlement_id,
         COALESCE(pus.settled_at, ws.settled_at) AS settled_at,
         COALESCE(pus.created_at, CURRENT_TIMESTAMP) AS created_at,
@@ -182,20 +208,7 @@ const buildMvProjectUserSettlementStatusDDL = ({ includeSettledStatus, useStable
         ${part2IdExpr},
         p.id AS project_id,
         u.id AS user_id,
-        COALESCE(
-          pus.settlement_status,
-          CASE
-            WHEN ws.id IS NOT NULL THEN 'settled'
-            ${settledBranch}
-            WHEN p.status = 'completed' THEN 'settling'
-            WHEN EXISTS (
-              SELECT 1 FROM subprojects sp
-              WHERE sp.project_id = p.id
-              AND sp.status = 'completed'
-            ) THEN 'settling'
-            ELSE 'unsettled'
-          END
-        ) AS settlement_status,
+        ${buildStatusExpr()} AS settlement_status,
         COALESCE(pus.settlement_id, ws.id) AS settlement_id,
         COALESCE(pus.settled_at, ws.settled_at) AS settled_at,
         COALESCE(pus.created_at, CURRENT_TIMESTAMP) AS created_at,
@@ -263,12 +276,13 @@ const DEFAULT_USERS = process.env.DEFAULT_USERS ?
   ];
 
 // ===================== 4. 迁移版本定义 =====================
-// 历史迁移版本（V1.0–V2.7）按时间顺序累积，单文件存放便于审查与回滚
+// 历史迁移版本（V1.0–V2.8）按时间顺序累积，单文件存放便于审查与回滚
 // 设计原则：
 //   1. 已发布迁移不修改 up SQL（避免破坏版本一致性），仅可通过新版本迁移修正
 //   2. V1.4/V1.6 创建的普通视图 v_project_user_settlement_status 会被 V1.9 改造为物化视图
 //      全新库执行时会多花约 200ms 创建后立即 DROP，属可接受成本，不合并迁移以保持历史可追溯
-//   3. 物化视图 DDL 通过 buildMvProjectUserSettlementStatusDDL 工厂函数生成（V1.9/V2.5 共用）
+//   3. 物化视图 DDL 通过 buildMvProjectUserSettlementStatusDDL 工厂函数生成
+//      （V1.9 初次创建、V2.5 增加 settled 分支、V2.8 修复 COALESCE 短路）
 //   4. 文件长度约 1700 行，若未来版本超过 V3.0 可考虑拆分为 migrations/ 目录（一个版本一个 .sql 文件）
 const MIGRATIONS = [
   {
@@ -1244,6 +1258,45 @@ const MIGRATIONS = [
       ALTER TABLE ai_knowledge_chunks ALTER COLUMN updated_at TYPE TIMESTAMP USING updated_at AT TIME ZONE 'Asia/Shanghai';
     `,
     tables: []
+  },
+  {
+    version: 'V2.8',
+    description: '重建物化视图修复结算状态短路问题：把 ws.id 判定提前于 pus.settlement_status，避免老结算接口只更新 pus 导致视图状态滞后',
+    up: `
+      -- 背景：老结算入口 salarySheet.settle 只写 project_user_status 未写 projects.status，
+      -- 而物化视图 CASE 使用 COALESCE(pus.settlement_status, CASE ws.id ...) 结构，
+      -- 只要 pus 里已经有记录（哪怕是历史遗留的 unsettled/settling），
+      -- COALESCE 就会短路，导致 "wage_settlements 存在即已结算" 的兜底分支永远走不到，
+      -- 表现为工程管理页仍是 completed，统计页重复出现待结算工程。
+      --
+      -- 修复：使用 wsPriorityOverPus=true 参数生成的 DDL，把 ws.id 判定提到最前，
+      -- 优先级：ws.id → pus=settled → p.status=settled → pus 其他值 → p.status=completed → 兜底
+      --
+      -- 依赖处理：先 DROP 兼容视图 v_project_user_settlement_status，再 DROP 物化视图
+      DROP VIEW IF EXISTS v_project_user_settlement_status;
+      DROP MATERIALIZED VIEW IF EXISTS mv_project_user_settlement_status;
+
+      -- 物化视图 DDL 由 buildMvProjectUserSettlementStatusDDL 工厂函数生成
+      -- V2.8 参数：在 V2.5 基础上开启 wsPriorityOverPus，修复 COALESCE 短路问题
+      ${buildMvProjectUserSettlementStatusDDL({
+        includeSettledStatus: true,
+        useStableId: true,
+        filterConstructorRole: true,
+        wsPriorityOverPus: true
+      })}
+    `,
+    down: `
+      -- 回滚到 V2.5 的口径（wsPriorityOverPus=false）
+      DROP VIEW IF EXISTS v_project_user_settlement_status;
+      DROP MATERIALIZED VIEW IF EXISTS mv_project_user_settlement_status;
+      ${buildMvProjectUserSettlementStatusDDL({
+        includeSettledStatus: true,
+        useStableId: true,
+        filterConstructorRole: true,
+        wsPriorityOverPus: false
+      })}
+    `,
+    tables: ['mv_project_user_settlement_status']
   }
 ];
 
