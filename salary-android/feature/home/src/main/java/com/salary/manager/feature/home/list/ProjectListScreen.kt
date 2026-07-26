@@ -516,8 +516,8 @@ private fun FilterTag(
 /**
  * 高级筛选弹窗 - 底部弹出
  * 包含：月份选择、工程状态选择、结算状态选择、开始/结束日期
- * 交互优化：选择筛选条件后自动应用，无需点击"应用"按钮
- * 标题栏右侧"重置"按钮可一键清除全部筛选条件
+ * 交互流程：选择条件只更新本地草稿状态，点击底部"确认筛选"按钮后才真正应用并关闭弹窗
+ * 标题栏右侧"重置"按钮可一键清除全部筛选条件（仅重置草稿，需点击确认才生效）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -529,12 +529,6 @@ private fun AdvancedFilterSheet(
 ) {
     val sheetState = rememberModalBottomSheetState()
     var editFilter by remember(currentFilter) { mutableStateOf(currentFilter) }
-
-    // 自动应用筛选：editFilter变更后立即回调onApply
-    val applyFilter: (AdvancedFilterState) -> Unit = { newFilter ->
-        editFilter = newFilter
-        onApply(newFilter)
-    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -556,11 +550,10 @@ private fun AdvancedFilterSheet(
                     Text("关闭", color = AppColors.TextSecondary)
                 }
                 Text("高级筛选", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                // 重置按钮：浅灰背景胶囊 + 刷新图标，点击只重置不退出弹窗
+                // 重置按钮：浅灰背景胶囊 + 刷新图标，点击只重置草稿不退出弹窗
                 Surface(
                     onClick = {
                         editFilter = AdvancedFilterState()
-                        onReset()
                     },
                     shape = RoundedCornerShape(16.dp),
                     color = Color(0xFFF5F5F5),
@@ -589,7 +582,7 @@ private fun AdvancedFilterSheet(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // 月份选择 - 确认后自动应用
+            // 月份选择 - 仅更新草稿，确认筛选后才应用
             FilterOptionRow(label = "月份") {
                 var showMonthPicker by remember { mutableStateOf(false) }
                 TextButton(onClick = { showMonthPicker = true }) {
@@ -604,7 +597,7 @@ private fun AdvancedFilterSheet(
                         currentYear = editFilter.year ?: java.time.LocalDate.now().year,
                         currentMonth = editFilter.month ?: java.time.LocalDate.now().monthValue,
                         onConfirm = { year, month ->
-                            applyFilter(editFilter.copy(year = year, month = month))
+                            editFilter = editFilter.copy(year = year, month = month)
                             showMonthPicker = false
                         },
                         onDismiss = { showMonthPicker = false }
@@ -612,7 +605,7 @@ private fun AdvancedFilterSheet(
                 }
             }
 
-            // 工程状态选择 - 选择后自动应用
+            // 工程状态选择 - 仅更新草稿，确认筛选后才应用
             FilterOptionRow(label = "工程状态") {
                 var showStatusPicker by remember { mutableStateOf(false) }
                 TextButton(onClick = { showStatusPicker = true }) {
@@ -626,7 +619,7 @@ private fun AdvancedFilterSheet(
                         options = statusOptions,
                         current = editFilter.status,
                         onConfirm = {
-                            applyFilter(editFilter.copy(status = it))
+                            editFilter = editFilter.copy(status = it)
                             showStatusPicker = false
                         },
                         onDismiss = { showStatusPicker = false }
@@ -634,7 +627,7 @@ private fun AdvancedFilterSheet(
                 }
             }
 
-            // 结算状态选择 - 选择后自动应用
+            // 结算状态选择 - 仅更新草稿，确认筛选后才应用
             FilterOptionRow(label = "结算状态") {
                 var showSettlementPicker by remember { mutableStateOf(false) }
                 TextButton(onClick = { showSettlementPicker = true }) {
@@ -648,7 +641,7 @@ private fun AdvancedFilterSheet(
                         options = settlementStatusOptions,
                         current = editFilter.settlementStatus,
                         onConfirm = {
-                            applyFilter(editFilter.copy(settlementStatus = it))
+                            editFilter = editFilter.copy(settlementStatus = it)
                             showSettlementPicker = false
                         },
                         onDismiss = { showSettlementPicker = false }
@@ -656,7 +649,7 @@ private fun AdvancedFilterSheet(
                 }
             }
 
-            // 开始日期 - 选择后自动应用
+            // 开始日期 - 仅更新草稿，确认筛选后才应用
             FilterOptionRow(label = "开始日期") {
                 var showDatePicker by remember { mutableStateOf(false) }
                 TextButton(onClick = { showDatePicker = true }) {
@@ -669,11 +662,11 @@ private fun AdvancedFilterSheet(
                     DatePickerDialogSheet(
                         initialDate = editFilter.startDate,
                         onConfirm = { dateStr ->
-                            applyFilter(editFilter.copy(startDate = dateStr))
+                            editFilter = editFilter.copy(startDate = dateStr)
                             showDatePicker = false
                         },
                         onClear = {
-                            applyFilter(editFilter.copy(startDate = null))
+                            editFilter = editFilter.copy(startDate = null)
                             showDatePicker = false
                         },
                         onDismiss = { showDatePicker = false }
@@ -681,7 +674,7 @@ private fun AdvancedFilterSheet(
                 }
             }
 
-            // 结束日期 - 选择后自动应用
+            // 结束日期 - 仅更新草稿，确认筛选后才应用
             FilterOptionRow(label = "结束日期") {
                 var showDatePicker by remember { mutableStateOf(false) }
                 TextButton(onClick = { showDatePicker = true }) {
@@ -694,11 +687,11 @@ private fun AdvancedFilterSheet(
                     DatePickerDialogSheet(
                         initialDate = editFilter.endDate,
                         onConfirm = { dateStr ->
-                            applyFilter(editFilter.copy(endDate = dateStr))
+                            editFilter = editFilter.copy(endDate = dateStr)
                             showDatePicker = false
                         },
                         onClear = {
-                            applyFilter(editFilter.copy(endDate = null))
+                            editFilter = editFilter.copy(endDate = null)
                             showDatePicker = false
                         },
                         onDismiss = { showDatePicker = false }
@@ -706,7 +699,32 @@ private fun AdvancedFilterSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // 底部确认筛选按钮：点击后应用筛选条件并关闭弹窗
+            // 让用户明确感知筛选已生效，避免选择后自动筛选的不确定性
+            Button(
+                onClick = {
+                    onApply(editFilter)
+                    onDismiss()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = AppColors.Green400,
+                    contentColor = Color.White
+                )
+            ) {
+                Text(
+                    "确认筛选",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }
