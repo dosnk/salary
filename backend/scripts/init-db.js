@@ -98,6 +98,153 @@ const testConnection = async () => {
 const DEFAULT_PASSWORD_HASH = process.env.DEFAULT_PASSWORD_HASH || '$2b$12$cUtNFBFtlBUKiq4psDFMx.uX7VLde5vWUdg3VTPzBy2.cIGA/eFRG';
 const DEFAULT_PASSWORD = process.env.DEFAULT_PASSWORD || '990066';
 
+// ===================== 3.1 物化视图 DDL 工厂函数（V1.9 与 V2.5 共用） =====================
+// 抽出为函数避免 130+ 行 SQL 在两处维护，未来字段修改只需改一处
+//
+// 参数说明：
+//   includeSettledStatus: 是否识别 p.status = 'settled' 分支
+//     - V1.9: false（V2.5 之前工程状态没有 settled）
+//     - V2.5: true（V2.5 引入 settled 状态后必须识别）
+//   useStableId: 是否使用 COALESCE(pus.id, ROW_NUMBER()) 稳定 ID
+//     - V1.9: false（直接 ROW_NUMBER）
+//     - V2.5: true（稳定 ID 避免刷新后 ID 漂移）
+//   filterConstructorRole: 第一部分是否显式过滤 u.role = 'constructor'
+//     - V1.9: false（依赖 project_workers 隐式过滤）
+//     - V2.5: true（更显式，避免未来角色扩展引入污染）
+const buildMvProjectUserSettlementStatusDDL = ({ includeSettledStatus, useStableId, filterConstructorRole }) => {
+  // 第一部分 SELECT 的 ID 表达式
+  const part1IdExpr = useStableId
+    ? "COALESCE(pus.id, ROW_NUMBER() OVER (ORDER BY p.id, u.id)) AS id"
+    : "ROW_NUMBER() OVER (ORDER BY p.id, u.id) AS id";
+  // 第二部分 SELECT 的 ID 表达式
+  const part2IdExpr = useStableId
+    ? "COALESCE(pus.id, ROW_NUMBER() OVER (ORDER BY p.id, u.id) + 100000) AS id"
+    : "ROW_NUMBER() OVER (ORDER BY p.id, u.id) + 100000 AS id";
+  // CASE WHEN 中识别 settled 工程状态的分支（V2.5+ 才有）
+  const settledBranch = includeSettledStatus
+    ? "WHEN p.status = 'settled' THEN 'settled'"
+    : "-- (V1.9 兼容：settled 状态在 V2.5 引入，此处不识别)";
+  // 第一部分 WHERE 子句：是否显式过滤 constructor 角色
+  const part1Where = filterConstructorRole
+    ? "WHERE u.role = 'constructor'"
+    : "-- (V1.9 兼容：依赖 project_workers 隐式过滤施工人员)";
+
+  return `
+      CREATE MATERIALIZED VIEW mv_project_user_settlement_status AS
+      -- 第一部分：施工人员的结算状态
+      SELECT
+        ${part1IdExpr},
+        p.id AS project_id,
+        u.id AS user_id,
+        COALESCE(
+          pus.settlement_status,
+          CASE
+            WHEN ws.id IS NOT NULL THEN 'settled'
+            ${settledBranch}
+            WHEN p.status = 'completed' THEN 'settling'
+            WHEN EXISTS (
+              SELECT 1 FROM subprojects sp
+              WHERE sp.project_id = p.id
+              AND sp.status = 'completed'
+            ) THEN 'settling'
+            ELSE 'unsettled'
+          END
+        ) AS settlement_status,
+        COALESCE(pus.settlement_id, ws.id) AS settlement_id,
+        COALESCE(pus.settled_at, ws.settled_at) AS settled_at,
+        COALESCE(pus.created_at, CURRENT_TIMESTAMP) AS created_at,
+        COALESCE(pus.updated_at, CURRENT_TIMESTAMP) AS updated_at
+      FROM projects p
+      JOIN project_workers pw ON pw.project_id = p.id
+      JOIN users u ON u.id = pw.user_id
+      LEFT JOIN project_user_status pus ON pus.project_id = p.id AND pus.user_id = u.id
+      -- 关键修复：用 LATERAL + LIMIT 1 取最新一条结算单
+      -- 原因：wage_settlements 的 UNIQUE 约束是 (user_id, settled_at, settlement_no)，
+      --       一个 user 对一个 project 可能有多条结算单（单工程结算 + 多工程结算），
+      --       直接 LEFT JOIN 会产生一对多行膨胀，导致 (project_id, user_id) 重复，
+      --       唯一索引 idx_mv_puss_project_user 创建失败
+      LEFT JOIN LATERAL (
+        SELECT id, settled_at
+        FROM wage_settlements
+        WHERE user_id = u.id
+          AND (project_id = p.id OR project_ids::jsonb @> to_jsonb(p.id))
+        ORDER BY settled_at DESC NULLS LAST, id DESC
+        LIMIT 1
+      ) ws ON true
+      ${part1Where}
+      UNION
+      -- 第二部分：管理员和资料员可以查看所有工程
+      -- 注意1：排除已经是该工程施工人员的管理员/资料员，避免与第一部分数据重叠
+      --        重叠会导致 (project_id, user_id) 重复，唯一索引创建失败
+      -- 注意2：第二部分 id 加 100000 偏移，避免与第一部分 ROW_NUMBER 冲突
+      --        （业务规模不会超过 10 万条施工人员记录，偏移量足够安全）
+      SELECT
+        ${part2IdExpr},
+        p.id AS project_id,
+        u.id AS user_id,
+        COALESCE(
+          pus.settlement_status,
+          CASE
+            WHEN ws.id IS NOT NULL THEN 'settled'
+            ${settledBranch}
+            WHEN p.status = 'completed' THEN 'settling'
+            WHEN EXISTS (
+              SELECT 1 FROM subprojects sp
+              WHERE sp.project_id = p.id
+              AND sp.status = 'completed'
+            ) THEN 'settling'
+            ELSE 'unsettled'
+          END
+        ) AS settlement_status,
+        COALESCE(pus.settlement_id, ws.id) AS settlement_id,
+        COALESCE(pus.settled_at, ws.settled_at) AS settled_at,
+        COALESCE(pus.created_at, CURRENT_TIMESTAMP) AS created_at,
+        COALESCE(pus.updated_at, CURRENT_TIMESTAMP) AS updated_at
+      FROM projects p
+      CROSS JOIN users u
+      LEFT JOIN project_user_status pus ON pus.project_id = p.id AND pus.user_id = u.id
+      LEFT JOIN LATERAL (
+        SELECT id, settled_at
+        FROM wage_settlements
+        WHERE user_id = u.id
+          AND (project_id = p.id OR project_ids::jsonb @> to_jsonb(p.id))
+        ORDER BY settled_at DESC NULLS LAST, id DESC
+        LIMIT 1
+      ) ws ON true
+      WHERE u.role IN ('admin', 'documenter')
+        AND NOT EXISTS (
+          SELECT 1 FROM project_workers pw2
+          WHERE pw2.project_id = p.id AND pw2.user_id = u.id
+        )
+      WITH DATA;
+
+      -- 物化视图的唯一索引（REFRESH CONCURRENTLY 必须）
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_puss_id ON mv_project_user_settlement_status(id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_puss_project_user ON mv_project_user_settlement_status(project_id, user_id);
+      CREATE INDEX IF NOT EXISTS idx_mv_puss_user_status ON mv_project_user_settlement_status(user_id, settlement_status);
+      CREATE INDEX IF NOT EXISTS idx_mv_puss_project_status ON mv_project_user_settlement_status(project_id, settlement_status);
+
+      -- 兼容层：创建普通视图指向物化视图，保持原代码中 v_project_user_settlement_status 引用不变
+      CREATE OR REPLACE VIEW v_project_user_settlement_status AS
+        SELECT * FROM mv_project_user_settlement_status;
+  `;
+};
+
+// ===================== 命令行参数解析（集中管理） =====================
+// 所有命令行参数在此处统一解析，避免散落在文件不同位置导致语义混乱
+//
+// 支持的命令格式：
+//   node scripts/init-db.js                            普通迁移，不重置密码
+//   node scripts/init-db.js --reset-passwords          重置未改过密码的默认用户（password_changed_at IS NULL）
+//   node scripts/init-db.js --reset-passwords --force  强制重置所有默认用户（包括用户主动修改过的，谨慎使用）
+//   node scripts/init-db.js rollback <版本号>           回滚到指定版本
+const CLI_ARGS = process.argv.slice(2);
+const CLI_COMMAND = CLI_ARGS[0];
+const RESET_PASSWORDS = CLI_ARGS.includes('--reset-passwords');
+const FORCE_RESET_ALL = CLI_ARGS.includes('--force');
+const IS_ROLLBACK_MODE = CLI_COMMAND === 'rollback';
+const ROLLBACK_TARGET_VERSION = IS_ROLLBACK_MODE ? CLI_ARGS[1] : null;
+
 // 默认用户列表（可从环境变量覆盖）
 const DEFAULT_USERS = process.env.DEFAULT_USERS ? 
   JSON.parse(process.env.DEFAULT_USERS) : 
@@ -116,6 +263,13 @@ const DEFAULT_USERS = process.env.DEFAULT_USERS ?
   ];
 
 // ===================== 4. 迁移版本定义 =====================
+// 历史迁移版本（V1.0–V2.7）按时间顺序累积，单文件存放便于审查与回滚
+// 设计原则：
+//   1. 已发布迁移不修改 up SQL（避免破坏版本一致性），仅可通过新版本迁移修正
+//   2. V1.4/V1.6 创建的普通视图 v_project_user_settlement_status 会被 V1.9 改造为物化视图
+//      全新库执行时会多花约 200ms 创建后立即 DROP，属可接受成本，不合并迁移以保持历史可追溯
+//   3. 物化视图 DDL 通过 buildMvProjectUserSettlementStatusDDL 工厂函数生成（V1.9/V2.5 共用）
+//   4. 文件长度约 1700 行，若未来版本超过 V3.0 可考虑拆分为 migrations/ 目录（一个版本一个 .sql 文件）
 const MIGRATIONS = [
   {
     version: 'V1.0',
@@ -559,6 +713,8 @@ const MIGRATIONS = [
   },
   {
     version: 'V1.4',
+    // 注意：本版本创建的普通视图会被 V1.9 改造为物化视图（mv_project_user_settlement_status）
+    // 全新库执行时本步骤会被 V1.9 立即 DROP 重建，约浪费 200ms，保留是为了已部署库的版本一致性
     description: '创建结算状态视图（优化版）',
     up: `
       CREATE OR REPLACE VIEW v_project_user_settlement_status AS
@@ -653,11 +809,27 @@ const MIGRATIONS = [
       ('按工日', 'by_workday')
       ON CONFLICT (code) DO NOTHING;
     `,
+    // down 脚本：仅删除未被业务表引用的预置数据，避免误删用户已使用的同名记录
+    // - action_types 被 project_history.action 引用：保留已被引用的项
+    // - space_types 被 subprojects.space_type 引用：保留已被引用的项
+    // - construction_plans 被 subprojects.plan_name 引用：保留已被引用的项
+    // - wage_distribution_types 被 wage_settlements.distribution_type 引用：保留已被引用的项
     down: `
-      DELETE FROM wage_distribution_types WHERE code IN ('average', 'by_workday');
-      DELETE FROM construction_plans WHERE name IN ('蜂窝平面', '半吊', '二级平面', '铝扣平面', '窗帘盒', '发光走边', '水坑', '工程板', '封梁', '装饰条');
-      DELETE FROM space_types WHERE name IN ('客厅','餐厅','厨房','公卫','主卫','大阳台','小阳台','房间','走道','入户','房间凹位','公卫凹位','主卫凹位','楼梯口','电梯口','凹位','其他（自定义）');
-      DELETE FROM action_types WHERE code IN ('CREATE_PROJECT','UPDATE_PROJECT','DELETE_PROJECT','ADD_SUBPROJECT','UPDATE_SUBPROJECT','DELETE_SUBPROJECT','SETTLE_WAGE','CANCEL_WAGE','ADVANCE_WAGE','UPLOAD_FILE','TRANSFER_SUBPROJECT');
+      DELETE FROM wage_distribution_types
+       WHERE code IN ('average', 'by_workday')
+         AND NOT EXISTS (SELECT 1 FROM wage_settlements WHERE distribution_type = wage_distribution_types.code);
+
+      DELETE FROM construction_plans
+       WHERE name IN ('蜂窝平面', '半吊', '二级平面', '铝扣平面', '窗帘盒', '发光走边', '水坑', '工程板', '封梁', '装饰条')
+         AND NOT EXISTS (SELECT 1 FROM subprojects WHERE plan_name = construction_plans.name);
+
+      DELETE FROM space_types
+       WHERE name IN ('客厅','餐厅','厨房','公卫','主卫','大阳台','小阳台','房间','走道','入户','房间凹位','公卫凹位','主卫凹位','楼梯口','电梯口','凹位','其他（自定义）')
+         AND NOT EXISTS (SELECT 1 FROM subprojects WHERE space_type = space_types.name);
+
+      DELETE FROM action_types
+       WHERE code IN ('CREATE_PROJECT','UPDATE_PROJECT','DELETE_PROJECT','ADD_SUBPROJECT','UPDATE_SUBPROJECT','DELETE_SUBPROJECT','SETTLE_WAGE','CANCEL_WAGE','ADVANCE_WAGE','UPLOAD_FILE','TRANSFER_SUBPROJECT')
+         AND NOT EXISTS (SELECT 1 FROM project_history WHERE action = action_types.code);
     `
   },
   {
@@ -887,100 +1059,13 @@ const MIGRATIONS = [
       --       因为上次迁移可能 CREATE 成功但创建唯一索引失败，IF NOT EXISTS 会跳过重建导致定义陈旧
       DROP MATERIALIZED VIEW IF EXISTS mv_project_user_settlement_status;
 
-      CREATE MATERIALIZED VIEW mv_project_user_settlement_status AS
-      -- 施工人员的结算状态
-      SELECT
-        ROW_NUMBER() OVER (ORDER BY p.id, u.id) AS id,
-        p.id AS project_id,
-        u.id AS user_id,
-        COALESCE(
-          pus.settlement_status,
-          CASE
-            WHEN ws.id IS NOT NULL THEN 'settled'
-            WHEN p.status = 'completed' THEN 'settling'
-            WHEN EXISTS (
-              SELECT 1 FROM subprojects sp
-              WHERE sp.project_id = p.id
-              AND sp.status = 'completed'
-            ) THEN 'settling'
-            ELSE 'unsettled'
-          END
-        ) AS settlement_status,
-        COALESCE(pus.settlement_id, ws.id) AS settlement_id,
-        COALESCE(pus.settled_at, ws.settled_at) AS settled_at,
-        COALESCE(pus.created_at, CURRENT_TIMESTAMP) AS created_at,
-        COALESCE(pus.updated_at, CURRENT_TIMESTAMP) AS updated_at
-      FROM projects p
-      JOIN project_workers pw ON pw.project_id = p.id
-      JOIN users u ON u.id = pw.user_id
-      LEFT JOIN project_user_status pus ON pus.project_id = p.id AND pus.user_id = u.id
-      -- 关键修复：用 LATERAL + LIMIT 1 取最新一条结算单
-      -- 原因：wage_settlements 的 UNIQUE 约束是 (user_id, settled_at, settlement_no)，
-      --       一个 user 对一个 project 可能有多条结算单（单工程结算 + 多工程结算），
-      --       直接 LEFT JOIN 会产生一对多行膨胀，导致 (project_id, user_id) 重复，
-      --       唯一索引 idx_mv_puss_project_user 创建失败
-      LEFT JOIN LATERAL (
-        SELECT id, settled_at
-        FROM wage_settlements
-        WHERE user_id = u.id
-          AND (project_id = p.id OR project_ids::jsonb @> to_jsonb(p.id))
-        ORDER BY settled_at DESC NULLS LAST, id DESC
-        LIMIT 1
-      ) ws ON true
-      UNION
-      -- 管理员和资料员可以查看所有工程
-      -- 注意1：排除已经是该工程施工人员的管理员/资料员，避免与第一部分数据重叠
-      --        重叠会导致 (project_id, user_id) 重复，唯一索引创建失败
-      -- 注意2：第二部分 id 加 100000 偏移，避免与第一部分 ROW_NUMBER 冲突
-      --        （业务规模不会超过 10 万条施工人员记录，偏移量足够安全）
-      SELECT
-        ROW_NUMBER() OVER (ORDER BY p.id, u.id) + 100000 AS id,
-        p.id AS project_id,
-        u.id AS user_id,
-        COALESCE(
-          pus.settlement_status,
-          CASE
-            WHEN ws.id IS NOT NULL THEN 'settled'
-            WHEN p.status = 'completed' THEN 'settling'
-            WHEN EXISTS (
-              SELECT 1 FROM subprojects sp
-              WHERE sp.project_id = p.id
-              AND sp.status = 'completed'
-            ) THEN 'settling'
-            ELSE 'unsettled'
-          END
-        ) AS settlement_status,
-        COALESCE(pus.settlement_id, ws.id) AS settlement_id,
-        COALESCE(pus.settled_at, ws.settled_at) AS settled_at,
-        COALESCE(pus.created_at, CURRENT_TIMESTAMP) AS created_at,
-        COALESCE(pus.updated_at, CURRENT_TIMESTAMP) AS updated_at
-      FROM projects p
-      CROSS JOIN users u
-      LEFT JOIN project_user_status pus ON pus.project_id = p.id AND pus.user_id = u.id
-      LEFT JOIN LATERAL (
-        SELECT id, settled_at
-        FROM wage_settlements
-        WHERE user_id = u.id
-          AND (project_id = p.id OR project_ids::jsonb @> to_jsonb(p.id))
-        ORDER BY settled_at DESC NULLS LAST, id DESC
-        LIMIT 1
-      ) ws ON true
-      WHERE u.role IN ('admin', 'documenter')
-        AND NOT EXISTS (
-          SELECT 1 FROM project_workers pw2
-          WHERE pw2.project_id = p.id AND pw2.user_id = u.id
-        )
-      WITH DATA;
-
-      -- 物化视图的唯一索引（REFRESH CONCURRENTLY 必须）
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_puss_id ON mv_project_user_settlement_status(id);
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_puss_project_user ON mv_project_user_settlement_status(project_id, user_id);
-      CREATE INDEX IF NOT EXISTS idx_mv_puss_user_status ON mv_project_user_settlement_status(user_id, settlement_status);
-      CREATE INDEX IF NOT EXISTS idx_mv_puss_project_status ON mv_project_user_settlement_status(project_id, settlement_status);
-
-      -- 兼容层：创建普通视图指向物化视图，保持原代码中 v_project_user_settlement_status 引用不变
-      CREATE OR REPLACE VIEW v_project_user_settlement_status AS
-        SELECT * FROM mv_project_user_settlement_status;
+      -- 物化视图 DDL 由 buildMvProjectUserSettlementStatusDDL 工厂函数生成
+      -- V1.9 参数：不识别 settled 状态（V2.5 才引入）、使用 ROW_NUMBER 直接生成 ID、依赖 project_workers 隐式过滤施工人员
+      ${buildMvProjectUserSettlementStatusDDL({
+        includeSettledStatus: false,
+        useStableId: false,
+        filterConstructorRole: false
+      })}
     `,
     down: `
       DROP VIEW IF EXISTS v_project_user_settlement_status;
@@ -1093,94 +1178,13 @@ const MIGRATIONS = [
       DROP VIEW IF EXISTS v_project_user_settlement_status;
       DROP MATERIALIZED VIEW IF EXISTS mv_project_user_settlement_status;
 
-      CREATE MATERIALIZED VIEW mv_project_user_settlement_status AS
-      -- 第一部分：施工人员的结算状态
-      SELECT
-        COALESCE(pus.id, ROW_NUMBER() OVER (ORDER BY p.id, u.id)) AS id,
-        p.id AS project_id,
-        u.id AS user_id,
-        COALESCE(
-          pus.settlement_status,
-          CASE
-            WHEN ws.id IS NOT NULL THEN 'settled'
-            WHEN p.status = 'settled' THEN 'settled'
-            WHEN p.status = 'completed' THEN 'settling'
-            WHEN EXISTS (
-              SELECT 1 FROM subprojects sp
-              WHERE sp.project_id = p.id
-              AND sp.status = 'completed'
-            ) THEN 'settling'
-            ELSE 'unsettled'
-          END
-        ) AS settlement_status,
-        COALESCE(pus.settlement_id, ws.id) AS settlement_id,
-        COALESCE(pus.settled_at, ws.settled_at) AS settled_at,
-        COALESCE(pus.created_at, CURRENT_TIMESTAMP) AS created_at,
-        COALESCE(pus.updated_at, CURRENT_TIMESTAMP) AS updated_at
-      FROM projects p
-      JOIN project_workers pw ON pw.project_id = p.id
-      JOIN users u ON u.id = pw.user_id
-      LEFT JOIN project_user_status pus ON pus.project_id = p.id AND pus.user_id = u.id
-      LEFT JOIN LATERAL (
-        SELECT id, settled_at
-        FROM wage_settlements
-        WHERE user_id = u.id
-          AND (project_id = p.id OR project_ids::jsonb @> to_jsonb(p.id))
-        ORDER BY settled_at DESC NULLS LAST, id DESC
-        LIMIT 1
-      ) ws ON true
-      WHERE u.role = 'constructor'
-      UNION
-      -- 第二部分：管理员和资料员可以查看所有工程
-      SELECT
-        COALESCE(pus.id, ROW_NUMBER() OVER (ORDER BY p.id, u.id) + 100000) AS id,
-        p.id AS project_id,
-        u.id AS user_id,
-        COALESCE(
-          pus.settlement_status,
-          CASE
-            WHEN ws.id IS NOT NULL THEN 'settled'
-            WHEN p.status = 'settled' THEN 'settled'
-            WHEN p.status = 'completed' THEN 'settling'
-            WHEN EXISTS (
-              SELECT 1 FROM subprojects sp
-              WHERE sp.project_id = p.id
-              AND sp.status = 'completed'
-            ) THEN 'settling'
-            ELSE 'unsettled'
-          END
-        ) AS settlement_status,
-        COALESCE(pus.settlement_id, ws.id) AS settlement_id,
-        COALESCE(pus.settled_at, ws.settled_at) AS settled_at,
-        COALESCE(pus.created_at, CURRENT_TIMESTAMP) AS created_at,
-        COALESCE(pus.updated_at, CURRENT_TIMESTAMP) AS updated_at
-      FROM projects p
-      CROSS JOIN users u
-      LEFT JOIN project_user_status pus ON pus.project_id = p.id AND pus.user_id = u.id
-      LEFT JOIN LATERAL (
-        SELECT id, settled_at
-        FROM wage_settlements
-        WHERE user_id = u.id
-          AND (project_id = p.id OR project_ids::jsonb @> to_jsonb(p.id))
-        ORDER BY settled_at DESC NULLS LAST, id DESC
-        LIMIT 1
-      ) ws ON true
-      WHERE u.role IN ('admin', 'documenter')
-        AND NOT EXISTS (
-          SELECT 1 FROM project_workers pw2
-          WHERE pw2.project_id = p.id AND pw2.user_id = u.id
-        )
-      WITH DATA;
-
-      -- 物化视图的唯一索引（REFRESH CONCURRENTLY 必须）
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_puss_id ON mv_project_user_settlement_status(id);
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_puss_project_user ON mv_project_user_settlement_status(project_id, user_id);
-      CREATE INDEX IF NOT EXISTS idx_mv_puss_user_status ON mv_project_user_settlement_status(user_id, settlement_status);
-      CREATE INDEX IF NOT EXISTS idx_mv_puss_project_status ON mv_project_user_settlement_status(project_id, settlement_status);
-
-      -- 兼容层：创建普通视图指向物化视图
-      CREATE OR REPLACE VIEW v_project_user_settlement_status AS
-        SELECT * FROM mv_project_user_settlement_status;
+      -- 物化视图 DDL 由 buildMvProjectUserSettlementStatusDDL 工厂函数生成
+      -- V2.5 参数：识别 settled 状态、使用 COALESCE(pus.id, ROW_NUMBER()) 稳定 ID、显式过滤 constructor 角色
+      ${buildMvProjectUserSettlementStatusDDL({
+        includeSettledStatus: true,
+        useStableId: true,
+        filterConstructorRole: true
+      })}
     `,
     down: `
       DROP MATERIALIZED VIEW IF EXISTS mv_project_user_settlement_status;
@@ -1440,17 +1444,8 @@ const runMigrations = async () => {
 };
 
 // ===================== 8. 插入默认用户 =====================
-
-// 命令行参数解析：
-// --reset-passwords       重置默认用户密码为 DEFAULT_PASSWORD（仅重置 password_changed_at IS NULL 的用户，
-//                          即从未改过密码的用户，保护用户主动修改过的密码）
-// --reset-passwords --force  强制重置所有默认用户密码（包括用户主动修改过的，谨慎使用）
-// 用法示例:
-//   node scripts/init-db.js                          普通迁移，不重置密码
-//   node scripts/init-db.js --reset-passwords        重置未改过密码的默认用户
-//   node scripts/init-db.js --reset-passwords --force  强制重置所有默认用户
-const RESET_PASSWORDS = process.argv.includes('--reset-passwords');
-const FORCE_RESET_ALL = process.argv.includes('--force');
+// 命令行参数说明见文件顶部"命令行参数解析（集中管理）"区块
+// RESET_PASSWORDS / FORCE_RESET_ALL 在文件顶部统一解析，此处直接使用
 
 const insertDefaultUsers = async (client) => {
   if (DEFAULT_USERS.length === 0) {
@@ -1676,18 +1671,15 @@ const rollbackMigration = async (targetVersion) => {
 };
 
 // ===================== 10. 执行迁移 =====================
-const args = process.argv.slice(2);
-const command = args[0];
-
-if (command === 'rollback') {
-  const targetVersion = args[1];
-  if (!targetVersion) {
+// 命令行参数已在文件顶部统一解析为 IS_ROLLBACK_MODE / ROLLBACK_TARGET_VERSION
+if (IS_ROLLBACK_MODE) {
+  if (!ROLLBACK_TARGET_VERSION) {
     log.error('请指定回滚目标版本');
     log.info('使用方法: node init-db.js rollback <版本号>');
     process.exit(1);
   }
-  log.info(`开始回滚到版本: ${targetVersion}`);
-  rollbackMigration(targetVersion).catch(err => {
+  log.info(`开始回滚到版本: ${ROLLBACK_TARGET_VERSION}`);
+  rollbackMigration(ROLLBACK_TARGET_VERSION).catch(err => {
     log.error(`回滚流程异常终止: ${err.message}`);
     process.exit(1);
   });
