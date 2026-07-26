@@ -1269,24 +1269,30 @@ const MIGRATIONS = [
       -- COALESCE 就会短路，导致 "wage_settlements 存在即已结算" 的兜底分支永远走不到，
       -- 表现为工程管理页仍是 completed，统计页重复出现待结算工程。
       --
-      -- 修复：使用 wsPriorityOverPus=true 参数生成的 DDL，把 ws.id 判定提到最前，
+      -- 修复1：使用 wsPriorityOverPus=true 参数生成的 DDL，把 ws.id 判定提到最前，
       -- 优先级：ws.id → pus=settled → p.status=settled → pus 其他值 → p.status=completed → 兜底
+      --
+      -- 修复2：useStableId 强制为 false（回归 V1.9 的纯 ROW_NUMBER 策略）
+      -- 原因：V2.5 使用 COALESCE(pus.id, ROW_NUMBER()) 时，随时间推移 project_user_status.id
+      -- 可能与 UNION 第二分支的 ROW_NUMBER()+100000 撞值，导致 UNION 后 id 重复，
+      -- 造成 idx_mv_puss_id 唯一索引创建失败。业务代码从未使用 mv.id 作为外键，
+      -- 稳定性可牺牲以确保迁移能顺利完成。
       --
       -- 依赖处理：先 DROP 兼容视图 v_project_user_settlement_status，再 DROP 物化视图
       DROP VIEW IF EXISTS v_project_user_settlement_status;
       DROP MATERIALIZED VIEW IF EXISTS mv_project_user_settlement_status;
 
       -- 物化视图 DDL 由 buildMvProjectUserSettlementStatusDDL 工厂函数生成
-      -- V2.8 参数：在 V2.5 基础上开启 wsPriorityOverPus，修复 COALESCE 短路问题
+      -- V2.8 参数：wsPriorityOverPus=true 修复 COALESCE 短路，useStableId=false 避免 id 撞值
       ${buildMvProjectUserSettlementStatusDDL({
         includeSettledStatus: true,
-        useStableId: true,
+        useStableId: false,
         filterConstructorRole: true,
         wsPriorityOverPus: true
       })}
     `,
     down: `
-      -- 回滚到 V2.5 的口径（wsPriorityOverPus=false）
+      -- 回滚到 V2.5 的口径（wsPriorityOverPus=false, useStableId=true）
       DROP VIEW IF EXISTS v_project_user_settlement_status;
       DROP MATERIALIZED VIEW IF EXISTS mv_project_user_settlement_status;
       ${buildMvProjectUserSettlementStatusDDL({
