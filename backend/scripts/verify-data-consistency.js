@@ -292,19 +292,19 @@ const verifyDataConsistency = async (options = {}) => {
       `, [user.id]);
 
       // 手动重算：遍历所有settling状态的工程，用calculateUserWage逻辑计算
+      // 关键：sp_total / worker_count / total_workdays / user_workdays 必须用标量子查询独立计算，
+      // 不能用 LEFT JOIN subprojects + LEFT JOIN project_workers，否则两个一对多 JOIN 产生笛卡尔积，
+      // 导致 SUM(sp.amount) 被重复累加 worker_count 倍（与 SQL 版本的 LATERAL 口径保持一致）
       const projectsResult = await pool.query(`
         SELECT
           p.id, p.total_amount, p.salary_distribution,
-          COALESCE(SUM(sp.amount), 0) AS sp_total,
-          COUNT(DISTINCT pw2.user_id) AS worker_count,
-          COALESCE(SUM(pw2.workdays), 0) AS total_workdays,
-          COALESCE(MAX(CASE WHEN pw2.user_id = $1 THEN pw2.workdays END), 0) AS user_workdays
+          (SELECT COALESCE(SUM(sp.amount), 0) FROM subprojects sp WHERE sp.project_id = p.id) AS sp_total,
+          (SELECT COUNT(DISTINCT pw2.user_id) FROM project_workers pw2 WHERE pw2.project_id = p.id) AS worker_count,
+          (SELECT COALESCE(SUM(pw2.workdays), 0) FROM project_workers pw2 WHERE pw2.project_id = p.id) AS total_workdays,
+          (SELECT COALESCE(MAX(CASE WHEN pw2.user_id = $1 THEN pw2.workdays END), 0) FROM project_workers pw2 WHERE pw2.project_id = p.id) AS user_workdays
         FROM projects p
         INNER JOIN v_project_user_settlement_status pus
           ON p.id = pus.project_id AND pus.user_id = $1 AND pus.settlement_status = 'settling'
-        LEFT JOIN subprojects sp ON sp.project_id = p.id
-        LEFT JOIN project_workers pw2 ON pw2.project_id = p.id
-        GROUP BY p.id, p.total_amount, p.salary_distribution
       `, [user.id]);
 
       let manualAmount = 0;
