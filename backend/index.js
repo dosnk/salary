@@ -1,5 +1,19 @@
 require('dotenv').config();
 
+// ==================== 启动期安全配置校验（fail-fast） ====================
+// JWT密钥是核心安全配置，缺失会导致Token签发/验证失败，必须在启动时拦截
+const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_PLACEHOLDERS = ['your_jwt_secret_here', 'change_me', 'secret', ''];
+if (!JWT_SECRET || JWT_PLACEHOLDERS.includes(JWT_SECRET.trim())) {
+  console.error('[安全校验失败] JWT_SECRET 未配置或仍为占位值，请修改 .env 中的 JWT_SECRET 为强随机字符串后重启。');
+  process.exit(1);
+}
+// 生产环境额外校验密钥强度（长度至少32位，避免弱密钥被暴力破解）
+if (process.env.NODE_ENV === 'production' && JWT_SECRET.length < 32) {
+  console.error('[安全校验失败] 生产环境 JWT_SECRET 长度不足32位，请使用更长的强随机字符串后重启。');
+  process.exit(1);
+}
+
 const Koa = require('koa');
 const path = require('path'); // 引入path模块处理文件路径
 const koaBody = require('koa-body').default; // 修复koa-body v6.x的导入问题
@@ -53,20 +67,20 @@ app.use(async (ctx, next) => {
   ctx.remove('X-Powered-By');
 });
 
-// CORS中间件 - 严格限制允许的域名
+// CORS中间件 - 严格限制允许的域名（白名单从环境变量读取，避免硬编码）
+// 解析CORS_ORIGINS环境变量，未配置时回退到开发环境默认值
+const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
+logger.info(`CORS白名单: ${corsOrigins.join(', ')}`);
 app.use(cors({
   origin: function(ctx) {
     // 白名单：仅允许配置的域名访问
     // Android客户端无Origin头，不经过CORS检查
     // Web端必须在白名单内
-    const allowedOrigins = [
-      'http://1.12.234.248:9080',
-      'http://1.12.234.248/api-docs',  // API文档
-      'http://localhost:5173',  // 本地开发
-      'http://127.0.0.1:5173'   // 本地开发
-    ];
     const requestOrigin = ctx.request.header.origin;
-    if (requestOrigin && allowedOrigins.includes(requestOrigin)) {
+    if (requestOrigin && corsOrigins.includes(requestOrigin)) {
       return requestOrigin;
     }
     // 无Origin头（移动端/服务端请求）放行，不设置CORS头
@@ -109,8 +123,15 @@ const getSwaggerSpec = require('./swagger');
 // logger.info('Swagger文档已生成');
 
 // Swagger文档 - 自定义页面，包含导出功能
+// 安全加固：生产环境(NODE_ENV=production)关闭API文档对外访问，防止接口结构泄露
 app.use(async (ctx, next) => {
   if (ctx.path === '/api-docs') {
+    // 生产环境直接返回404，不暴露文档入口
+    if (process.env.NODE_ENV === 'production') {
+      ctx.status = 404;
+      ctx.body = { code: 1002, msg: '接口不存在' };
+      return;
+    }
     ctx.type = 'text/html';
     ctx.body = fs.createReadStream(path.join(__dirname, 'public', 'swagger-custom.html'));
     return;
@@ -119,37 +140,46 @@ app.use(async (ctx, next) => {
 });
 
 // 暴露swagger.json（按需生成）
+// 安全加固：生产环境关闭swagger.json和文档历史接口，防止API结构被探测
 app.use(async (ctx, next) => {
-  if (ctx.path === '/swagger.json') {
-    const swaggerSpec = getSwaggerSpec();
-    ctx.body = swaggerSpec;
-    ctx.type = 'application/json';
-  } else if (ctx.path === '/swagger/history') {
-    // 文档版本历史记录
-    ctx.success({
-      history: [
-        {
-          version: '1.3.0',
-          date: '2025-12-25',
-          changes: ['添加环境变量自动切换服务器地址', '实现文档版本管理']
-        },
-        {
-          version: '1.2.0',
-          date: '2025-12-24',
-          changes: ['优化文档加载性能', '实现文档缓存重启清理']
-        },
-        {
-          version: '1.1.0',
-          date: '2025-12-23',
-          changes: ['添加Swagger文档生成', '修复API文档显示问题']
-        },
-        {
-          version: '1.0.0',
-          date: '2025-12-22',
-          changes: ['初始版本', '基础API接口']
-        }
-      ]
-    });
+  if (ctx.path === '/swagger.json' || ctx.path === '/swagger/history') {
+    // 生产环境直接返回404
+    if (process.env.NODE_ENV === 'production') {
+      ctx.status = 404;
+      ctx.body = { code: 1002, msg: '接口不存在' };
+      return;
+    }
+    if (ctx.path === '/swagger.json') {
+      const swaggerSpec = getSwaggerSpec();
+      ctx.body = swaggerSpec;
+      ctx.type = 'application/json';
+    } else {
+      // 文档版本历史记录
+      ctx.success({
+        history: [
+          {
+            version: '1.3.0',
+            date: '2025-12-25',
+            changes: ['添加环境变量自动切换服务器地址', '实现文档版本管理']
+          },
+          {
+            version: '1.2.0',
+            date: '2025-12-24',
+            changes: ['优化文档加载性能', '实现文档缓存重启清理']
+          },
+          {
+            version: '1.1.0',
+            date: '2025-12-23',
+            changes: ['添加Swagger文档生成', '修复API文档显示问题']
+          },
+          {
+            version: '1.0.0',
+            date: '2025-12-22',
+            changes: ['初始版本', '基础API接口']
+          }
+        ]
+      });
+    }
   } else {
     await next();
   }
@@ -172,13 +202,12 @@ logger.info('Redis初始化', { available: isRedisAvailable() });
 app.use(globalLimiter);
 
 // 健康检查接口 - 无需鉴权，供前端探测后端在线状态
-// 返回服务器时间和状态，前端通过测量请求耗时计算延迟
+// 安全加固：仅返回在线状态，不暴露 uptime/timestamp 等运行时信息
+// 前端通过HTTP状态码(200)判断在线，通过请求往返耗时计算延迟
 app.use(async (ctx, next) => {
   if (ctx.path === '/v1/health' && ctx.method === 'GET') {
     ctx.success({
-      status: 'ok',
-      timestamp: Date.now(),
-      uptime: process.uptime()
+      status: 'ok'
     });
     return;
   }

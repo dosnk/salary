@@ -6,12 +6,13 @@ import retrofit2.http.GET
 
 /**
  * 健康检查响应数据
+ *
+ * 安全加固：后端仅返回在线状态，不暴露 uptime/timestamp 等运行时信息
+ * 前端通过HTTP状态码(200)判断在线，通过请求往返耗时计算延迟
  */
 @Serializable
 data class HealthResponse(
-    val status: String,
-    val timestamp: Long,
-    val uptime: Double
+    val status: String
 )
 
 /**
