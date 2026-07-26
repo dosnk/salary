@@ -25,6 +25,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
@@ -540,14 +541,37 @@ private fun AdvancedFilterSheet(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            // 标题栏：左侧关闭 + 中间标题 + 右侧重置
+            // 标题栏：左侧关闭 + 中间标题 + 右侧重置（左右按钮样式对称）
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(onClick = onDismiss) {
-                    Text("关闭", color = AppColors.TextSecondary)
+                // 关闭按钮：浅灰背景胶囊 + 关闭图标，与右侧重置按钮样式保持一致
+                Surface(
+                    onClick = onDismiss,
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xFFF5F5F5),
+                    border = BorderStroke(1.dp, Color(0xFFE0E0E0))
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = AppColors.TextSecondary
+                        )
+                        Text(
+                            "关闭",
+                            color = AppColors.TextSecondary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
                 Text("高级筛选", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
                 // 重置按钮：浅灰背景胶囊 + 刷新图标，点击只重置草稿不退出弹窗
