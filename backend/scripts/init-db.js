@@ -1084,6 +1084,8 @@ const MIGRATIONS = [
       -- 重建物化视图 mv_project_user_settlement_status
       -- 修改点：CASE WHEN 增加 p.status = 'settled' 分支，确保已结算工程状态正确识别
       -- 注意：使用 DROP + CREATE 强制重建，避免 IF NOT EXISTS 导致陈旧定义保留
+      -- 依赖修复：V1.9 创建的兼容普通视图 v_project_user_settlement_status 依赖物化视图，必须先 DROP 兼容视图，再 DROP 物化视图
+      DROP VIEW IF EXISTS v_project_user_settlement_status;
       DROP MATERIALIZED VIEW IF EXISTS mv_project_user_settlement_status;
 
       CREATE MATERIALIZED VIEW mv_project_user_settlement_status AS
