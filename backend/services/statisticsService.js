@@ -685,9 +685,9 @@ module.exports = {
    *   - year_project_count: 今年创建的所有工程份数（不限结算状态，按project_id去重）
    *   - year_project_amount: 今年创建的所有工程总额（projects.total_amount之和，工程级）
    *
-   * 卡片4 - 月均收入：
-   *   - monthly_avg_count: 月均份数 = 今年已结算工程数 / 当前月份（工程级）
-   *   - monthly_avg_amount: 月均金额 = 今年个人已结算工资 / 当前月份（个人级）
+   * 卡片4 - 月均数据：
+   *   - monthly_avg_count: 月均份数 = 今年至今所有工程份数（不区分状态、不按人分账） / 当前月份，四舍五入取整
+   *   - monthly_avg_amount: 月均金额 = 今年至今所有工程按分配方式算出的个人工资合计 / 当前月份
    *
    * @param {Object} params
    * @param {number} params.userId - 当前用户ID
@@ -843,51 +843,101 @@ module.exports = {
     const yearProjectCount = parseInt(yearProjectResult.rows[0].year_project_count) || 0;
     const yearProjectAmount = parseFloat(yearProjectResult.rows[0].year_project_amount) || 0;
 
-    // ========== 卡片4：月均收入 ==========
-    // 份数（工程级）：今年结算的工程数 / 当前月份
-    // 金额（个人级）：今年个人已结算工资合计 / 当前月份
-    // 关键：
-    //   1. wage_distributions 仅在结算时生成，其 created_at 即为结算时间
-    //   2. "今年"按结算时间过滤，而非工程创建时间（避免去年工程今年结算被漏算）
-    //   3. settlement_id IS NOT NULL 过滤：wage_distributions.settlement_id 是 ON DELETE SET NULL，
-    //      结算被删除后记录仍存在但 settlement_id 变 NULL，必须排除这些无效记录避免金额重复累加
-    // 性能优化：
-    //   - 合并两个SQL为一次查询，减少1次ROUND TRIP
-    //   - 用范围查询替代 EXTRACT(YEAR FROM ...)，可走 idx_wage_distributions_user_settled_year 部分索引
+    // ========== 卡片4：月均数据 ==========
+    // 需求口径（2026-07 变更）：
+    //   1. 份数：今年至今所有工程份数（不区分状态、不按人分账）/ 当前月份，四舍五入取整
+    //      例：今年 30 份工程，7 月时：30/7=4.285 → round → 4 份
+    //   2. 金额：今年至今所有工程按分配方式算出的个人工资合计 / 当前月份
+    //      - 覆盖所有状态（含 preparing/constructing/settling/settled/canceled 中的进行中数据）
+    //      - 已结算：直接用 wage_distributions.amount（真实分账）
+    //      - 未结算：按 salary_distribution 规则从 subprojects.amount 推算个人应得
+    //      - admin/documenter：用工程总额（sp_agg.sp_total）合计
+    //   3. 按工程创建时间（p.created_at）归年，不按结算时间
 
-    let yearSettledQuery = `
-      SELECT
-        COUNT(DISTINCT p.id) AS year_settled_count,
-        COALESCE(SUM(wd.amount), 0) AS year_settled_user_amount
-      FROM wage_distributions wd
-      INNER JOIN subprojects sp ON wd.subproject_id = sp.id
-      INNER JOIN projects p ON sp.project_id = p.id
-      WHERE wd.user_id = $1
-        AND wd.settlement_id IS NOT NULL
-        AND wd.created_at >= $2::date AND wd.created_at < $3::date
-    `;
-    let yearSettledParams = [userId, yearStart, nextYearStart];
+    // ---------- (a) 今年所有工程数（工程级，不按人分账、不区分状态） ----------
+    const yearAllProjectsResult = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM projects
+       WHERE created_at >= $1::date AND created_at < $2::date`,
+      [yearStart, nextYearStart]
+    );
+    const yearAllProjectCount = parseInt(yearAllProjectsResult.rows[0].cnt) || 0;
+
+    // ---------- (b) 今年所有工程的个人应得工资合计 ----------
+    // 逻辑：对每个"今年创建的工程"，
+    //   - 若工程已在今年产生结算记录（wage_distributions），累加 wd.amount
+    //   - 否则按 salary_distribution 规则从 subprojects.amount 推算个人应得
+    // 用 CASE 表达式在一次查询完成，避免多次往返
+    let yearAllAmountQuery;
+    let yearAllAmountParams;
 
     if (isConstructorUser) {
-      yearSettledQuery += `
-        AND EXISTS (
-          SELECT 1 FROM project_workers pw
-          WHERE pw.project_id = p.id AND pw.user_id = $1
-        )
+      // 施工员：按个人分摊
+      yearAllAmountQuery = `
+        SELECT COALESCE(SUM(
+          CASE
+            -- 已结算：用 wage_distributions 真实分账
+            WHEN wd_agg.settled_amount > 0 THEN wd_agg.settled_amount
+            -- 未结算：按 salary_distribution 推算
+            WHEN p.salary_distribution = 'work_days' AND COALESCE(pw_agg.total_workdays, 0) > 0 THEN
+              sp_agg.sp_total * (COALESCE(pw_agg.user_workdays, 0) / pw_agg.total_workdays)
+            ELSE
+              sp_agg.sp_total / GREATEST(COALESCE(pw_agg.worker_count, 0), 1)
+          END
+        ), 0) AS year_all_amount
+        FROM projects p
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(sp.amount), 0) AS sp_total
+          FROM subprojects sp
+          WHERE sp.project_id = p.id
+        ) sp_agg ON true
+        LEFT JOIN LATERAL (
+          SELECT
+            COUNT(DISTINCT pw2.user_id) AS worker_count,
+            COALESCE(SUM(pw2.workdays), 0) AS total_workdays,
+            COALESCE(MAX(CASE WHEN pw2.user_id = $1 THEN pw2.workdays END), 0) AS user_workdays
+          FROM project_workers pw2
+          WHERE pw2.project_id = p.id
+        ) pw_agg ON true
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(wd.amount), 0) AS settled_amount
+          FROM wage_distributions wd
+          INNER JOIN subprojects sp2 ON wd.subproject_id = sp2.id
+          WHERE sp2.project_id = p.id
+            AND wd.user_id = $1
+            AND wd.settlement_id IS NOT NULL
+        ) wd_agg ON true
+        WHERE p.created_at >= $2::date AND p.created_at < $3::date
+          AND EXISTS (
+            SELECT 1 FROM project_workers pw
+            WHERE pw.project_id = p.id AND pw.user_id = $1
+          )
       `;
+      yearAllAmountParams = [userId, yearStart, nextYearStart];
+    } else {
+      // admin/documenter：用工程总额（子项目金额合计）
+      yearAllAmountQuery = `
+        SELECT COALESCE(SUM(sp_agg.sp_total), 0) AS year_all_amount
+        FROM projects p
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(sp.amount), 0) AS sp_total
+          FROM subprojects sp
+          WHERE sp.project_id = p.id
+        ) sp_agg ON true
+        WHERE p.created_at >= $1::date AND p.created_at < $2::date
+      `;
+      yearAllAmountParams = [yearStart, nextYearStart];
     }
 
-    const yearSettledResult = await pool.query(yearSettledQuery, yearSettledParams);
-    const yearSettledCount = parseInt(yearSettledResult.rows[0].year_settled_count) || 0;
-    const yearSettledUserAmount = parseFloat(yearSettledResult.rows[0].year_settled_user_amount) || 0;
+    const yearAllAmountResult = await pool.query(yearAllAmountQuery, yearAllAmountParams);
+    const yearAllAmount = parseFloat(yearAllAmountResult.rows[0].year_all_amount) || 0;
 
-    // 月均收入 = 今年个人已结算金额 / 当前月份（至少为1避免除零）
-    // 份数（工程级）：直接显示今年已结算工程总数（整数），不除以月份
-    // 金额（个人级）：今年个人已结算工资 / 当前月份
-    const monthlyAvgCount = yearSettledCount;
-    const monthlyAvgAmount = yearSettledUserAmount / monthDivisor;
+    // ---------- (c) 计算月均：除以当前月份 ----------
+    // 份数：四舍五入取整，避免出现小数（如 30/7=4.285 → 4）
+    // 金额：保留 2 位小数
+    const monthlyAvgCount = Math.round(yearAllProjectCount / monthDivisor);
+    const monthlyAvgAmount = yearAllAmount / monthDivisor;
 
-    logger.info(`[getDashboard] 卡片4中间值: yearSettledCount=${yearSettledCount}, yearSettledUserAmount=${yearSettledUserAmount}, monthDivisor=${monthDivisor}, monthlyAvgCount=${monthlyAvgCount}, monthlyAvgAmount=${monthlyAvgAmount}`);
+    logger.info(`[getDashboard] 卡片4中间值: yearAllProjectCount=${yearAllProjectCount}, yearAllAmount=${yearAllAmount}, monthDivisor=${monthDivisor}, monthlyAvgCount=${monthlyAvgCount}, monthlyAvgAmount=${monthlyAvgAmount}`);
 
     const result = {
       // 卡片1：待结算工程
@@ -899,7 +949,7 @@ module.exports = {
       // 卡片3：今年工程量（所有状态）
       year_project_count: yearProjectCount,
       year_project_amount: Math.round(yearProjectAmount * 100) / 100,
-      // 卡片4：月均收入（份数为工程总数整数，金额为月均）
+      // 卡片4：月均数据（份数=今年工程数/月份四舍五入，金额=今年个人应得工资/月份）
       monthly_avg_count: monthlyAvgCount,
       monthly_avg_amount: Math.round(monthlyAvgAmount * 100) / 100
     };

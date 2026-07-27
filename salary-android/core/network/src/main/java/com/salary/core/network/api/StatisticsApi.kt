@@ -47,7 +47,7 @@ interface StatisticsApi {
  * - 待结算工程：unsettledProjectCount + unsettledAmount
  * - 预支金额：advanceCount + advanceTotal
  * - 今年工程量：yearProjectCount + yearProjectAmount
- * - 月均收入：monthlyAvgCount + monthlyAvgAmount
+ * - 月均数据：monthlyAvgCount + monthlyAvgAmount
  */
 @Serializable
 data class DashboardStatsDto(
@@ -69,10 +69,10 @@ data class DashboardStatsDto(
     /** 卡片3：今年创建的所有工程总额（工程级 total_amount 合计） */
     @SerialName("year_project_amount")
     val yearProjectAmount: Double = 0.0,
-    /** 卡片4：月均份数（今年已结算工程总数，工程级整数） */
+    /** 卡片4：月均份数（今年至今所有工程数 / 当前月份，四舍五入取整） */
     @SerialName("monthly_avg_count")
     val monthlyAvgCount: Int = 0,
-    /** 卡片4：月均金额（今年个人已结算工资 / 当前月份，个人级） */
+    /** 卡片4：月均金额（今年至今所有工程按分配方式算出的个人工资合计 / 当前月份） */
     @SerialName("monthly_avg_amount")
     val monthlyAvgAmount: Double = 0.0
 )

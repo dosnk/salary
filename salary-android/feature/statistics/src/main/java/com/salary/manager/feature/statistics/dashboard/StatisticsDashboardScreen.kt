@@ -287,7 +287,7 @@ fun StatisticsDashboardScreen(
                                                     "待结算工程" -> "settling"
                                                     "预支金额" -> "advance"
                                                     "今年工程量" -> "settled"
-                                                    "月均收入" -> "settled"
+                                                    "月均数据" -> "settled"
                                                     else -> "settling"
                                                 }
                                                 if (statsFilterType == "advance") {
@@ -772,7 +772,7 @@ data class StatCardData(
  * - 待结算工程：已完工未结算工程份数（工程级）+ 应收总额（个人级）
  * - 预支金额：未结算预支份数+总预支（个人维度）
  * - 今年工程量：今年所有状态工程份数+工程总额（工程级）
- * - 月均收入：今年已结算工程月均份数（工程级）+ 月均金额（个人级）
+ * - 月均数据：今年工程数/月份四舍五入份数 + 今年个人应得工资/月份金额
  */
 @Composable
 fun StatsGridSection(
@@ -803,7 +803,7 @@ fun StatsGridSection(
             amountLabel = "总额："
         ),
         StatCardData(
-            title = "月均收入",
+            title = "月均数据",
             count = summary.monthlyAvgCount.toString(),
             amount = summary.monthlyAvgAmount,
             iconColor = Color(0xFF9333EA), // 紫色
@@ -890,7 +890,7 @@ fun StatCardItem(
                             "待结算工程" -> "⏱"
                             "预支金额" -> "💰"
                             "今年工程量" -> "✓"
-                            "月均收入" -> "📅"
+                            "月均数据" -> "📅"
                             else -> "📅"
                         },
                         fontSize = 14.sp,

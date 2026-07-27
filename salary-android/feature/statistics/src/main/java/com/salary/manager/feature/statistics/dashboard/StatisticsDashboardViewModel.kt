@@ -197,7 +197,7 @@ class StatisticsDashboardViewModel @Inject constructor(
      * - 待结算工程：unsettledProjectCount + unsettledAmount（已完工未结算，份数工程级，金额个人级）
      * - 预支金额：advanceCount + advanceTotal（未结算预支）
      * - 今年工程量：yearProjectCount + yearProjectAmount（今年所有状态工程，工程级总额）
-     * - 月均收入：monthlyAvgCount + monthlyAvgAmount（份数工程级，金额个人级）
+     * - 月均数据：monthlyAvgCount + monthlyAvgAmount（份数=今年工程数/月份四舍五入，金额=今年个人应得工资/月份）
      */
     private suspend fun loadSalarySheetData() {
         try {
@@ -263,7 +263,7 @@ class StatisticsDashboardViewModel @Inject constructor(
                     // 卡片3：今年工程量（所有状态，工程级总额）
                     settledProjectCount = d.yearProjectCount,
                     settledProjectTotalAmount = d.yearProjectAmount,
-                    // 卡片4：月均收入（份数工程级，金额个人级）
+                    // 卡片4：月均数据（份数=今年工程数/月份四舍五入，金额=今年个人应得工资/月份）
                     // settledUserAmount 存储今年个人总额，供其他地方使用
                     settledUserAmount = d.monthlyAvgAmount * java.time.LocalDate.now().monthValue.coerceAtLeast(1),
                     monthlyAvgCount = d.monthlyAvgCount,
@@ -408,7 +408,7 @@ class StatisticsDashboardViewModel @Inject constructor(
      * - "待结算工程"卡片 → settling → 查询已完工且结算状态为settling的工程（个人维度）
      * - "预支金额"卡片 → advance → 切换到预支Tab（不加载工程列表）
      * - "今年工程量"卡片 → settled → 查询今年已结算工程（工程总额）
-     * - "月均收入"卡片 → settled → 查询今年已结算工程（与今年工程量共用）
+     * - "月均数据"卡片 → settled → 查询今年已结算工程（与今年工程量共用）
      *
      * 分页：首次加载第1页，后续滚动到底部由 loadMoreStatsProjects() 追加
      */
@@ -832,7 +832,7 @@ class StatisticsDashboardViewModel @Inject constructor(
  * 数据来源：
  * - 待结算工程/预支：/v1/salary-sheet/projects（个人维度）
  * - 今年工程量：/v1/projects?settlementStatus=settled（工程总额）
- * - 月均收入：/v1/salary-sheet/settled-projects（个人分摊金额）
+ * - 月均数据：/v1/salary-sheet/settled-projects（个人分摊金额）
  */
 data class SettlementSummary(
     // ===== 待结算工程（份数工程级，金额个人级） =====
@@ -853,7 +853,7 @@ data class SettlementSummary(
     val settledProjectCount: Int = 0,
     /** 今年创建的所有工程总额（工程级 total_amount 合计） */
     val settledProjectTotalAmount: Double = 0.0,
-    // ===== 月均收入（份数工程级，金额个人级） =====
+    // ===== 月均数据（份数=今年工程数/月份四舍五入，金额=今年个人应得工资/月份） =====
     /** 今年已结算工程个人分摊总额 */
     val settledUserAmount: Double = 0.0,
     /** 月均份数（工程级整数，今年已结算工程总数） */
