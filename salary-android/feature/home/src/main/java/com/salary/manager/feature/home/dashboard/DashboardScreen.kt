@@ -1397,6 +1397,14 @@ private fun ProjectInfoScrollRow(
 ) {
     val scrollState = rememberScrollState()
 
+    // 性能优化：日期格式化和字符串拼接结果用 remember 缓存，
+    // 避免 ProjectHistoryCard 因外层 uiState 变化被重组时重复执行 SimpleDateFormat 解析
+    val workerNamesText = remember(workerNames) {
+        if (workerNames.isEmpty()) "" else "施工人员：${workerNames.joinToString("、")}"
+    }
+    val createdText = remember(createdAt) { "创建 ${DateFormatter.formatDate(createdAt)}" }
+    val updatedText = remember(updatedAt) { "更新 ${DateFormatter.formatDate(updatedAt)}" }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1405,7 +1413,7 @@ private fun ProjectInfoScrollRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // 施工人员（左侧，有施工人员时显示）
-        if (workerNames.isNotEmpty()) {
+        if (workerNamesText.isNotEmpty()) {
             // 浅绿背景胶囊，标识施工人员
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -1414,7 +1422,7 @@ private fun ProjectInfoScrollRow(
                     .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
                 Text(
-                    text = "施工人员：${workerNames.joinToString("、")}",
+                    text = workerNamesText,
                     fontSize = 12.sp,
                     color = AppColors.Green400,
                     maxLines = 1,
@@ -1424,14 +1432,14 @@ private fun ProjectInfoScrollRow(
         }
         // 创建时间（中间，纯文字灰色弱化）
         Text(
-            text = "创建 ${DateFormatter.formatDate(createdAt)}",
+            text = createdText,
             fontSize = 12.sp,
             color = AppColors.TextTertiary,
             maxLines = 1
         )
         // 更新时间（右侧，纯文字灰色弱化）
         Text(
-            text = "更新 ${DateFormatter.formatDate(updatedAt)}",
+            text = updatedText,
             fontSize = 12.sp,
             color = AppColors.TextTertiary,
             maxLines = 1
@@ -1452,6 +1460,40 @@ private fun SubprojectTable(
     val scrollState = rememberScrollState()
     // 固定总宽度，超过容器宽度时启用水平滚动
     val tableWidth = 510.dp
+
+    // 性能优化：一次性预计算所有行的显示文本和备注列表，避免每次重组都重复执行
+    // String.format 和字符串拼接（30个子项目 × 3次格式化 = 90次 String.format/卡片/重组）
+    data class NoteEntry(val index: Int, val sub: SubprojectUiModel, val label: String, val content: String)
+    data class RowText(
+        val index: Int,
+        val sub: SubprojectUiModel,
+        val indexText: String,
+        val sizeText: String,
+        val quantityText: String
+    )
+    val rows = remember(subprojects) {
+        subprojects.mapIndexed { index, sub ->
+            RowText(
+                index = index,
+                sub = sub,
+                indexText = "${index + 1}",
+                sizeText = "${formatNumber(sub.length / 100.0)} × ${formatNumber(sub.width / 100.0)}",
+                quantityText = "${formatNumber(sub.quantity)} ${sub.unitDisplayName}"
+            )
+        }
+    }
+    val noteList = remember(subprojects) {
+        buildList {
+            subprojects.forEachIndexed { index, sub ->
+                if (!sub.remark.isNullOrBlank()) {
+                    add(NoteEntry(index, sub, "备注", sub.remark))
+                }
+                if (!sub.measuredNote.isNullOrBlank()) {
+                    add(NoteEntry(index, sub, "实测", sub.measuredNote))
+                }
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -1484,9 +1526,9 @@ private fun SubprojectTable(
 
         // 表体（与表头对齐，相同列宽）- 每行底部加浅灰水平线
         // 用 key(sub.id) 包裹每行，让 Compose 在重组时能复用已组合的行，避免重复组合
-        subprojects.forEachIndexed { index, sub ->
-            key(sub.id) {
-                val isLastRow = index == subprojects.lastIndex
+        rows.forEach { row ->
+            key(row.sub.id) {
+                val isLastRow = row.index == rows.lastIndex
                 Row(
                     modifier = Modifier
                         .width(tableWidth)
@@ -1501,17 +1543,14 @@ private fun SubprojectTable(
                         }
                         .padding(vertical = 6.dp, horizontal = 2.dp)
                 ) {
-                    TableCell("${index + 1}", 40.dp)
-                    TableCell(sub.spaceTypeName, 80.dp)
-                    TableCell(sub.constructionPlanName, 100.dp)
+                    TableCell(row.indexText, 40.dp)
+                    TableCell(row.sub.spaceTypeName, 80.dp)
+                    TableCell(row.sub.constructionPlanName, 100.dp)
                     // 数据库存储厘米，UI显示时除以100转为米（与表头"尺寸(米)"单位一致）
-                    TableCell("${formatNumber(sub.length / 100.0)} × ${formatNumber(sub.width / 100.0)}", 110.dp)
-                    TableCell(
-                        "${formatNumber(sub.quantity)} ${sub.unitDisplayName}",
-                        90.dp
-                    )
+                    TableCell(row.sizeText, 110.dp)
+                    TableCell(row.quantityText, 90.dp)
                     // sub.amount 已由 AmountFormatter.format 格式化为 "¥12,345.00" 格式，直接显示即可
-                    TableCell(sub.amount, 90.dp, color = AppColors.Green400)
+                    TableCell(row.sub.amount, 90.dp, color = AppColors.Green400)
                 }
             }
         }
@@ -1520,21 +1559,14 @@ private fun SubprojectTable(
         // 不再分散在子项目行之间，避免打断表格视觉连续性
         // 每条备注以"序号. 空间-方案"作为前缀标识所属子项目
         // 同时收集"普通备注"和"实测备注"，统一渲染，实测备注用橙色标签区分
-        data class NoteEntry(val index: Int, val sub: SubprojectUiModel, val label: String, val content: String)
-        val noteList = buildList {
-            subprojects.forEachIndexed { index, sub ->
-                if (!sub.remark.isNullOrBlank()) {
-                    add(NoteEntry(index, sub, "备注", sub.remark))
-                }
-                if (!sub.measuredNote.isNullOrBlank()) {
-                    add(NoteEntry(index, sub, "实测", sub.measuredNote))
-                }
-            }
-        }
         if (noteList.isNotEmpty()) {
             // 备注区与末行表格保持间距，避免视觉粘连
             Spacer(modifier = Modifier.height(8.dp))
             noteList.forEach { entry ->
+                // 性能优化：每条备注的完整文本预计算并缓存
+                val entryText = remember(entry) {
+                    "${entry.index + 1}. ${entry.sub.spaceTypeName}-${entry.sub.constructionPlanName}：${entry.content}"
+                }
                 Row(
                     modifier = Modifier
                         .width(tableWidth)
@@ -1559,7 +1591,7 @@ private fun SubprojectTable(
                     // 备注内容：灰色小字，带序号标识，最多2行省略
                     // 格式："序号. 空间-方案：备注内容"，让用户能定位到具体子项目
                     Text(
-                        text = "${entry.index + 1}. ${entry.sub.spaceTypeName}-${entry.sub.constructionPlanName}：${entry.content}",
+                        text = entryText,
                         fontSize = 11.sp,
                         color = AppColors.TextTertiary,
                         maxLines = 2,

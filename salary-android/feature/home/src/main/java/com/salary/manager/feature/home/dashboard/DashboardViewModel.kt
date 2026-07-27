@@ -2,6 +2,7 @@ package com.salary.manager.feature.home.dashboard
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.compose.runtime.Immutable
 import com.salary.core.common.util.NetworkErrorHandler
 import com.salary.core.common.util.NetworkUtil
 import com.salary.core.common.util.AmountFormatter
@@ -57,7 +58,11 @@ data class SchemeInfo(
 
 /**
  * 工程历史UI模型
+ *
+ * @Immutable 标注：告知 Compose 编译器该类型所有字段不可变，
+ * 当实例未变时可安全跳过依赖该参数的 Composable 重组，减少主页滑动时的不必要重组
  */
+@Immutable
 data class ProjectHistoryUiModel(
     val id: Int,
     val name: String,
@@ -73,7 +78,10 @@ data class ProjectHistoryUiModel(
 
 /**
  * 子项目UI模型
+ *
+ * @Immutable 标注：与 ProjectHistoryUiModel 配合，让 SubprojectTable 在参数未变时能被跳过
  */
+@Immutable
 data class SubprojectUiModel(
     val id: Int,
     val spaceTypeName: String,
