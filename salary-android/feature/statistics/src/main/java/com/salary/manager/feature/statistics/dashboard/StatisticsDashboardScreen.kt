@@ -282,6 +282,7 @@ fun StatisticsDashboardScreen(
                                         StatsGridSection(
                                             summary = settlementSummary,
                                             formatNumber = formatNumber,
+                                            canViewStats = canSettle,
                                             onCardClick = { type ->
                                                 statsFilterType = when (type) {
                                                     "待结算工程" -> "settling"
@@ -763,7 +764,9 @@ data class StatCardData(
     val amount: Double,
     val iconColor: Color,
     val amountLabel: String = "总额：",
-    val countSuffix: String = "份"
+    val countSuffix: String = "份",
+    /** 是否有数据可展示（false时卡片显示"暂无数据"） */
+    val hasData: Boolean = true
 )
 
 /**
@@ -778,36 +781,44 @@ data class StatCardData(
 fun StatsGridSection(
     summary: SettlementSummary,
     formatNumber: (Double?) -> String,
-    onCardClick: (String) -> Unit = {}
+    onCardClick: (String) -> Unit = {},
+    /** 是否有权限查看统计数据（仅施工员可查看，管理员/资料员显示"暂无数据"） */
+    canViewStats: Boolean = true
 ) {
+    // 管理员/资料员无权查看个人统计数据，卡片显示"暂无数据"
+    val hasData = canViewStats
     val cards = listOf(
         StatCardData(
             title = "待结算工程",
             count = summary.totalProjects.toString(),
             amount = summary.grandTotal,
             iconColor = Color(0xFFE6A23C), // 橙色
-            amountLabel = "应收："
+            amountLabel = "应收：",
+            hasData = hasData
         ),
         StatCardData(
             title = "预支金额",
             count = summary.advanceCount.toString(),
             amount = summary.totalAdvance,
             iconColor = Color(0xFF409EFF), // 蓝色
-            amountLabel = "总额："
+            amountLabel = "总额：",
+            hasData = hasData
         ),
         StatCardData(
             title = "今年工程量",
             count = summary.settledProjectCount.toString(),
             amount = summary.settledProjectTotalAmount,
             iconColor = Color(0xFF84CC16), // 绿色
-            amountLabel = "总额："
+            amountLabel = "总额：",
+            hasData = hasData
         ),
         StatCardData(
             title = "月均数据",
             count = summary.monthlyAvgCount.toString(),
             amount = summary.monthlyAvgAmount,
             iconColor = Color(0xFF9333EA), // 紫色
-            amountLabel = "月均："
+            amountLabel = "月均：",
+            hasData = hasData
         )
     )
 
@@ -865,7 +876,7 @@ fun StatCardItem(
             .fillMaxWidth()
             .shadow(1.dp, RoundedCornerShape(8.dp))
             .border(1.dp, Color(0xFFE6F4D0), RoundedCornerShape(8.dp))
-            .clickable { onClick() },
+            .clickable(enabled = card.hasData) { onClick() },
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
@@ -908,34 +919,44 @@ fun StatCardItem(
                 )
             }
             Spacer(modifier = Modifier.height(6.dp))
-            // 第2行：份数（缩进40dp，与图标右侧对齐）
-            Text(
-                text = "${card.count}${card.countSuffix}",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF333842),
-                modifier = Modifier.padding(start = 40.dp)
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            // 第3行：金额标签 + 金额数（缩进40dp，与图标右侧对齐）
-            // 标签固定宽度避免被长金额挤压，金额单行省略防止溢出卡片
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Spacer(modifier = Modifier.width(40.dp))
+            if (card.hasData) {
+                // 第2行：份数（缩进40dp，与图标右侧对齐）
                 Text(
-                    text = card.amountLabel,
-                    fontSize = 12.sp,
-                    color = Color(0xFF64748B)
-                )
-                Text(
-                    text = "¥${formatNumber(card.amount)}",
-                    fontSize = 13.sp,
+                    text = "${card.count}${card.countSuffix}",
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    color = card.iconColor,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
+                    color = Color(0xFF333842),
+                    modifier = Modifier.padding(start = 40.dp)
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                // 第3行：金额标签 + 金额数（缩进40dp，与图标右侧对齐）
+                // 标签固定宽度避免被长金额挤压，金额单行省略防止溢出卡片
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Spacer(modifier = Modifier.width(40.dp))
+                    Text(
+                        text = card.amountLabel,
+                        fontSize = 12.sp,
+                        color = Color(0xFF64748B)
+                    )
+                    Text(
+                        text = "¥${formatNumber(card.amount)}",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = card.iconColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                }
+            } else {
+                // 无数据权限时显示"暂无数据"
+                Text(
+                    text = "暂无数据",
+                    fontSize = 14.sp,
+                    color = Color(0xFF9CA3AF),
+                    modifier = Modifier.padding(start = 40.dp, top = 4.dp)
                 )
             }
         }
