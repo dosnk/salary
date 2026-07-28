@@ -150,4 +150,8 @@ dependencies {
     // Core
     implementation(libs.core.ktx)
     implementation(libs.activity.compose)
+
+    // Coil 图片加载（自定义 ImageLoader 携带 Authorization 头访问 /upload 附件）
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
 }
