@@ -1,7 +1,8 @@
 package com.salary.manager.feature.home.dashboard
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -226,10 +227,14 @@ fun AttachmentGridDialog(
  * - 高度按原始长宽比自适应（不裁剪、不拉伸变形）
  * - 图片小于弹窗宽度时拉伸至弹窗宽度（保持长宽比）
  *
+ * 注：使用 combinedClickable 并显式提供空的 onLongClick，
+ * 屏蔽长按默认行为，避免长按触发未处理的手势路径导致闪退。
+ *
  * @param file 文件DTO
  * @param fullUrl 完整URL（由外层预计算）
  * @param onClick 点击回调
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MediaGridItem(
     file: FileDto,
@@ -243,7 +248,10 @@ private fun MediaGridItem(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {}
+            )
             .padding(vertical = 6.dp, horizontal = 4.dp)
     ) {
         // ===== 缩略图区域：宽度占满弹窗，高度按长宽比自适应 =====
@@ -349,13 +357,19 @@ private fun MediaGridItem(
 /**
  * 非媒体文件列表项
  * 显示文件图标、文件名、大小和上传日期
+ *
+ * 注：使用 combinedClickable 屏蔽长按默认行为，防止长按触发未处理的手势路径导致闪退。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun NonMediaFileItem(file: FileDto, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {}
+            )
             .padding(vertical = 10.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

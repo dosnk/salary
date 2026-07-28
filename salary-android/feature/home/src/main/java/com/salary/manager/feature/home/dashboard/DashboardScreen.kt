@@ -67,6 +67,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -140,9 +141,14 @@ fun DashboardScreen(
     // 让 HistoryHeader 子组件在参数未变时可被跳过重组
     val onMonthDialogClick = remember { { showMonthDialog = true } }
 
-    // 文件选择器：监听pendingUploadProjectId变化触发，支持多选
+    // 图库选择器：调用 Android 官方 Photo Picker，直接进入手机图库
+    // 特点：
+    //   1. 支持图片和视频（ImageAndVideo）
+    //   2. 支持多选（PickMultipleVisualMedia，最多 20 项，可按需调整）
+    //   3. 无需运行时权限（系统托管 UI，返回临时可读 URI）
+    //   4. Android 11 及以下会自动降级为兼容的图库选择器
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetMultipleContents()
+        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 20)
     ) { uris ->
         if (uris.isNotEmpty()) {
             viewModel.uploadAttachments(uris)
@@ -152,7 +158,9 @@ fun DashboardScreen(
     }
     LaunchedEffect(uiState.pendingUploadProjectId) {
         uiState.pendingUploadProjectId?.let {
-            filePickerLauncher.launch("*/*")
+            filePickerLauncher.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+            )
         }
     }
 
@@ -210,26 +218,33 @@ fun DashboardScreen(
             onFileClick = { file ->
                 // 非媒体文件：用系统应用打开
                 scope.launch {
-                    val fullUrl = fileUrls[file.id] ?: viewModel.buildFileUrl(file.fileUrl)
-                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                        setDataAndType(android.net.Uri.parse(fullUrl), file.type ?: "*/*")
-                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
                     try {
-                        context.startActivity(intent)
-                    } catch (e: Exception) {
-                        // 没有可用应用打开该类型文件时，回退为用浏览器打开
-                        val browserIntent = android.content.Intent(
-                            android.content.Intent.ACTION_VIEW,
-                            android.net.Uri.parse(fullUrl)
-                        ).apply {
+                        val fullUrl = fileUrls[file.id] ?: viewModel.buildFileUrl(file.fileUrl)
+                        // 部分旧数据附件路径包含中文（如 /upload/202602/状元府6栋1403/xxx.jpg），
+                        // 直接传给 Uri.parse 可能引发 URISyntaxException，此处按路径分段做 URL 编码。
+                        val safeUrl = encodePathSegments(fullUrl)
+                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                            setDataAndType(android.net.Uri.parse(safeUrl), file.type ?: "*/*")
                             addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                         }
                         try {
-                            context.startActivity(browserIntent)
-                        } catch (_: Exception) {
-                            // 静默处理
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            // 没有可用应用打开该类型文件时，回退为用浏览器打开
+                            val browserIntent = android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse(safeUrl)
+                            ).apply {
+                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            try {
+                                context.startActivity(browserIntent)
+                            } catch (_: Exception) {
+                                // 静默处理，防止未捕获异常导致进程崩溃
+                            }
                         }
+                    } catch (_: Throwable) {
+                        // 兜底：任何异常均静默处理，避免长按/点击后闪退
                     }
                 }
             }
@@ -1915,6 +1930,55 @@ private fun formatYearMonth(yearMonth: String): String {
         "${year}年${month}月"
     } catch (_: Exception) {
         yearMonth
+    }
+}
+
+/**
+ * 对 URL 路径中的非 ASCII 字符（如中文）按路径分段做 URL 编码。
+ *
+ * 场景：旧数据附件路径包含中文（如 /upload/202602/状元府6栋1403/xxx.jpg），
+ * 直接交给 Uri.parse 或 Intent 会引发 URISyntaxException / ActivityNotFoundException，
+ * 严重时导致进程崩溃。此函数保留协议头、"/"、"?" 分隔符不变，仅对分段做 UTF-8 编码。
+ *
+ * 幂等：已含 % 编码的分段（例如"%E7%8A%B6"）不会再次编码。
+ *
+ * @param url 原始 URL（可能包含中文或空格）
+ * @return 编码后的安全 URL
+ */
+private fun encodePathSegments(url: String): String {
+    if (url.isEmpty()) return url
+    return try {
+        // 拆分 query
+        val questionIdx = url.indexOf('?')
+        val pathPart = if (questionIdx >= 0) url.substring(0, questionIdx) else url
+        val queryPart = if (questionIdx >= 0) url.substring(questionIdx) else ""
+
+        // 拆分协议头，只对 path 部分逐段编码
+        val schemeEnd = pathPart.indexOf("://")
+        val (prefix, path) = if (schemeEnd >= 0) {
+            val hostEnd = pathPart.indexOf('/', schemeEnd + 3)
+            if (hostEnd >= 0) {
+                pathPart.substring(0, hostEnd) to pathPart.substring(hostEnd)
+            } else {
+                pathPart to ""
+            }
+        } else {
+            "" to pathPart
+        }
+
+        val encodedPath = path.split('/').joinToString("/") { seg ->
+            when {
+                seg.isEmpty() -> ""
+                // 已含 % 编码则视为已编码，保持不变，避免重复编码
+                seg.contains('%') -> seg
+                else -> java.net.URLEncoder.encode(seg, "UTF-8")
+                    // URLEncoder 会把空格编成 "+", 但 URL path 里应为 %20
+                    .replace("+", "%20")
+            }
+        }
+        prefix + encodedPath + queryPart
+    } catch (_: Throwable) {
+        url
     }
 }
 
