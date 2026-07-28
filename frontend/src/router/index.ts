@@ -60,12 +60,6 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '消息中心', requiresAuth: true }
   },
   {
-    path: '/migrate',
-    name: 'Migration',
-    component: () => import('@/views/Migration.vue'),
-    meta: { title: '数据迁移', requiresAuth: true, roles: ['admin'] }
-  },
-  {
     path: '/admin/space-type',
     name: 'SpaceTypeManage',
     component: () => import('@/views/admin/SpaceTypeManage.vue'),

@@ -6,6 +6,15 @@
  *   - 支持 INSERT INTO 格式（pg_dump --column-inserts 格式）
  *   - 自动检测导出文件格式
  *
+ * v3.1 安全加固：
+ *   - 新增 --yes 安全护栏：生产环境（NODE_ENV=production）必须显式加 --yes 才可执行
+ *   - 3 秒倒计时预警（可 Ctrl+C 取消），--force 或 --yes 跳过
+ *   - 金额/数字字段保留字符串精度（避免 IEEE754 浮点损失）
+ *   - length/width 单位换算改用字符串移位（"3.5"→"350" 而非 3.5*100）
+ *   - INSERT 解析失败直接抛错阻断（消除 SQL 注入路径 + 单位换算漏跑）
+ *   - 序列重置区分空表（is_called=false）与非空表
+ *   - 删除源码中的样例账号密码
+ *
  * COPY 格式说明：
  *   pg_dump 默认用 COPY 语句批量导出数据，格式如下：
  *
@@ -23,9 +32,18 @@
  *     - \.  单独一行表示数据结束
  *
  * 使用方法：
+ *   # 开发/测试环境（3 秒倒计时后自动执行）
  *   docker exec -it <容器名> node scripts/migrate-from-old.js [导出文件路径]
  *
+ *   # 生产环境（必须加 --yes 显式确认）
+ *   docker exec -it <容器名> node scripts/migrate-from-old.js /path/to/dump.sql --yes
+ *
+ *   # 跳过倒计时
+ *   docker exec -it <容器名> node scripts/migrate-from-old.js /path/to/dump.sql --force
+ *
  * 默认导出文件路径: /app/scripts/old_data_dump.sql
+ *
+ * ⚠️  执行前请务必对新库做 pg_dump 备份！
  */
 
 const path = require('path');
@@ -43,7 +61,11 @@ const log = {
 };
 
 // ===================== 配置 =====================
-const DUMP_FILE = process.argv[2] || '/app/scripts/old_data_dump.sql';
+// 命令行参数解析：区分文件路径与 flag
+const cliArgs = process.argv.slice(2);
+const CLI_YES = cliArgs.includes('--yes') || cliArgs.includes('-y');
+const CLI_FORCE = cliArgs.includes('--force');
+const DUMP_FILE = cliArgs.find(a => !a.startsWith('-')) || '/app/scripts/old_data_dump.sql';
 
 const pool = new Pool({
   user: process.env.DB_USER || 'postgres',
@@ -55,6 +77,48 @@ const pool = new Pool({
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000
 });
+
+/**
+ * 安全护栏：迁移会 TRUNCATE 18 张核心业务表（含 users/projects/files）
+ * 生产环境必须显式加 --yes 才能执行；其他环境统一 3 秒倒计时给运维反悔机会
+ *
+ * 触发条件：
+ *   - NODE_ENV=production 且未加 --yes/-y  → 直接退出
+ *   - 其他情况：3 秒倒计时后继续（除非加 --force 跳过）
+ */
+async function safetyGuard() {
+  const nodeEnv = process.env.NODE_ENV || 'development';
+  log.warn('==========================================');
+  log.warn('  ⚠️  数据迁移即将执行以下高危操作：');
+  log.warn('  1. TRUNCATE 18 张核心业务表（含 users/projects/subprojects/files）');
+  log.warn('  2. 全量导入 dump 文件数据');
+  log.warn('  3. 重置所有表序列');
+  log.warn('  4. 刷新物化视图（可能锁表）');
+  log.warn('==========================================');
+  log.warn(`  NODE_ENV : ${nodeEnv}`);
+  log.warn(`  DB_HOST  : ${process.env.DB_HOST || 'localhost'}`);
+  log.warn(`  DB_NAME  : ${process.env.DB_NAME || 'salary_system'}`);
+  log.warn(`  DUMP_FILE: ${DUMP_FILE}`);
+  log.warn('==========================================');
+
+  if (nodeEnv === 'production' && !CLI_YES) {
+    log.error('生产环境（NODE_ENV=production）必须显式加 --yes 参数才能执行迁移');
+    log.error('示例: node scripts/migrate-from-old.js /path/to/dump.sql --yes');
+    log.error('强烈建议：迁移前先备份新库！执行 pg_dump 备份新库到本地');
+    process.exit(2);
+  }
+
+  if (CLI_FORCE || CLI_YES) {
+    log.warn('已通过 --yes/--force 确认，跳过倒计时');
+    return;
+  }
+
+  // 3 秒倒计时（非交互，给运维 Ctrl+C 反悔机会）
+  for (let s = 3; s >= 1; s--) {
+    log.warn(`  ${s} 秒后开始执行... (Ctrl+C 取消)`);
+    await new Promise(r => setTimeout(r, 1000));
+  }
+}
 
 // ===================== COPY 格式数据解析 =====================
 /**
@@ -183,14 +247,61 @@ function transformValues(tableName, columns, values) {
   return values.map((value, index) => {
     const column = columns[index];
     // length 和 width 乘以 100（米 → 厘米），NULL 保持 NULL
+    // 使用字符串移位而非浮点乘法，避免精度损失（如 3.5 → "350"，不会变成 349.9999...）
     if ((column === 'length' || column === 'width') && value !== null && value !== '') {
-      const numValue = parseFloat(value);
-      if (!isNaN(numValue)) {
-        return numValue * 100;
-      }
+      return multiplyBy100AsString(String(value));
     }
     return value;
   });
+}
+
+/**
+ * 字符串数字乘以 100（等价于小数点右移 2 位），避免浮点精度损失
+ *
+ * 示例：
+ *   "3.5"   -> "350"
+ *   "1.234" -> "123.4"
+ *   "0.05"  -> "5"
+ *   "10"    -> "1000"
+ *   "-3.5"  -> "-350"
+ *
+ * @param {string} s - 字符串形式的数字
+ * @returns {string} 乘以 100 后的字符串
+ */
+function multiplyBy100AsString(s) {
+  const trimmed = s.trim();
+  if (!/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    // 非标准数字格式，退化为浮点乘法（罕见分支）
+    const num = parseFloat(trimmed);
+    return isNaN(num) ? trimmed : String(num * 100);
+  }
+  const negative = trimmed.startsWith('-');
+  const abs = negative ? trimmed.slice(1) : trimmed;
+  const dotIndex = abs.indexOf('.');
+  let integerPart, fractionPart;
+  if (dotIndex === -1) {
+    integerPart = abs;
+    fractionPart = '';
+  } else {
+    integerPart = abs.slice(0, dotIndex);
+    fractionPart = abs.slice(dotIndex + 1);
+  }
+  // 从小数部分取 2 位向左合并，剩余留作新小数
+  let result;
+  if (fractionPart.length >= 2) {
+    result = integerPart + fractionPart.slice(0, 2);
+    const rest = fractionPart.slice(2);
+    if (rest.length > 0) result += '.' + rest;
+  } else {
+    result = integerPart + fractionPart.padEnd(2, '0');
+  }
+  // 去除前导 0（保留至少 1 位整数），去除小数尾部 0
+  result = result.replace(/^0+(?=\d)/, '');
+  if (result.includes('.')) {
+    result = result.replace(/\.?0+$/, '');
+  }
+  if (result === '' || result === '-') result = '0';
+  return negative && result !== '0' ? '-' + result : result;
 }
 
 /**
@@ -314,8 +425,12 @@ function parseInsertStatement(sql) {
 /**
  * 解析单个 SQL 值字面量
  *
+ * 注意：数字保留字符串形式，避免 IEEE754 浮点精度损失
+ *   - PostgreSQL 端 numeric/decimal 列接收字符串会自动转换为精确类型
+ *   - 若走 parseFloat，金额如 1432698.5 可能变为 1432698.4999999...
+ *
  * @param {string} raw - 原始字符串（已 trim）
- * @returns {string|null|number|boolean} 解析后的值
+ * @returns {string|null|boolean} 解析后的值（数字保留字符串）
  */
 function parseSqlValue(raw) {
   if (raw === '' || raw.toUpperCase() === 'NULL') {
@@ -329,10 +444,9 @@ function parseSqlValue(raw) {
   // 布尔值
   if (raw.toUpperCase() === 'TRUE') return true;
   if (raw.toUpperCase() === 'FALSE') return false;
-  // 数字
-  const num = parseFloat(raw);
-  if (!isNaN(num) && /^-?\d*\.?\d+([eE][+-]?\d+)?$/.test(raw)) {
-    return num;
+  // 数字：保留字符串形式传给 PostgreSQL，避免浮点精度损失
+  if (/^-?\d*\.?\d+([eE][+-]?\d+)?$/.test(raw)) {
+    return raw;
   }
   // 其他（如数组、表达式）原样返回
   return raw;
@@ -438,14 +552,16 @@ function parseSqlFile(content) {
         stats.insertStatements += addedRows;
         stats.tables[parsed.tableName] = (stats.tables[parsed.tableName] || 0) + addedRows;
       } else {
-        // 解析失败（如含复杂表达式、数组等），回退到原始 SQL
-        inserts.push({
-          text: fullStatement.replace(/\s+/g, ' ').trim(),
-          values: null,
-          table: tableName
-        });
-        stats.insertStatements++;
-        stats.tables[tableName] = (stats.tables[tableName] || 0) + 1;
+        // 解析失败：早期直接抛错阻断迁移，避免：
+        //   1. 单位换算被跳过（length/width 保持米单位与新库厘米不一致）
+        //   2. SQL 注入风险（原始文本直接执行）
+        //   3. 静默数据损坏
+        // 建议改用 pg_dump 默认 COPY 格式，或用 --column-inserts 且不含复杂表达式
+        throw new Error(
+          `INSERT 语句解析失败（表: ${tableName}），无法应用单位换算与安全参数化。\n` +
+          `建议改用 pg_dump 默认 COPY 格式导出。\n` +
+          `失败语句预览: ${fullStatement.substring(0, 200)}...`
+        );
       }
       i++;
       continue;
@@ -475,6 +591,9 @@ async function migrate() {
     log.info('  旧库 → 新库 数据迁移（Node.js 版本 v3）');
     log.info('  支持 COPY 和 INSERT 两种格式');
     log.info('==========================================');
+
+    // ========== 0. 安全护栏 ==========
+    await safetyGuard();
 
     // ========== 1. 前置检查 ==========
     if (!fs.existsSync(DUMP_FILE)) {
@@ -656,12 +775,20 @@ async function migrate() {
     log.info(`找到 ${sequenceResult.rows.length} 个序列需要重置`);
 
     for (const row of sequenceResult.rows) {
-      const maxQuery = `SELECT COALESCE(MAX(${row.column_name}), 1) AS max_id FROM ${row.table_name}`;
+      // COALESCE 处理空表：MAX(id) 为 NULL 时返回 NULL，与非空表区分
+      const maxQuery = `SELECT MAX(${row.column_name}) AS max_id FROM ${row.table_name}`;
       const maxResult = await client.query(maxQuery);
       const maxId = maxResult.rows[0].max_id;
 
-      await client.query(`SELECT setval($1, $2, true)`, [row.sequence_name, maxId]);
-      log.info(`  ✅ ${row.table_name}.${row.column_name} → ${maxId}`);
+      if (maxId === null || maxId === undefined) {
+        // 空表：将序列重置为 1 但标记 is_called=false，下一个 nextval 返回 1
+        await client.query(`SELECT setval($1, 1, false)`, [row.sequence_name]);
+        log.info(`  ✅ ${row.table_name}.${row.column_name} → 1 (空表)`);
+      } else {
+        // 非空表：is_called=true，下一个 nextval 返回 maxId + 1
+        await client.query(`SELECT setval($1, $2, true)`, [row.sequence_name, maxId]);
+        log.info(`  ✅ ${row.table_name}.${row.column_name} → ${maxId}`);
+      }
     }
 
     log.success('所有序列已重置');
@@ -674,9 +801,11 @@ async function migrate() {
       await client.query('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_project_user_settlement_status');
       log.success('物化视图已刷新（CONCURRENTLY 模式）');
     } catch (err) {
-      log.warn(`CONCURRENTLY 刷新失败，降级为普通刷新: ${err.message}`);
+      log.warn(`CONCURRENTLY 刷新失败: ${err.message}`);
+      log.warn('⚠️  即将降级为非并发刷新，会短暂锁表 mv_project_user_settlement_status');
+      log.warn('⚠️  期间统计页会阻塞，通常几秒内完成');
       await client.query('REFRESH MATERIALIZED VIEW mv_project_user_settlement_status');
-      log.success('物化视图已刷新（普通模式）');
+      log.success('物化视图已刷新（普通模式，锁表已释放）');
     }
 
     // ========== 7. 数据校验 ==========
@@ -726,7 +855,7 @@ async function migrate() {
     log.info('后续操作：');
     log.info('  1. 迁移附件文件到原路径（files.path 保持旧库路径）');
     log.info('  2. 重启后端服务');
-    log.info('  3. 用旧库用户账号登录验证（如 喜临门 / 990066）');
+    log.info('  3. 用旧库用户账号登录验证（账号密码请向管理员索取，请勿在源码中留存）');
     log.info('  4. 检查工程列表、结算记录、附件显示是否正常');
 
   } catch (err) {
