@@ -251,25 +251,30 @@ app.use(async (ctx, next) => {
     }
 
     // 2. 路径穿越防护：规范化路径后校验仍在 upload 目录内
+    // 关键：filePath 以 '/' 开头（如 '/202602/xxx.jpg'），path.resolve 会把它当绝对路径处理导致
+    // 前缀 uploadDir 被丢弃，最终指向根目录下的不存在路径。必须用 path.join 或在前面加 '.' 让其成为相对路径。
     const uploadDir = path.resolve(__dirname, 'upload');
     const filePath = ctx.path.substring(7); // 移除 /upload 前缀
     const decodedPath = decodeURIComponent(filePath);
-    const fullPath = path.resolve(uploadDir, decodedPath);
+    // 用 path.join 而非 path.resolve，避免以 '/' 开头的相对路径被误判为绝对路径
+    const fullPath = path.join(uploadDir, decodedPath);
+    // 规范化后再次校验，防止 .. 目录穿越
+    const normalizedPath = path.resolve(fullPath);
     // 必须以 uploadDir + path.sep 开头，防止通过 .. 逃逸
-    if (!fullPath.startsWith(uploadDir + path.sep) && fullPath !== uploadDir) {
+    if (!normalizedPath.startsWith(uploadDir + path.sep) && normalizedPath !== uploadDir) {
       ctx.status = 403;
       ctx.body = { code: 4003, message: '禁止访问该路径' };
       return;
     }
 
     try {
-      const stats = await fs.promises.stat(fullPath);
+      const stats = await fs.promises.stat(normalizedPath);
       if (stats.isFile()) {
-        const ext = path.extname(fullPath).toLowerCase();
+        const ext = path.extname(normalizedPath).toLowerCase();
         const contentType = getContentType(ext);
 
         ctx.set('Content-Type', contentType);
-        ctx.body = fs.createReadStream(fullPath);
+        ctx.body = fs.createReadStream(normalizedPath);
         return;
       }
     } catch (err) {
