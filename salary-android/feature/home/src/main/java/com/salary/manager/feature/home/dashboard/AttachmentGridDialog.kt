@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.PlayCircle
@@ -110,7 +111,14 @@ fun AttachmentGridDialog(
             colors = CardDefaults.cardColors(containerColor = Color.White),
             elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            // 关键修复：用 DisableSelection 关闭本弹窗内的文本选择功能。
+            // MainActivity 全局包裹了 SelectionContainer 支持长按 Text 复制，
+            // 但它与本弹窗中每个附件项的 combinedClickable 存在手势事件竞争：
+            // 点击 Text 边缘时事件先落到 SelectionContainer，随后弹起 TextToolbar，
+            // 而 Dialog 独立 Window 在弹起 popup 时可能抛异常，导致闪退。
+            // DisableSelection 只关闭本弹窗内的选择行为，不影响其他页面文本选择。
+            DisableSelection {
+                Column(modifier = Modifier.padding(16.dp)) {
                 // ===== 标题栏 =====
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -232,6 +240,7 @@ fun AttachmentGridDialog(
                     modifier = Modifier.align(Alignment.End)
                 ) {
                     Text("关闭", color = AppColors.Green400)
+                }
                 }
             }
         }

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Pause
@@ -107,6 +108,9 @@ fun MediaViewerDialog(
             dismissOnClickOutside = false
         )
     ) {
+        // 关键修复：Dialog 独立 Window 中禁用文本选择，避免与 MainActivity 全局
+        // SelectionContainer 手势事件竞争引发的边缘点击闪退
+        DisableSelection {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -177,6 +181,7 @@ fun MediaViewerDialog(
                     }
                 }
             }
+        }
         }
     }
 }
