@@ -203,32 +203,43 @@ fun DashboardScreen(
 
     // ===== 附件网格浏览弹窗（媒体文件直接展示缩略图，参考微信样式） =====
     if (uiState.viewingFilesProjectId != null) {
-        AttachmentGridDialog(
+        // 把 FileDto 映射为统一的 AttachmentUiModel，fileUrl 使用预计算的完整 URL
+        val attachments = remember(uiState.viewingFiles, fileUrls) {
+            uiState.viewingFiles.map { file ->
+                com.salary.manager.feature.home.attachment.AttachmentUiModel(
+                    id = file.id,
+                    fileName = file.originalName?.takeIf { it.isNotBlank() } ?: file.fileName,
+                    fileUrl = fileUrls[file.id].orEmpty(),
+                    fileSize = file.fileSize,
+                    uploadedAt = file.uploadedAt,
+                    type = file.type
+                )
+            }
+        }
+        com.salary.manager.feature.home.attachment.AttachmentDialog(
+            title = "附件浏览",
             projectName = uiState.viewingFilesProjectName,
-            files = uiState.viewingFiles,
-            fileUrls = fileUrls,
+            files = attachments,
             isLoading = uiState.isLoadingFiles,
+            canDelete = false,
             onDismiss = { viewModel.closeAttachmentList() },
-            onMediaClick = { fullUrl, fileName, fileType ->
-                // 媒体文件：用内置 MediaViewerDialog 预览
-                // 对含中文/空格的旧数据附件路径做 URL 编码，防止 Coil 加载或
-                // ExoPlayer 拉起时因 Uri 解析失败而闪退
+            onMediaClick = { safeUrl, fileName, fileType ->
+                // 媒体文件：用内置 MediaViewerDialog 预览（safeUrl 已由组件内部编码）
                 try {
-                    viewingMediaUrl = encodePathSegments(fullUrl)
+                    viewingMediaUrl = safeUrl
                     viewingMediaName = fileName
                     viewingMediaType = fileType
                 } catch (_: Throwable) {
-                    // 兜底：任何异常静默处理，避免边缘点击/异常 URL 导致进程崩溃
+                    // 静默处理
                 }
             },
             onFileClick = { file ->
                 // 非媒体文件：用系统应用打开
                 scope.launch {
                     try {
-                        val fullUrl = fileUrls[file.id] ?: viewModel.buildFileUrl(file.fileUrl)
-                        // 部分旧数据附件路径包含中文（如 /upload/202602/状元府6栋1403/xxx.jpg），
-                        // 直接传给 Uri.parse 可能引发 URISyntaxException，此处按路径分段做 URL 编码。
-                        val safeUrl = encodePathSegments(fullUrl)
+                        val fullUrl = file.fileUrl.takeIf { it.isNotBlank() } ?: return@launch
+                        val safeUrl = com.salary.manager.feature.home.attachment
+                            .encodeAttachmentUrl(fullUrl)
                         val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
                             setDataAndType(android.net.Uri.parse(safeUrl), file.type ?: "*/*")
                             addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -250,7 +261,7 @@ fun DashboardScreen(
                             }
                         }
                     } catch (_: Throwable) {
-                        // 兜底：任何异常均静默处理，避免长按/点击后闪退
+                        // 兜底：任何异常均静默处理
                     }
                 }
             }
@@ -1939,56 +1950,8 @@ private fun formatYearMonth(yearMonth: String): String {
     }
 }
 
-/**
- * 对 URL 路径中的非 ASCII 字符（如中文）按路径分段做 URL 编码。
- *
- * 场景：旧数据附件路径包含中文（如 /upload/202602/状元府6栋1403/xxx.jpg），
- * 直接交给 Uri.parse 或 Intent 会引发 URISyntaxException / ActivityNotFoundException，
- * 严重时导致进程崩溃。此函数保留协议头、"/"、"?" 分隔符不变，仅对分段做 UTF-8 编码。
- *
- * 幂等：已含 % 编码的分段（例如"%E7%8A%B6"）不会再次编码。
- *
- * @param url 原始 URL（可能包含中文或空格）
- * @return 编码后的安全 URL
- */
-private fun encodePathSegments(url: String): String {
-    if (url.isEmpty()) return url
-    return try {
-        // 拆分 query
-        val questionIdx = url.indexOf('?')
-        val pathPart = if (questionIdx >= 0) url.substring(0, questionIdx) else url
-        val queryPart = if (questionIdx >= 0) url.substring(questionIdx) else ""
-
-        // 拆分协议头，只对 path 部分逐段编码
-        val schemeEnd = pathPart.indexOf("://")
-        val (prefix, path) = if (schemeEnd >= 0) {
-            val hostEnd = pathPart.indexOf('/', schemeEnd + 3)
-            if (hostEnd >= 0) {
-                pathPart.substring(0, hostEnd) to pathPart.substring(hostEnd)
-            } else {
-                pathPart to ""
-            }
-        } else {
-            "" to pathPart
-        }
-
-        val encodedPath = path.split('/').joinToString("/") { seg ->
-            when {
-                seg.isEmpty() -> ""
-                // 已含 % 编码则视为已编码，保持不变，避免重复编码
-                seg.contains('%') -> seg
-                else -> java.net.URLEncoder.encode(seg, "UTF-8")
-                    // URLEncoder 会把空格编成 "+", 但 URL path 里应为 %20
-                    .replace("+", "%20")
-            }
-        }
-        prefix + encodedPath + queryPart
-    } catch (_: Throwable) {
-        url
-    }
-}
-
-// 附件列表弹窗、附件列表项、文件大小格式化已迁移到 AttachmentGridDialog.kt
+// 附件相关：URL 编码、判断媒体类型、文件大小格式化、附件弹窗、列表项组件
+// 已全部迁移到 com.salary.manager.feature.home.attachment 包下，由主页与工程详情页共用
 
 /**
  * 服务器在线状态显示组件

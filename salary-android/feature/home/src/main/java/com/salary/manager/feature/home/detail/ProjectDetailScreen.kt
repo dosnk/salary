@@ -5,11 +5,9 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,19 +32,15 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -82,8 +76,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -93,9 +85,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
-import coil3.compose.AsyncImage
-import coil3.request.ImageRequest
-import coil3.request.crossfade
 import com.salary.core.common.util.AmountFormatter
 import com.salary.core.common.util.DateFormatter
 import com.salary.core.design.component.ProjectStatusTag
@@ -440,14 +429,63 @@ fun ProjectDetailContent(
         )
     }
 
-    // 附件查看弹窗
+    // 附件查看弹窗（使用统一的 AttachmentDialog，逻辑与主页一致）
     if (showAttachmentDialog) {
-        AttachmentViewDialog(
-            files = detail.files,
-            onDelete = { fileId -> viewModel.deleteFile(projectId, fileId) },
+        // 用于本弹窗内的媒体预览状态
+        var previewMediaUrl by remember { mutableStateOf<String?>(null) }
+        var previewMediaName by remember { mutableStateOf("") }
+        var previewMediaType by remember { mutableStateOf<String?>(null) }
+
+        // FileUiModel → AttachmentUiModel 字段一一对应，直接映射
+        val attachments = remember(detail.files) {
+            detail.files.map { f ->
+                com.salary.manager.feature.home.attachment.AttachmentUiModel(
+                    id = f.id,
+                    fileName = f.fileName,
+                    fileUrl = f.fileUrl,
+                    fileSize = f.fileSize,
+                    uploadedAt = f.uploadedAt,
+                    type = f.type
+                )
+            }
+        }
+
+        com.salary.manager.feature.home.attachment.AttachmentDialog(
+            title = "附件管理",
+            projectName = "",
+            files = attachments,
+            isLoading = false,
             canDelete = canEdit,
-            onDismiss = { showAttachmentDialog = false }
+            onDismiss = { showAttachmentDialog = false },
+            onMediaClick = { safeUrl, fileName, fileType ->
+                // 内置 MediaViewerDialog 预览（safeUrl 已由组件内部完成 URL 编码）
+                try {
+                    previewMediaUrl = safeUrl
+                    previewMediaName = fileName
+                    previewMediaType = fileType
+                } catch (_: Throwable) {
+                    // 静默处理
+                }
+            },
+            onFileClick = { file ->
+                // 非媒体文件：附件管理弹窗内不做外部打开动作，仅忽略
+                // 保持与旧实现行为一致（旧实现中非媒体点击也不触发系统 Intent）
+            },
+            onDelete = { file -> viewModel.deleteFile(projectId, file.id) }
         )
+
+        // 媒体预览弹窗
+        previewMediaUrl?.let { url ->
+            MediaViewerDialog(
+                fileUrl = url,
+                fileName = previewMediaName,
+                fileType = previewMediaType,
+                onDismiss = {
+                    previewMediaUrl = null
+                    previewMediaType = null
+                }
+            )
+        }
     }
 
     // 编辑工程弹窗
@@ -1487,347 +1525,9 @@ fun SubprojectEditDialog(
     }
 }
 
-/**
- * 判断是否为图片类型
- */
-private fun isImageType(type: String?): Boolean =
-    type?.startsWith("image/") == true
-
-/**
- * 判断是否为视频类型
- */
-private fun isVideoType(type: String?): Boolean =
-    type?.startsWith("video/") == true
-
-/**
- * 判断是否为媒体文件（图片或视频）
- */
-private fun isMediaFile(type: String?): Boolean =
-    isImageType(type) || isVideoType(type)
-
-/**
- * 附件管理弹窗 - 宽度占屏幕98%，支持媒体直接预览和删除
- *
- * 改造点：
- * 1. 使用Dialog + usePlatformDefaultWidth=false，宽度fillMaxWidth(0.98f)
- * 2. 媒体文件（图片/视频）直接在弹窗内预览，点击可全屏查看
- * 3. 每个附件项右上角增加删除按钮，二次确认后删除
- *
- * @param files 附件列表（fileUrl已为完整URL）
- * @param onDelete 删除附件回调，参数为文件ID（由调用方闭包捕获projectId）
- * @param canDelete 是否可删除附件（仅施工员可删除，admin/documenter 隐藏删除按钮）
- * @param onDismiss 关闭弹窗回调
- */
-@Composable
-fun AttachmentViewDialog(
-    files: List<FileUiModel>,
-    onDelete: (Int) -> Unit,
-    canDelete: Boolean = true,
-    onDismiss: () -> Unit
-) {
-    // 待全屏预览的媒体文件（null表示不预览）
-    var previewFile by remember { mutableStateOf<FileUiModel?>(null) }
-    // 待删除的文件（null表示不显示删除确认弹窗）
-    var deletingFile by remember { mutableStateOf<FileUiModel?>(null) }
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            // 禁止点击弹窗外自动关闭，避免边缘误触导致的手势级联异常
-            dismissOnClickOutside = false
-        )
-    ) {
-        Card(
-            modifier = Modifier.fillMaxWidth(0.98f),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
-            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-        ) {
-            // 关键修复：Dialog 独立 Window 中禁用文本选择，避免与 MainActivity 全局
-            // SelectionContainer 手势事件竞争引发的边缘点击闪退
-            DisableSelection {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 12.dp)
-            ) {
-                // ===== 标题栏（保留左右内边距） =====
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "附件管理 (${files.size})",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = AppColors.TextPrimary
-                    )
-                    if (files.isNotEmpty()) {
-                        Text(
-                            "共 ${files.size} 个",
-                            fontSize = 12.sp,
-                            color = AppColors.TextTertiary
-                        )
-                    }
-                }
-
-                HorizontalDivider(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 10.dp),
-                    thickness = 1.dp,
-                    color = AppColors.Green100
-                )
-
-                // ===== 内容区（媒体预览占满弹窗宽度） =====
-                if (files.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 32.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("暂无附件", color = AppColors.TextTertiary, fontSize = 14.sp)
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        // key 加前缀，避免与将来的其他 items 冲突
-                        items(files, key = { "file_${it.id}" }) { file ->
-                            AttachmentItemRow(
-                                file = file,
-                                onClick = {
-                                    // 媒体文件点击进入全屏预览
-                                    if (isMediaFile(file.type)) {
-                                        previewFile = file
-                                    }
-                                },
-                                onDelete = { deletingFile = file },
-                                canDelete = canDelete
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // ===== 关闭按钮（保留左右内边距） =====
-                TextButton(
-                    onClick = onDismiss,
-                    modifier = Modifier
-                        .align(Alignment.End)
-                        .padding(end = 16.dp)
-                ) {
-                    Text("关闭", color = AppColors.Green400, fontWeight = FontWeight.Medium)
-                }
-            }
-            }
-        }
-    }
-
-    // 全屏媒体预览弹窗
-    previewFile?.let { file ->
-        MediaViewerDialog(
-            // 对含中文/空格的旧数据附件路径做 URL 编码，防止 Coil 加载或
-            // ExoPlayer 拉起时因 Uri 解析失败而闪退
-            fileUrl = encodeAttachmentUrl(file.fileUrl),
-            fileName = file.fileName,
-            fileType = file.type,
-            onDismiss = { previewFile = null }
-        )
-    }
-
-    // 删除确认弹窗（二次确认避免误删）
-    deletingFile?.let { file ->
-        AlertDialog(
-            onDismissRequest = { deletingFile = null },
-            title = {
-                Text(
-                    "删除附件",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-            },
-            text = {
-                Text(
-                    "确认删除附件「${file.fileName}」吗？\n删除后不可恢复。",
-                    fontSize = 14.sp,
-                    color = AppColors.TextSecondary
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onDelete(file.id)
-                        deletingFile = null
-                    }
-                ) {
-                    Text("确认删除", color = Color(0xFFE53935), fontWeight = FontWeight.Medium)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { deletingFile = null }) {
-                    Text("取消", color = AppColors.TextSecondary)
-                }
-            }
-        )
-    }
-}
-
-/**
- * 附件列表项 - 纵向Column布局
- *
- * - 文件信息行（图标+文件名+删除按钮）：保留horizontal padding，与标题栏对齐
- * - 媒体文件预览：宽度占满弹窗（无horizontal padding），高度按原始长宽比自适应；点击进入全屏预览
- * - 非媒体文件：仅显示文件图标+文件名+大小+上传时间
- *
- * @param file 附件UI模型
- * @param onClick 点击附件内容区域回调（媒体文件用于打开全屏预览）
- * @param onDelete 点击删除按钮回调
- * @param canDelete 是否可删除附件（仅施工员可删除，admin/documenter 隐藏删除按钮）
- */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun AttachmentItemRow(
-    file: FileUiModel,
-    onClick: () -> Unit = {},
-    onDelete: () -> Unit = {},
-    canDelete: Boolean = true
-) {
-    val context = LocalContext.current
-    val isMedia = isMediaFile(file.type)
-    val isVideo = isVideoType(file.type)
-    // 对含中文/空格的旧数据附件路径做 URL 编码，防止 Coil 加载失败
-    val safeUrl = remember(file.fileUrl) { encodeAttachmentUrl(file.fileUrl) }
-
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        // ===== 顶部：媒体预览区（仅媒体文件显示，宽度占满弹窗）=====
-        if (isMedia) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFFF5F5F5))
-                    // 关键修复：combinedClickable 显式提供空 onLongClick，屏蔽长按默认行为；
-                    // onClick 加 try-catch 兜底，防止未捕获异常沿事件流冒泡杀进程
-                    .combinedClickable(
-                        onClick = {
-                            try {
-                                onClick()
-                            } catch (_: Throwable) {
-                                // 静默处理
-                            }
-                        },
-                        onLongClick = {}
-                    )
-            ) {
-                // 图片/视频缩略图：宽度占满弹窗（无horizontal padding），高度按原始长宽比自适应
-                AsyncImage(
-                    model = ImageRequest.Builder(context)
-                        .data(safeUrl)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = file.fileName,
-                    modifier = Modifier.fillMaxWidth(),
-                    contentScale = ContentScale.Fit
-                )
-
-                // 视频文件叠加播放图标（居中）
-                if (isVideo) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(120.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayCircle,
-                            contentDescription = "播放视频",
-                            tint = Color.White,
-                            modifier = Modifier.size(48.dp)
-                        )
-                    }
-                    // 右下角"视频"标签
-                    Surface(
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(6.dp),
-                        color = Color(0x88000000),
-                        shape = RoundedCornerShape(4.dp)
-                    ) {
-                        Text(
-                            text = "视频",
-                            fontSize = 10.sp,
-                            color = Color.White,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-                }
-            }
-        }
-
-        // ===== 底部行：文件信息（左）+ 删除按钮（右），保留horizontal padding =====
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // 文件类型图标
-            Icon(
-                imageVector = if (isImageType(file.type)) {
-                    Icons.Default.Image
-                } else if (isVideo) {
-                    Icons.Default.PlayCircle
-                } else {
-                    Icons.Default.Description
-                },
-                contentDescription = null,
-                tint = AppColors.Green400,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            // 文件名 + 大小/时间
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = file.fileName,
-                    fontSize = 13.sp,
-                    color = AppColors.TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    text = "大小：${formatFileSize(file.fileSize)}  上传：${DateFormatter.formatDate(file.uploadedAt)}",
-                    fontSize = 11.sp,
-                    color = AppColors.TextTertiary
-                )
-            }
-            // 删除按钮（红色垃圾桶图标，仅施工员可见）
-            if (canDelete) {
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "删除附件",
-                        tint = Color(0xFFE53935),
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-        }
-    }
-}
+// 附件相关辅助函数（isImageType/isVideoType/isMediaFile/formatFileSize/encodeAttachmentUrl）
+// 和 AttachmentViewDialog/AttachmentItemRow 组件已迁移到 attachment 包
+// 由主页 DashboardScreen 与本页共用统一的 AttachmentDialog 组件
 
 /**
  * 编辑工程弹窗
@@ -2333,16 +2033,8 @@ private fun StatusChip(
     }
 }
 
-/**
- * 格式化文件大小
- */
-private fun formatFileSize(bytes: Long): String {
-    return when {
-        bytes < 1024 -> "${bytes}B"
-        bytes < 1024 * 1024 -> String.format("%.1fKB", bytes / 1024.0)
-        else -> String.format("%.1fMB", bytes / (1024.0 * 1024.0))
-    }
-}
+// 附件相关工具与 UI 组件（isImageType/isVideoType/isMediaFile/formatFileSize/encodeAttachmentUrl、
+// AttachmentDialog、AttachmentItemRow）已全部迁移到 attachment 包，由主页与本页统一共用
 
 /**
  * 修改历史条目 - 流式展示，无外层边框
@@ -2435,48 +2127,8 @@ private fun formatNumber(value: String): String {
 }
 
 /**
- * 对附件 URL 做路径分段 UTF-8 编码。
- *
- * 场景：旧数据附件路径包含中文（如 /upload/202602/状元府6栋1403/xxx.jpg），
- * 直接交给 Uri.parse 或 Intent 会引发 URISyntaxException / ActivityNotFoundException。
- * 此函数保留协议头、"/"、"?" 分隔符不变，仅对分段做 UTF-8 编码。
- *
- * 幂等：已含 % 编码的分段（例如"%E7%8A%B6"）不会再次编码。
- *
- * 与 DashboardScreen 中的 encodePathSegments 语义一致，此处独立一份避免跨文件依赖。
- * 第 2 步重构时会抽取到公共 attachment/AttachmentUtils.kt。
+ * URL 路径编码工具已迁移到 attachment/AttachmentUtils.kt，此处不再保留私有副本。
  */
-private fun encodeAttachmentUrl(url: String): String {
-    if (url.isEmpty()) return url
-    return try {
-        val questionIdx = url.indexOf('?')
-        val pathPart = if (questionIdx >= 0) url.substring(0, questionIdx) else url
-        val queryPart = if (questionIdx >= 0) url.substring(questionIdx) else ""
-
-        val schemeEnd = pathPart.indexOf("://")
-        val (prefix, path) = if (schemeEnd >= 0) {
-            val hostEnd = pathPart.indexOf('/', schemeEnd + 3)
-            if (hostEnd >= 0) {
-                pathPart.substring(0, hostEnd) to pathPart.substring(hostEnd)
-            } else {
-                pathPart to ""
-            }
-        } else {
-            "" to pathPart
-        }
-
-        val encodedPath = path.split('/').joinToString("/") { seg ->
-            when {
-                seg.isEmpty() -> ""
-                seg.contains('%') -> seg
-                else -> java.net.URLEncoder.encode(seg, "UTF-8").replace("+", "%20")
-            }
-        }
-        prefix + encodedPath + queryPart
-    } catch (_: Throwable) {
-        url
-    }
-}
 
 /**
  * 保存结果密封类
