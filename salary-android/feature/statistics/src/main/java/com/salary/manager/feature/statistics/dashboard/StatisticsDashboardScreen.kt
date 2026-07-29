@@ -328,6 +328,7 @@ fun StatisticsDashboardScreen(
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
+                                                    .padding(horizontal = 8.dp)
                                                     .background(Color.White, RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
                                                     .padding(24.dp),
                                                 contentAlignment = Alignment.Center
@@ -345,6 +346,7 @@ fun StatisticsDashboardScreen(
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
+                                                    .padding(horizontal = 8.dp)
                                                     .background(Color.White, RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
                                                     .padding(24.dp),
                                                 contentAlignment = Alignment.Center
@@ -365,6 +367,7 @@ fun StatisticsDashboardScreen(
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
+                                                    .padding(horizontal = 8.dp)
                                                     .background(Color.White)
                                                     .horizontalScroll(tableScrollState)
                                             ) {
@@ -389,6 +392,7 @@ fun StatisticsDashboardScreen(
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
+                                                    .padding(horizontal = 8.dp)
                                                     .background(Color.White)
                                                     .horizontalScroll(tableScrollState)
                                             ) {
@@ -427,6 +431,7 @@ fun StatisticsDashboardScreen(
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
+                                                    .padding(horizontal = 8.dp)
                                                     .background(Color.White, RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
                                                     .horizontalScroll(tableScrollState)
                                             ) {
