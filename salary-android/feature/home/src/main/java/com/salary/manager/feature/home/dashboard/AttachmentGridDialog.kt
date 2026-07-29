@@ -98,7 +98,11 @@ fun AttachmentGridDialog(
 ) {
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            // 禁止点击 Card 外（弹窗边缘）自动关闭，防止边缘误触导致的一系列级联异常
+            dismissOnClickOutside = false
+        )
     ) {
         Card(
             modifier = Modifier.fillMaxWidth(0.98f),
@@ -168,15 +172,24 @@ fun AttachmentGridDialog(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         // ===== 媒体文件单列列表 =====
-                        items(mediaFiles, key = { it.id }) { file ->
+                        // key 加分类前缀，避免与非媒体列表 id 冲突导致
+                        // LazyList "Key was already used" 崩溃
+                        items(mediaFiles, key = { "media_${it.id}" }) { file ->
                             MediaGridItem(
                                 file = file,
-                                fullUrl = fileUrls[file.id] ?: "",
+                                fullUrl = fileUrls[file.id].orEmpty(),
                                 onClick = {
-                                    val url = fileUrls[file.id] ?: return@MediaGridItem
-                                    val name = file.originalName?.takeIf { it.isNotBlank() }
-                                        ?: file.fileName
-                                    onMediaClick(url, name, file.type)
+                                    // 兜底捕获所有异常，避免点击（尤其是边缘/快速点击）导致的
+                                    // 未捕获异常沿 Compose 事件流冒泡杀进程
+                                    try {
+                                        val url = fileUrls[file.id]?.takeIf { it.isNotBlank() }
+                                            ?: return@MediaGridItem
+                                        val name = file.originalName?.takeIf { it.isNotBlank() }
+                                            ?: file.fileName
+                                        onMediaClick(url, name, file.type)
+                                    } catch (_: Throwable) {
+                                        // 静默处理
+                                    }
                                 }
                             )
                         }
@@ -184,7 +197,7 @@ fun AttachmentGridDialog(
                         // ===== 非媒体文件列表 =====
                         if (nonMediaFiles.isNotEmpty()) {
                             if (mediaFiles.isNotEmpty()) {
-                                item {
+                                item(key = "non_media_header") {
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = "其他文件",
@@ -195,10 +208,16 @@ fun AttachmentGridDialog(
                                     Spacer(modifier = Modifier.height(4.dp))
                                 }
                             }
-                            items(nonMediaFiles, key = { it.id }) { file ->
+                            items(nonMediaFiles, key = { "file_${it.id}" }) { file ->
                                 NonMediaFileItem(
                                     file = file,
-                                    onClick = { onFileClick(file) }
+                                    onClick = {
+                                        try {
+                                            onFileClick(file)
+                                        } catch (_: Throwable) {
+                                            // 静默处理
+                                        }
+                                    }
                                 )
                             }
                         }
@@ -248,11 +267,13 @@ private fun MediaGridItem(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            // 先 padding 再 combinedClickable：手势热区只覆盖内容区，不响应边缘 padding，
+            // 避免边缘点击落在与 LazyColumn 边界重叠位置引发未捕获异常
+            .padding(vertical = 6.dp, horizontal = 4.dp)
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = {}
             )
-            .padding(vertical = 6.dp, horizontal = 4.dp)
     ) {
         // ===== 缩略图区域：宽度占满弹窗，高度按长宽比自适应 =====
         Box(
@@ -366,11 +387,12 @@ private fun NonMediaFileItem(file: FileDto, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // 先 padding 再 combinedClickable：手势热区只覆盖内容区，不响应边缘 padding
+            .padding(vertical = 10.dp, horizontal = 4.dp)
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = {}
-            )
-            .padding(vertical = 10.dp, horizontal = 4.dp),
+            ),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(

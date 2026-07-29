@@ -211,9 +211,15 @@ fun DashboardScreen(
             onDismiss = { viewModel.closeAttachmentList() },
             onMediaClick = { fullUrl, fileName, fileType ->
                 // 媒体文件：用内置 MediaViewerDialog 预览
-                viewingMediaUrl = fullUrl
-                viewingMediaName = fileName
-                viewingMediaType = fileType
+                // 对含中文/空格的旧数据附件路径做 URL 编码，防止 Coil 加载或
+                // ExoPlayer 拉起时因 Uri 解析失败而闪退
+                try {
+                    viewingMediaUrl = encodePathSegments(fullUrl)
+                    viewingMediaName = fileName
+                    viewingMediaType = fileType
+                } catch (_: Throwable) {
+                    // 兜底：任何异常静默处理，避免边缘点击/异常 URL 导致进程崩溃
+                }
             },
             onFileClick = { file ->
                 // 非媒体文件：用系统应用打开

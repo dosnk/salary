@@ -268,12 +268,18 @@ private fun VideoViewerContent(
     val context = LocalContext.current
 
     // 创建ExoPlayer实例
+    // 用 try-catch 兜底：URL 非法或 codec 初始化异常时避免整个 Compose 树崩溃
     val exoPlayer = remember {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(url))
-            prepare()
-            playWhenReady = true
-            repeatMode = Player.REPEAT_MODE_OFF
+        try {
+            ExoPlayer.Builder(context).build().apply {
+                setMediaItem(MediaItem.fromUri(url))
+                prepare()
+                playWhenReady = true
+                repeatMode = Player.REPEAT_MODE_OFF
+            }
+        } catch (_: Throwable) {
+            // 构建失败时返回一个最简单的 ExoPlayer 占位，避免空指针
+            ExoPlayer.Builder(context).build()
         }
     }
 
