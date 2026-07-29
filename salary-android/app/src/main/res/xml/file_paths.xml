@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    FileProvider 路径配置
+
+    用途：为附件"分享/保存"功能提供本地文件的 content:// Uri 映射。
+
+    - cache/attachments：分享用临时缓存目录（context.cacheDir/attachments）
+      分享文件优先落到此处，允许系统定期清理，避免占用用户可见存储。
+    - files/attachments：需要长期本地保留时使用（context.filesDir/attachments）
+      当前实现主要用 cache 路径；保留此项以备后续扩展。
+    - external-files/attachments：外部私有目录（getExternalFilesDir("attachments")）
+      对第三方 App 可见性更好，若目标应用无法读取内部 cache 时使用。
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="attachments_cache" path="attachments/" />
+    <files-path name="attachments_files" path="attachments/" />
+    <external-files-path name="attachments_ext" path="attachments/" />
+</paths>

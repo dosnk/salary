@@ -1,5 +1,6 @@
 package com.salary.manager.feature.home.attachment
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,18 +23,22 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.salary.core.design.theme.AppColors
+import kotlinx.coroutines.launch
 
 /**
  * 附件管理弹窗（统一入口）
@@ -46,6 +51,11 @@ import com.salary.core.design.theme.AppColors
  * - showTitleProjectName：是否在标题栏显示工程名（主页附件浏览为 true，工程详情为 false）
  * - canDelete：是否允许删除（工程详情且施工员可编辑时为 true，其他为 false）
  * - onDelete：删除回调（null 表示不显示删除按钮；当 canDelete=false 时也应传 null）
+ *
+ * 内置能力：
+ * - 分享/保存：本组件内部持有 [AttachmentDownloader] 调用逻辑，为每一份附件提供
+ *   "分享"（下载 → FileProvider → Intent.ACTION_SEND）与"保存到 Downloads"两个操作按钮，
+ *   使用方无需感知，任何一个入口的附件弹窗都自动具备这两项能力
  *
  * 关键健壮性设计（对齐前几轮修复经验）：
  * - 外层 DisableSelection：Dialog 独立 Window，禁用文本选择避免与 MainActivity
@@ -79,6 +89,74 @@ fun AttachmentDialog(
 ) {
     // 删除二次确认
     var deletingFile by remember { mutableStateOf<AttachmentUiModel?>(null) }
+
+    // ===== 分享/保存 状态管理 =====
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    // 按附件 id 记录当前是否正在下载（用于禁用按钮与显示进度）
+    val busyMap = remember { mutableStateMapOf<Int, Boolean>() }
+
+    /**
+     * 触发分享：内部先下载到 cache，再走 FileProvider + ACTION_SEND
+     */
+    fun handleShare(file: AttachmentUiModel) {
+        if (file.fileUrl.isBlank()) {
+            Toast.makeText(context, "附件地址未就绪，请稍后重试", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (busyMap[file.id] == true) return
+        busyMap[file.id] = true
+        scope.launch {
+            val result = AttachmentDownloader.share(
+                context = context,
+                url = file.fileUrl,
+                fileName = file.fileName,
+                mimeType = file.type,
+                expectedSize = file.fileSize
+            )
+            busyMap[file.id] = false
+            result.onFailure {
+                Toast.makeText(context, "分享失败：${it.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /**
+     * 触发保存：内部先下载到 cache，再写入 Downloads/ 目录
+     */
+    fun handleSave(file: AttachmentUiModel) {
+        if (file.fileUrl.isBlank()) {
+            Toast.makeText(context, "附件地址未就绪，请稍后重试", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (busyMap[file.id] == true) return
+        busyMap[file.id] = true
+        scope.launch {
+            val result = AttachmentDownloader.saveToDownloads(
+                context = context,
+                url = file.fileUrl,
+                fileName = file.fileName,
+                mimeType = file.type,
+                expectedSize = file.fileSize
+            )
+            busyMap[file.id] = false
+            result
+                .onSuccess { location ->
+                    Toast.makeText(
+                        context,
+                        "已保存到：$location",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                .onFailure {
+                    Toast.makeText(
+                        context,
+                        "保存失败：${it.message ?: "未知错误"}",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+        }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -171,7 +249,10 @@ fun AttachmentDialog(
                                         },
                                         onDelete = if (canDelete && onDelete != null) {
                                             { deletingFile = file }
-                                        } else null
+                                        } else null,
+                                        onShare = { handleShare(file) },
+                                        onSave = { handleSave(file) },
+                                        isBusy = busyMap[file.id] == true
                                     )
                                 }
 
@@ -202,7 +283,10 @@ fun AttachmentDialog(
                                         },
                                         onDelete = if (canDelete && onDelete != null) {
                                             { deletingFile = file }
-                                        } else null
+                                        } else null,
+                                        onShare = { handleShare(file) },
+                                        onSave = { handleSave(file) },
+                                        isBusy = busyMap[file.id] == true
                                     )
                                 }
                             }

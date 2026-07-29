@@ -1,7 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!--
+        存储权限说明：
+        - Android 10+ (API 29+)：附件保存采用 MediaStore.Downloads 分区存储，无需额外权限
+        - Android 9-  (API <=28)：将附件写入公共 Downloads 目录需要 WRITE_EXTERNAL_STORAGE
+        maxSdkVersion=28 确保权限仅在低版本设备上声明，避免 Play 政策审查负担
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
     <application
         android:name=".SalaryApp"
@@ -21,5 +32,20 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+            FileProvider：将本地下载的附件暴露为 content:// Uri，供分享或系统应用打开
+            - authorities 使用 ${applicationId}.fileprovider，自动兼容 debug/release 包
+            - grantUriPermissions 允许临时授予接收方读取权限
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>
