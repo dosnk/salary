@@ -56,6 +56,23 @@ class ServerConfig @Inject constructor(
     }
 
     /**
+     * 拼接附件完整访问URL
+     * 后端 path 字段为相对路径（如 /upload/202512/salary/xxx.jpg），需拼接服务器地址
+     * @param relativePath 后端返回的相对路径
+     * @return 完整URL；若已是完整URL或服务器地址未配置则原样返回
+     */
+    suspend fun buildFileUrl(relativePath: String): String {
+        if (relativePath.isEmpty()) return relativePath
+        // 已经是完整URL则直接返回
+        if (relativePath.startsWith("http://") || relativePath.startsWith("https://")) {
+            return relativePath
+        }
+        val baseUrl = getServerUrl().trimEnd('/')
+        if (baseUrl.isEmpty()) return relativePath
+        return baseUrl + relativePath
+    }
+
+    /**
      * 同步获取服务器地址（供Retrofit构建使用，零阻塞）
      * 注意：必须在[initConfig]后调用，否则返回空字符串
      */

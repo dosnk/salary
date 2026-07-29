@@ -37,7 +37,6 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -60,13 +59,10 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -87,6 +83,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.salary.core.common.util.AmountFormatter
 import com.salary.core.common.util.DateFormatter
+import com.salary.core.common.util.WorkdaysValidator
 import com.salary.core.design.component.ProjectStatusTag
 import com.salary.core.design.component.SalaryTag
 import com.salary.core.design.theme.AppColors
@@ -108,12 +105,10 @@ fun ProjectDetailScreen(
     onDataChanged: () -> Unit = {},
     viewModel: ProjectDetailViewModel = hiltViewModel()
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
     // 收集成功/错误消息状态，用于响应消息变化触发对应副作用
-    val successMessage by viewModel.successMessage.collectAsState()
-    val errorMessage by viewModel.errorMessage.collectAsState()
-    val savingProject by viewModel.savingProject.collectAsState()
-    val savingSubproject by viewModel.savingSubproject.collectAsState()
+    val successMessage by viewModel.successMessage.collectAsStateWithLifecycle()
+    val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(projectId) {
@@ -248,7 +243,7 @@ fun ProjectDetailScreen(
  * @param onEditingSaveChange 编辑保存标志位变更回调
  */
 @Composable
-fun ProjectDetailContent(
+internal fun ProjectDetailContent(
     detail: ProjectDetailUiModel,
     projectId: Int,
     onEdit: (Int) -> Unit,
@@ -268,8 +263,11 @@ fun ProjectDetailContent(
     var historyExpanded by remember { mutableStateOf(false) }
 
     // 当前用户角色（仅施工员可编辑工程/子项目/删除附件，admin/documenter 只读）
-    val userRole by viewModel.userRole.collectAsState()
+    val userRole by viewModel.userRole.collectAsStateWithLifecycle()
     val canEdit = userRole == "constructor"
+    // 编辑保存状态（用于检测保存完成时机，关闭弹窗/显示结果）
+    val savingProject by viewModel.savingProject.collectAsStateWithLifecycle()
+    val savingSubproject by viewModel.savingSubproject.collectAsStateWithLifecycle()
 
     // 保存结果弹窗状态（用于编辑工程/子项目保存后弹窗提示成功/失败）
     // null 表示不显示弹窗；非 null 时显示对应结果
@@ -379,8 +377,7 @@ fun ProjectDetailContent(
 
     // 子项目编辑弹窗
     editingSubproject?.let { sub ->
-        // 监听保存状态：saving从true变false时表示保存完成，成功则关闭弹窗
-        val savingSubproject by viewModel.savingSubproject.collectAsState()
+        // 复用外层已收集的 savingSubproject 状态，避免重复订阅同一 StateFlow
         // 记录上一次的saving状态，用于检测"从保存中变为非保存中"的边沿
         var prevSaving by remember { mutableStateOf(false) }
         LaunchedEffect(savingSubproject) {
@@ -490,8 +487,7 @@ fun ProjectDetailContent(
 
     // 编辑工程弹窗
     if (showEditProjectDialog) {
-        // 监听保存状态：saving从true变false时表示保存完成，成功则关闭弹窗
-        val savingProject by viewModel.savingProject.collectAsState()
+        // 复用外层已收集的 savingProject 状态，避免重复订阅同一 StateFlow
         var prevSavingProject by remember { mutableStateOf(false) }
         LaunchedEffect(savingProject) {
             if (prevSavingProject && !savingProject) {
@@ -518,7 +514,7 @@ fun ProjectDetailContent(
 
         EditProjectDialog(
             detail = detail,
-            constructors = viewModel.constructors.collectAsState().value,
+            constructors = viewModel.constructors.collectAsStateWithLifecycle().value,
             saving = savingProject,
             onDismiss = { showEditProjectDialog = false },
             onConfirm = { name, remark, status, salaryDistribution, constructorIds, workerWorkdays ->
@@ -552,7 +548,7 @@ fun ProjectDetailContent(
  * 分组标题 - 对齐Vue前端van-cell-group title
  */
 @Composable
-fun SectionTitle(title: String) {
+internal fun SectionTitle(title: String) {
     Text(
         text = title,
         fontSize = 14.sp,
@@ -567,7 +563,7 @@ fun SectionTitle(title: String) {
  * 使用Cell行展示（左标签右值）
  */
 @Composable
-fun ProjectInfoSection(detail: ProjectDetailUiModel) {
+internal fun ProjectInfoSection(detail: ProjectDetailUiModel) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -607,7 +603,7 @@ fun ProjectInfoSection(detail: ProjectDetailUiModel) {
  * Cell行组件 - 左标签右值，对齐Vue前端van-cell
  */
 @Composable
-fun CellRow(
+internal fun CellRow(
     label: String,
     value: String,
     valueColor: Color = AppColors.TextPrimary
@@ -647,7 +643,7 @@ fun CellRow(
  * @param remark 工程备注内容，null或空白表示无备注
  */
 @Composable
-fun RemarkBlock(remark: String?) {
+internal fun RemarkBlock(remark: String?) {
     // 备注展开状态：默认折叠（最多3行），点击内容区切换展开/折叠
     var expanded by remember { mutableStateOf(false) }
     Column(
@@ -700,7 +696,7 @@ fun RemarkBlock(remark: String?) {
  * 工资分配方式Cell行 - 带Tag标签
  */
 @Composable
-fun DistributionCellRow(salaryDistribution: String?) {
+internal fun DistributionCellRow(salaryDistribution: String?) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -733,7 +729,7 @@ fun DistributionCellRow(salaryDistribution: String?) {
  * 状态Cell行 - 带Tag标签
  */
 @Composable
-fun StatusCellRow(status: String) {
+internal fun StatusCellRow(status: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -755,7 +751,7 @@ fun StatusCellRow(status: String) {
  * 两侧均分宽度避免窄屏挤压；长文本单行省略号
  */
 @Composable
-fun TimeCellRow(createdAt: String, updatedAt: String) {
+internal fun TimeCellRow(createdAt: String, updatedAt: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -814,7 +810,7 @@ fun TimeCellRow(createdAt: String, updatedAt: String) {
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun WorkerTagSection(detail: ProjectDetailUiModel) {
+internal fun WorkerTagSection(detail: ProjectDetailUiModel) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -924,7 +920,7 @@ private fun WorkdaysSummaryRow(workers: List<WorkerUiModel>) {
  * @param canEdit 是否可编辑工程（仅施工员可编辑，admin/documenter 隐藏编辑按钮）
  */
 @Composable
-fun ActionSection(
+internal fun ActionSection(
     projectId: Int,
     onEdit: (Int) -> Unit,
     fileCount: Int,
@@ -985,7 +981,7 @@ fun ActionSection(
  * @param canEdit 是否可编辑子项目（仅施工员可编辑，admin/documenter 隐藏操作列）
  */
 @Composable
-fun SubprojectTable(
+internal fun SubprojectTable(
     subprojects: List<SubprojectUiModel>,
     onEdit: (SubprojectUiModel) -> Unit,
     canEdit: Boolean = true
@@ -1058,10 +1054,10 @@ fun SubprojectTable(
                 SubprojectCell(sub.constructionPlanName, 100.dp)
                 // 数据库存储厘米，UI显示时除以100转为米（与表头"尺寸(米)"单位一致）
                 SubprojectCell(
-                    "${formatNumber(sub.length / 100.0)} × ${formatNumber(sub.width / 100.0)}",
+                    "${AmountFormatter.format2f(sub.length / 100.0)} × ${AmountFormatter.format2f(sub.width / 100.0)}",
                     110.dp
                 )
-                SubprojectCell(formatNumber(sub.quantity), 80.dp)
+                SubprojectCell(AmountFormatter.format2f(sub.quantity), 80.dp)
                 SubprojectCell(AmountFormatter.format(sub.amount), 90.dp, color = AppColors.Green400)
                 // 操作列：编辑图标按钮（仅施工员可见）
                 if (canEdit) {
@@ -1191,7 +1187,7 @@ private fun RowScope.SubprojectCell(
  * 实测数量用于异形空间（L形/多边形/圆形等），填入后覆盖按长宽计算的数量
  */
 @Composable
-fun SubprojectEditDialog(
+internal fun SubprojectEditDialog(
     subproject: SubprojectUiModel,
     saving: Boolean,
     onDismiss: () -> Unit,
@@ -1210,16 +1206,16 @@ fun SubprojectEditDialog(
     // subproject 参数变了但 remark 状态不会重新初始化，导致编辑弹窗显示旧值
     var spaceType by remember(subproject.id) { mutableStateOf(subproject.spaceTypeName) }
     var constructionScheme by remember(subproject.id) { mutableStateOf(subproject.constructionPlanName) }
-    var length by remember(subproject.id) { mutableStateOf(formatNumber(subproject.length / 100.0)) }
-    var width by remember(subproject.id) { mutableStateOf(formatNumber(subproject.width / 100.0)) }
+    var length by remember(subproject.id) { mutableStateOf(AmountFormatter.format2f(subproject.length / 100.0)) }
+    var width by remember(subproject.id) { mutableStateOf(AmountFormatter.format2f(subproject.width / 100.0)) }
     // 高度（米）：仅梯形等三维参数形状使用，从 subproject.height（米）初始化
     var height by remember(subproject.id, subproject.height) {
-        mutableStateOf(subproject.height?.let { formatNumber(it) } ?: "")
+        mutableStateOf(subproject.height?.let { AmountFormatter.format2f(it) } ?: "")
     }
     var remark by remember(subproject.id, subproject.remark) { mutableStateOf(subproject.remark ?: "") }
     // 实测数量与实测备注：异形空间场景使用，空表示按长宽计算
     var measuredQuantity by remember(subproject.id, subproject.measuredQuantity) {
-        mutableStateOf(subproject.measuredQuantity?.let { formatNumber(it) } ?: "")
+        mutableStateOf(subproject.measuredQuantity?.let { AmountFormatter.format2f(it) } ?: "")
     }
     var measuredNote by remember(subproject.id, subproject.measuredNote) {
         mutableStateOf(subproject.measuredNote ?: "")
@@ -1358,8 +1354,8 @@ fun SubprojectEditDialog(
                         .padding(10.dp)
                 ) {
                     Text(
-                        if (hasMeasured) "实测 ${formatNumber(measuredValue!!)}（覆盖计算值）"
-                        else "${formatNumber(previewArea)} m²",
+                        if (hasMeasured) "实测 ${AmountFormatter.format2f(measuredValue!!)}（覆盖计算值）"
+                        else "${AmountFormatter.format2f(previewArea)} m²",
                         fontSize = 13.sp,
                         color = AppColors.Green400,
                         fontWeight = FontWeight.Medium
@@ -1547,7 +1543,7 @@ fun SubprojectEditDialog(
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun EditProjectDialog(
+internal fun EditProjectDialog(
     detail: ProjectDetailUiModel,
     constructors: List<com.salary.core.network.api.UserDto>,
     saving: Boolean,
@@ -1587,37 +1583,12 @@ fun EditProjectDialog(
      * - 差值<=0.01视为一致
      */
     fun validateWorkdays() {
-        if (salaryDistribution != "work_days") {
-            workdaysValidationHint = ""
-            return
-        }
-        val input = totalWorkdaysInput.trim()
-        if (input.isEmpty()) {
-            workdaysValidationHint = ""
-            return
-        }
-        val targetTotal = input.toDoubleOrNull()
-        if (targetTotal == null || targetTotal <= 0) {
-            workdaysValidationHint = "总工日输入无效"
-            return
-        }
-        if (selectedConstructorIds.isEmpty()) {
-            workdaysValidationHint = ""
-            return
-        }
-        val sum = selectedConstructorIds.sumOf { id ->
-            val v = workerWorkdays[id]?.trim()
-            val parsed = v?.toDoubleOrNull()
-            if (parsed != null && parsed > 0) parsed else 1.0
-        }
-        val diff = kotlin.math.abs(sum - targetTotal)
-        val sumStr = String.format("%.2f", sum)
-        val targetStr = String.format("%.2f", targetTotal)
-        workdaysValidationHint = if (diff > 0.01) {
-            "工日合计 $sumStr 与总工日 $targetStr 不一致"
-        } else {
-            "工日合计 $sumStr 与总工日一致 ✓"
-        }
+        workdaysValidationHint = WorkdaysValidator.validate(
+            salaryDistribution = salaryDistribution,
+            totalWorkdaysInput = totalWorkdaysInput,
+            selectedConstructorIds = selectedConstructorIds,
+            workerWorkdays = workerWorkdays
+        )
     }
 
     // 工程状态选项
@@ -2041,7 +2012,7 @@ private fun StatusChip(
  * 左侧绿色竖线 + 操作类型+时间、操作人、描述
  */
 @Composable
-fun HistoryItem(item: HistoryUiModel) {
+internal fun HistoryItem(item: HistoryUiModel) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -2109,24 +2080,6 @@ fun HistoryItem(item: HistoryUiModel) {
 }
 
 /**
- * 格式化数字为两位小数
- */
-private fun formatNumber(value: Double): String {
-    return String.format("%.2f", value)
-}
-
-/**
- * 格式化数字字符串为两位小数
- */
-private fun formatNumber(value: String): String {
-    return try {
-        String.format("%.2f", value.toDouble())
-    } catch (e: Exception) {
-        "0.00"
-    }
-}
-
-/**
  * URL 路径编码工具已迁移到 attachment/AttachmentUtils.kt，此处不再保留私有副本。
  */
 
@@ -2162,7 +2115,7 @@ sealed class SaveResult {
  * @param onConfirm 用户点击确认按钮的回调
  */
 @Composable
-fun SaveResultDialog(
+internal fun SaveResultDialog(
     result: SaveResult,
     onConfirm: () -> Unit
 ) {

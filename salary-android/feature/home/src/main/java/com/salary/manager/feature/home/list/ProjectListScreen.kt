@@ -74,8 +74,7 @@ import com.salary.core.ui.state.ListUiState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Locale
+import com.salary.core.common.util.DateFormatter
 
 /**
  * 工程列表页面 - 对齐Vue前端Projects.vue设计
@@ -1074,28 +1073,11 @@ private fun settlementStatusText(status: String): String = when (status) {
 
 /** 按月分组工程列表，并按月份倒序排序（最近月份在前） */
 private fun groupProjectsByMonth(projects: List<ProjectUiModel>): Map<String, List<ProjectUiModel>> {
-    // 兼容多种后端返回格式：
-    // - "yyyy-MM-dd HH:mm"（后端TO_CHAR实际返回格式）
-    // - "yyyy-MM-dd'T'HH:mm:ss"（ISO标准格式）
-    val parserIso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.CHINA)
-    val parserBackend = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA)
-    val formatter = SimpleDateFormat("yyyy年M月", Locale.CHINA)
-    // 显示格式（yyyy年M月）→ 排序键（yyyy-MM），便于降序排序
-    val sortKeyFormatter = SimpleDateFormat("yyyy-MM", Locale.CHINA)
-
+    // 兼容多种后端返回格式：通过 DateFormatter.parseFlexible 统一解析
     // 先分组：displayKey（"yyyy年M月"或"未知月份"） -> 工程列表
     val grouped = projects.groupBy { project ->
-        // 优先尝试ISO标准格式，失败则尝试后端实际格式，都失败则标记为未知月份
-        val date = try {
-            parserIso.parse(project.createdAt)
-        } catch (_: Exception) {
-            try {
-                parserBackend.parse(project.createdAt)
-            } catch (_: Exception) {
-                null
-            }
-        }
-        date?.let { formatter.format(it) } ?: "未知月份"
+        val date = DateFormatter.parseFlexible(project.createdAt)
+        date?.let { DateFormatter.formatMonth(it) } ?: "未知月份"
     }
 
     // 按月份降序排序（最近月份在前），"未知月份"放到最后
@@ -1104,13 +1086,8 @@ private fun groupProjectsByMonth(projects: List<ProjectUiModel>): Map<String, Li
             if (entry.key == "未知月份") {
                 "" // 空字符串排序后自然落到最后
             } else {
-                try {
-                    // 将显示键"yyyy年M月"再解析回Date，取排序键
-                    val parsed = formatter.parse(entry.key)
-                    parsed?.let { sortKeyFormatter.format(it) } ?: ""
-                } catch (_: Exception) {
-                    ""
-                }
+                // 将显示键"yyyy年M月"再解析回Date，取排序键"yyyy-MM"
+                DateFormatter.parseMonthDisplay(entry.key)?.let { DateFormatter.formatYearMonth(it) } ?: ""
             }
         }
         .associate { it.key to it.value }
@@ -1134,11 +1111,7 @@ private fun DatePickerDialogSheet(
     // 将初始日期字符串转换为DatePicker所需的毫秒时间戳
     val initialMillis = remember(initialDate) {
         initialDate?.let { dateStr ->
-            try {
-                SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).parse(dateStr)?.time
-            } catch (_: Exception) {
-                null
-            }
+            DateFormatter.parseDate(dateStr)?.time
         } ?: System.currentTimeMillis()
     }
     val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
@@ -1150,8 +1123,7 @@ private fun DatePickerDialogSheet(
                 onClick = {
                     // 将选中的毫秒时间戳转换为yyyy-MM-dd格式字符串
                     datePickerState.selectedDateMillis?.let { millis ->
-                        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA)
-                            .format(java.util.Date(millis))
+                        val dateStr = DateFormatter.formatDate(java.util.Date(millis))
                         onConfirm(dateStr)
                     } ?: onDismiss()
                 }

@@ -26,7 +26,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -57,15 +56,8 @@ import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
-
-/**
- * 媒体文件类型判断工具
- */
-private fun isImageType(type: String?): Boolean =
-    type?.startsWith("image/") == true
-
-private fun isVideoType(type: String?): Boolean =
-    type?.startsWith("video/") == true
+import com.salary.manager.feature.home.attachment.isImageType
+import com.salary.manager.feature.home.attachment.isVideoType
 
 /**
  * 格式化时长（毫秒 → mm:ss 或 h:mm:ss）

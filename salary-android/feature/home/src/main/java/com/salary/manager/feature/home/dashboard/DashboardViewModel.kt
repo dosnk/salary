@@ -7,6 +7,8 @@ import com.salary.core.common.util.NetworkErrorHandler
 import com.salary.core.common.util.NetworkUtil
 import com.salary.core.common.util.AmountFormatter
 import com.salary.core.common.util.AppLog
+import com.salary.core.common.util.DateFormatter
+import com.salary.core.common.util.WorkdaysValidator
 import com.salary.core.data.local.DashboardCache
 import com.salary.core.data.local.ServerConfig
 import com.salary.core.data.local.UserStorage
@@ -39,9 +41,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.text.DecimalFormat
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import javax.inject.Inject
 
 /**
@@ -186,7 +185,7 @@ data class DashboardUiState(
     /** 工程历史列表 */
     val projects: List<ProjectHistoryUiModel> = emptyList(),
     /** 选中的年月（格式：yyyy-MM） */
-    val selectedYearMonth: String = SimpleDateFormat("yyyy-MM", Locale.CHINA).format(Date()),
+    val selectedYearMonth: String = DateFormatter.currentYearMonth(),
     /** 是否正在加载工程历史 */
     val isLoadingProjects: Boolean = false,
     /** 是否还有更多工程可加载（分页加载） */
@@ -911,44 +910,13 @@ class DashboardViewModel @Inject constructor(
      */
     private fun validateWorkdays() {
         val state = _uiState.value
-        if (state.salaryDistribution != "work_days") {
-            _uiState.value = state.copy(workdaysValidationHint = "")
-            return
-        }
-        val input = state.totalWorkdaysInput.trim()
-        // 总工日输入为空：不校验
-        if (input.isEmpty()) {
-            _uiState.value = state.copy(workdaysValidationHint = "")
-            return
-        }
-        val targetTotal = input.toDoubleOrNull()
-        if (targetTotal == null || targetTotal <= 0) {
-            _uiState.value = state.copy(workdaysValidationHint = "总工日输入无效")
-            return
-        }
-        // 计算各施工人员工日之和（空值按1计算）
-        val selectedIds = state.selectedConstructorIds
-        if (selectedIds.isEmpty()) {
-            _uiState.value = state.copy(workdaysValidationHint = "")
-            return
-        }
-        val sum = selectedIds.sumOf { id ->
-            val v = state.workerWorkdays[id]?.trim()
-            val parsed = v?.toDoubleOrNull()
-            if (parsed != null && parsed > 0) parsed else 1.0
-        }
-        // 允许0.01的浮点误差
-        val diff = kotlin.math.abs(sum - targetTotal)
-        // 使用 String.format 格式化数字（保留2位小数），避免依赖文件级私有函数
-        val sumStr = String.format("%.2f", sum)
-        val targetStr = String.format("%.2f", targetTotal)
-        _uiState.value = state.copy(
-            workdaysValidationHint = if (diff > 0.01) {
-                "工日合计 $sumStr 与总工日 $targetStr 不一致"
-            } else {
-                "工日合计 $sumStr 与总工日一致 ✓"
-            }
+        val hint = WorkdaysValidator.validate(
+            salaryDistribution = state.salaryDistribution,
+            totalWorkdaysInput = state.totalWorkdaysInput,
+            selectedConstructorIds = state.selectedConstructorIds,
+            workerWorkdays = state.workerWorkdays
         )
+        _uiState.value = state.copy(workdaysValidationHint = hint)
     }
 
     /**
@@ -1553,21 +1521,10 @@ class DashboardViewModel @Inject constructor(
     }
 
     /**
-     * 拼接附件完整访问URL
-     * 后端 path 字段为相对路径（如 /upload/202512/salary/xxx.jpg），需拼接服务器地址
-     * @param relativePath 后端返回的相对路径
-     * @return 完整URL；若服务器地址未配置则返回相对路径
+     * 拼接附件完整访问URL（代理 ServerConfig.buildFileUrl，供 UI 层调用）
      */
-    suspend fun buildFileUrl(relativePath: String): String {
-        if (relativePath.isEmpty()) return relativePath
-        // 已经是完整URL则直接返回
-        if (relativePath.startsWith("http://") || relativePath.startsWith("https://")) {
-            return relativePath
-        }
-        val baseUrl = serverConfig.getServerUrl().trimEnd('/')
-        if (baseUrl.isEmpty()) return relativePath
-        return baseUrl + relativePath
-    }
+    suspend fun buildFileUrl(relativePath: String): String =
+        serverConfig.buildFileUrl(relativePath)
 
     // ===== 缓存辅助方法 =====
 

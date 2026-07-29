@@ -167,7 +167,7 @@ class ProjectDetailViewModel @Inject constructor(
                         FileUiModel(
                             id = it.id,
                             fileName = it.fileName,
-                            fileUrl = buildFileUrl(it.fileUrl),
+                            fileUrl = serverConfig.buildFileUrl(it.fileUrl),
                             fileSize = it.fileSize,
                             uploadedAt = it.uploadedAt,
                             type = it.type
@@ -239,23 +239,6 @@ class ProjectDetailViewModel @Inject constructor(
         } catch (e: Exception) {
             emptyList()
         }
-    }
-
-    /**
-     * 拼接附件完整访问URL
-     * 后端path字段为相对路径（如 /upload/202512/salary/xxx.jpg），需拼接服务器地址
-     * @param relativePath 后端返回的相对路径
-     * @return 完整URL；若服务器地址未配置则返回相对路径
-     */
-    private suspend fun buildFileUrl(relativePath: String): String {
-        if (relativePath.isEmpty()) return relativePath
-        // 已经是完整URL则直接返回
-        if (relativePath.startsWith("http://") || relativePath.startsWith("https://")) {
-            return relativePath
-        }
-        val baseUrl = serverConfig.getServerUrl().trimEnd('/')
-        if (baseUrl.isEmpty()) return relativePath
-        return baseUrl + relativePath
     }
 
     /**

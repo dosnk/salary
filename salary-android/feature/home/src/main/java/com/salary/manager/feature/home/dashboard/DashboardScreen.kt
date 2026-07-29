@@ -39,7 +39,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Info
@@ -49,14 +48,10 @@ import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
@@ -98,6 +93,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.salary.core.common.util.AmountFormatter
 import com.salary.core.common.util.DateFormatter
 import com.salary.core.design.component.GreenTopNavBar
 import com.salary.core.design.theme.AppColors
@@ -1509,8 +1505,8 @@ private fun SubprojectTable(
                 index = index,
                 sub = sub,
                 indexText = "${index + 1}",
-                sizeText = "${formatNumber(sub.length / 100.0)} × ${formatNumber(sub.width / 100.0)}",
-                quantityText = "${formatNumber(sub.quantity)} ${sub.unitDisplayName}"
+                sizeText = "${AmountFormatter.format2f(sub.length / 100.0)} × ${AmountFormatter.format2f(sub.width / 100.0)}",
+                quantityText = "${AmountFormatter.format2f(sub.quantity)} ${sub.unitDisplayName}"
             )
         }
     }
@@ -1910,29 +1906,6 @@ private fun MonthPickerDialog(
             }
         }
     )
-}
-
-/**
- * 格式化数字为两位小数
- */
-private fun formatNumber(value: Any?): String {
-    if (value == null) return "0.00"
-    return when (value) {
-        is Double -> {
-            if (value == 0.0) "0.00"
-            else String.format("%.2f", value)
-        }
-        is String -> {
-            if (value.isBlank()) "0.00"
-            else try {
-                String.format("%.2f", value.toDouble())
-            } catch (_: NumberFormatException) {
-                "0.00"
-            }
-        }
-        is Int -> String.format("%.2f", value.toDouble())
-        else -> "0.00"
-    }
 }
 
 /**
