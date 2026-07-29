@@ -328,7 +328,7 @@ fun StatisticsDashboardScreen(
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .padding(horizontal = 8.dp)
+                                                    .padding(horizontal = 4.dp)
                                                     .background(Color.White, RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
                                                     .padding(24.dp),
                                                 contentAlignment = Alignment.Center
@@ -346,7 +346,7 @@ fun StatisticsDashboardScreen(
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .padding(horizontal = 8.dp)
+                                                    .padding(horizontal = 4.dp)
                                                     .background(Color.White, RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
                                                     .padding(24.dp),
                                                 contentAlignment = Alignment.Center
@@ -367,7 +367,7 @@ fun StatisticsDashboardScreen(
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .padding(horizontal = 8.dp)
+                                                    .padding(horizontal = 4.dp)
                                                     .background(Color.White)
                                                     .horizontalScroll(tableScrollState)
                                             ) {
@@ -392,7 +392,7 @@ fun StatisticsDashboardScreen(
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .padding(horizontal = 8.dp)
+                                                    .padding(horizontal = 4.dp)
                                                     .background(Color.White)
                                                     .horizontalScroll(tableScrollState)
                                             ) {
@@ -431,7 +431,7 @@ fun StatisticsDashboardScreen(
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .padding(horizontal = 8.dp)
+                                                    .padding(horizontal = 4.dp)
                                                     .background(Color.White, RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
                                                     .horizontalScroll(tableScrollState)
                                             ) {
@@ -830,7 +830,7 @@ fun StatsGridSection(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 12.dp)
+            .padding(horizontal = 4.dp, vertical = 12.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -987,7 +987,7 @@ fun SettlementSheetHeader(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp)
+            .padding(horizontal = 4.dp)
     ) {
         // 绿色渐变标题栏（标题+导出图片按钮+结算按钮）
         SettlementTitleBar(
@@ -1099,7 +1099,7 @@ fun SettlementTitleBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(greenGradient, RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 4.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1704,7 +1704,7 @@ fun SettlementHistoryEmptySection(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 16.dp)
+            .padding(horizontal = 4.dp, vertical = 16.dp)
     ) {
         // 绿色标题栏 + 空提示
         SettlementTitleBar(
@@ -1770,7 +1770,7 @@ fun SettlementHistoryItem(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp)
+            .padding(horizontal = 4.dp)
     ) {
         // 顶部间距（保持与原 forEach 内 Spacer(8.dp) 一致的视觉间距）
         Spacer(modifier = Modifier.height(8.dp))
@@ -1843,7 +1843,7 @@ private fun SettlementHistoryTitleBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(greenGradient, RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 4.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
