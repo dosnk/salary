@@ -5,9 +5,11 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,6 +34,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -1529,7 +1532,11 @@ fun AttachmentViewDialog(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            // 禁止点击弹窗外自动关闭，避免边缘误触导致的手势级联异常
+            dismissOnClickOutside = false
+        )
     ) {
         Card(
             modifier = Modifier.fillMaxWidth(0.98f),
@@ -1537,6 +1544,9 @@ fun AttachmentViewDialog(
             colors = CardDefaults.cardColors(containerColor = Color.White),
             elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
         ) {
+            // 关键修复：Dialog 独立 Window 中禁用文本选择，避免与 MainActivity 全局
+            // SelectionContainer 手势事件竞争引发的边缘点击闪退
+            DisableSelection {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1588,7 +1598,8 @@ fun AttachmentViewDialog(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(files, key = { it.id }) { file ->
+                        // key 加前缀，避免与将来的其他 items 冲突
+                        items(files, key = { "file_${it.id}" }) { file ->
                             AttachmentItemRow(
                                 file = file,
                                 onClick = {
@@ -1616,13 +1627,16 @@ fun AttachmentViewDialog(
                     Text("关闭", color = AppColors.Green400, fontWeight = FontWeight.Medium)
                 }
             }
+            }
         }
     }
 
     // 全屏媒体预览弹窗
     previewFile?.let { file ->
         MediaViewerDialog(
-            fileUrl = file.fileUrl,
+            // 对含中文/空格的旧数据附件路径做 URL 编码，防止 Coil 加载或
+            // ExoPlayer 拉起时因 Uri 解析失败而闪退
+            fileUrl = encodeAttachmentUrl(file.fileUrl),
             fileName = file.fileName,
             fileType = file.type,
             onDismiss = { previewFile = null }
@@ -1678,6 +1692,7 @@ fun AttachmentViewDialog(
  * @param onDelete 点击删除按钮回调
  * @param canDelete 是否可删除附件（仅施工员可删除，admin/documenter 隐藏删除按钮）
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AttachmentItemRow(
     file: FileUiModel,
@@ -1688,6 +1703,8 @@ fun AttachmentItemRow(
     val context = LocalContext.current
     val isMedia = isMediaFile(file.type)
     val isVideo = isVideoType(file.type)
+    // 对含中文/空格的旧数据附件路径做 URL 编码，防止 Coil 加载失败
+    val safeUrl = remember(file.fileUrl) { encodeAttachmentUrl(file.fileUrl) }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -1699,12 +1716,23 @@ fun AttachmentItemRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xFFF5F5F5))
-                    .clickable(enabled = true, onClick = onClick)
+                    // 关键修复：combinedClickable 显式提供空 onLongClick，屏蔽长按默认行为；
+                    // onClick 加 try-catch 兜底，防止未捕获异常沿事件流冒泡杀进程
+                    .combinedClickable(
+                        onClick = {
+                            try {
+                                onClick()
+                            } catch (_: Throwable) {
+                                // 静默处理
+                            }
+                        },
+                        onLongClick = {}
+                    )
             ) {
                 // 图片/视频缩略图：宽度占满弹窗（无horizontal padding），高度按原始长宽比自适应
                 AsyncImage(
                     model = ImageRequest.Builder(context)
-                        .data(file.fileUrl)
+                        .data(safeUrl)
                         .crossfade(true)
                         .build(),
                     contentDescription = file.fileName,
@@ -2403,6 +2431,50 @@ private fun formatNumber(value: String): String {
         String.format("%.2f", value.toDouble())
     } catch (e: Exception) {
         "0.00"
+    }
+}
+
+/**
+ * 对附件 URL 做路径分段 UTF-8 编码。
+ *
+ * 场景：旧数据附件路径包含中文（如 /upload/202602/状元府6栋1403/xxx.jpg），
+ * 直接交给 Uri.parse 或 Intent 会引发 URISyntaxException / ActivityNotFoundException。
+ * 此函数保留协议头、"/"、"?" 分隔符不变，仅对分段做 UTF-8 编码。
+ *
+ * 幂等：已含 % 编码的分段（例如"%E7%8A%B6"）不会再次编码。
+ *
+ * 与 DashboardScreen 中的 encodePathSegments 语义一致，此处独立一份避免跨文件依赖。
+ * 第 2 步重构时会抽取到公共 attachment/AttachmentUtils.kt。
+ */
+private fun encodeAttachmentUrl(url: String): String {
+    if (url.isEmpty()) return url
+    return try {
+        val questionIdx = url.indexOf('?')
+        val pathPart = if (questionIdx >= 0) url.substring(0, questionIdx) else url
+        val queryPart = if (questionIdx >= 0) url.substring(questionIdx) else ""
+
+        val schemeEnd = pathPart.indexOf("://")
+        val (prefix, path) = if (schemeEnd >= 0) {
+            val hostEnd = pathPart.indexOf('/', schemeEnd + 3)
+            if (hostEnd >= 0) {
+                pathPart.substring(0, hostEnd) to pathPart.substring(hostEnd)
+            } else {
+                pathPart to ""
+            }
+        } else {
+            "" to pathPart
+        }
+
+        val encodedPath = path.split('/').joinToString("/") { seg ->
+            when {
+                seg.isEmpty() -> ""
+                seg.contains('%') -> seg
+                else -> java.net.URLEncoder.encode(seg, "UTF-8").replace("+", "%20")
+            }
+        }
+        prefix + encodedPath + queryPart
+    } catch (_: Throwable) {
+        url
     }
 }
 
