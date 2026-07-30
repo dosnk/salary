@@ -69,6 +69,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -326,6 +327,12 @@ fun DashboardScreen(
             // 表单Card单独补偿4dp水平padding，保持原有视觉边距
             val listState = rememberLazyListState()
 
+            // 用 derivedStateOf 隔离表单状态：只有表单字段变化时才生成新的 DashboardFormState，
+            // 列表状态变化（如 isLoadingMoreProjects）不会触发表单重组
+            val formState by remember {
+                derivedStateOf { uiState.toFormState() }
+            }
+
             // 滚动到底部自动加载更多工程
             // 防误触发：totalItemsCount > 0 且 lastVisible > 0，避免列表项 ≤3 时
             // lastVisible >= totalItemsCount - 3 永远为真反复触发分页请求
@@ -364,652 +371,16 @@ fun DashboardScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
-                // ===== 工程创建表单（拆分为3个item，减少单个item体积，避免进出视口时卡顿）=====
-                // 3个Surface视觉上连续：顶部圆角 + 无圆角中间 + 底部圆角，看起来像一个Card
-                // form_card_basic：客户地址、空间类型、施工方案、长度、宽度
-                item(key = "form_card_basic") {
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp),
-                        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
-                        color = Color.White,
-                        shadowElevation = 1.dp
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                        // 客户地址
-                        OutlinedTextField(
-                            value = uiState.customerAddress,
-                            onValueChange = { viewModel.updateCustomerAddress(it) },
-                            label = { Text("客户地址") },
-                            placeholder = { Text("请输入客户地址") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = AppColors.Green400,
-                                focusedLabelColor = AppColors.Green400
-                            ),
-                            shape = RoundedCornerShape(8.dp)
-                        )
-
-                        // 空间类型（点击弹出选择器，用Box包裹实现点击）
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showSpaceTypeDialog = true }
-                        ) {
-                            OutlinedTextField(
-                                value = uiState.selectedSpaceType,
-                                onValueChange = {},
-                                label = { Text("空间类型") },
-                                placeholder = { Text("请选择空间类型") },
-                                readOnly = true,
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = AppColors.Green400,
-                                    focusedLabelColor = AppColors.Green400,
-                                    disabledBorderColor = AppColors.Green400,
-                                    disabledTextColor = AppColors.TextPrimary
-                                ),
-                                shape = RoundedCornerShape(8.dp),
-                                enabled = false,
-                                trailingIcon = {
-                                    Text("▼", fontSize = 12.sp, color = AppColors.TextTertiary)
-                                }
-                            )
-                        }
-
-                        // 施工方案（点击弹出选择器，用Box包裹实现点击）
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showSchemeDialog = true }
-                        ) {
-                            OutlinedTextField(
-                                value = uiState.selectedScheme,
-                                onValueChange = {},
-                                label = { Text("施工方案") },
-                                placeholder = { Text("请选择施工方案") },
-                                readOnly = true,
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = AppColors.Green400,
-                                    focusedLabelColor = AppColors.Green400,
-                                    disabledBorderColor = AppColors.Green400,
-                                    disabledTextColor = AppColors.TextPrimary
-                                ),
-                                shape = RoundedCornerShape(8.dp),
-                                enabled = false,
-                                trailingIcon = {
-                                    Text("▼", fontSize = 12.sp, color = AppColors.TextTertiary)
-                                }
-                            )
-                        }
-
-                        // ===== 参数输入区：按空间形状动态渲染 =====
-                        // 形状与参数语义对照：
-                        // - rectangle：长(length) + 宽(width)
-                        // - right_triangle：底(length) + 高(width)
-                        // - trapezoid：上底(length) + 下底(width) + 高(height)
-                        // - circle：直径(length)
-                        // 同时考虑施工方案 unit=length 时禁用宽度输入（与历史逻辑保持一致）
-                        val currentShape = viewModel.currentSpaceShape()
-                        val isLengthOnlyUnit = viewModel.currentSchemeUnit() == "length"
-
-                        // 主参数标签（length）随形状变化，避免用户误填
-                        val primaryLabel = when (currentShape) {
-                            "right_triangle" -> "底(cm)"
-                            "trapezoid" -> "上底(cm)"
-                            "circle" -> "直径(cm)"
-                            "rectangle" -> "长度(cm)"
-                            else -> "长度(cm)"
-                        }
-                        OutlinedTextField(
-                            value = uiState.lengthCm,
-                            onValueChange = { viewModel.updateLength(it) },
-                            label = { Text(primaryLabel) },
-                            placeholder = { Text("请输入$primaryLabel") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = AppColors.Green400,
-                                focusedLabelColor = AppColors.Green400
-                            ),
-                            shape = RoundedCornerShape(8.dp)
-                        )
-
-                        // 次参数（width）：圆形不显示（仅用直径）；其他形状显示
-                        // unit=length 时禁用（保留历史逻辑：长度计价不使用宽度）
-                        val showWidthField = currentShape != "circle"
-                        if (showWidthField) {
-                            val secondaryLabel = when (currentShape) {
-                                "right_triangle" -> "高(cm)"
-                                "trapezoid" -> "下底(cm)"
-                                "rectangle" -> "宽度(cm)"
-                                else -> "宽度(cm)"
-                            }
-                            OutlinedTextField(
-                                value = uiState.widthCm,
-                                onValueChange = { viewModel.updateWidth(it) },
-                                label = { Text(secondaryLabel) },
-                                placeholder = { Text("请输入$secondaryLabel") },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                modifier = Modifier.fillMaxWidth(),
-                                enabled = !isLengthOnlyUnit,
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = AppColors.Green400,
-                                    focusedLabelColor = AppColors.Green400,
-                                    disabledBorderColor = AppColors.TextPlaceholder,
-                                    disabledTextColor = AppColors.TextTertiary
-                                ),
-                                shape = RoundedCornerShape(8.dp)
-                            )
-                        }
-
-                        // 高度（height）：仅梯形显示，其他形状不渲染
-                        if (currentShape == "trapezoid") {
-                            OutlinedTextField(
-                                value = uiState.heightCm,
-                                onValueChange = { viewModel.updateHeight(it) },
-                                label = { Text("高(cm)") },
-                                placeholder = { Text("请输入梯形的高") },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = AppColors.Green400,
-                                    focusedLabelColor = AppColors.Green400
-                                ),
-                                shape = RoundedCornerShape(8.dp)
-                            )
-                        }
-
-                        // ===== 实测信息（可折叠，平时少用默认折叠；已填数据时显示标记） =====
-                        // 用 Surface 模拟可点击的折叠标题行，点击切换展开/折叠
-                        val hasMeasuredData = uiState.measuredQuantity.isNotBlank() || uiState.measuredNote.isNotBlank()
-                        Surface(
-                            onClick = { viewModel.toggleMeasuredSection() },
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (hasMeasuredData) AppColors.Green50 else Color(0xFFF9FAFB),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("📏", fontSize = 15.sp)
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "实测信息（选填）",
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = AppColors.TextPrimary
-                                    )
-                                    // 已填写实测数据时显示橙色"已填"标记
-                                    if (hasMeasuredData) {
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "已填",
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = Color(0xFFE67E22),
-                                            modifier = Modifier
-                                                .background(
-                                                    color = Color(0xFFFFE8CC),
-                                                    shape = RoundedCornerShape(4.dp)
-                                                )
-                                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                }
-                                // 展开/收起箭头
-                                Icon(
-                                    imageVector = if (uiState.isMeasuredSectionExpanded)
-                                        Icons.Default.KeyboardArrowUp
-                                    else
-                                        Icons.Default.KeyboardArrowDown,
-                                    contentDescription = if (uiState.isMeasuredSectionExpanded) "收起" else "展开",
-                                    tint = AppColors.TextSecondary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-
-                        // 展开时显示实测数量和实测备注两个输入框
-                        if (uiState.isMeasuredSectionExpanded) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            // 实测数量（异形空间现场实测值，可选）
-                            // 填入后覆盖按长宽计算的数量，适用于L形/多边形/圆形等非矩形空间
-                            OutlinedTextField(
-                                value = uiState.measuredQuantity,
-                                onValueChange = { viewModel.updateMeasuredQuantity(it) },
-                                label = { Text("实测数量（可选，覆盖计算值）") },
-                                placeholder = { Text("异形空间填实测值") },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = AppColors.Green400,
-                                    focusedLabelColor = AppColors.Green400
-                                ),
-                                shape = RoundedCornerShape(8.dp)
-                            )
-
-                            // 实测备注（记录实测方式或现场说明，可选）
-                            OutlinedTextField(
-                                value = uiState.measuredNote,
-                                onValueChange = { viewModel.updateMeasuredNote(it) },
-                                label = { Text("实测备注（可选）") },
-                                placeholder = { Text("如：L形客厅周长实测") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = AppColors.Green400,
-                                    focusedLabelColor = AppColors.Green400
-                                ),
-                                shape = RoundedCornerShape(8.dp)
-                            )
-                        }
-
-                        } // end of form_card_basic Column
-                    } // end of form_card_basic Surface
-                } // end of form_card_basic item
-
-                // form_card_distribution：分配方式、工日设置、施工人员
-                item(key = "form_card_distribution") {
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp),
-                        shape = RectangleShape,
-                        color = Color.White
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                        // 分配方式（单选：平均/按工日）
-                        Column {
-                            Text(
-                                text = "分配方式",
-                                fontSize = 14.sp,
-                                color = AppColors.TextSecondary
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = uiState.salaryDistribution == "average",
-                                    onClick = { viewModel.updateSalaryDistribution("average") },
-                                    colors = RadioButtonDefaults.colors(selectedColor = AppColors.Green400)
-                                )
-                                Text("平均", fontSize = 14.sp)
-                                Spacer(modifier = Modifier.width(16.dp))
-                                RadioButton(
-                                    selected = uiState.salaryDistribution == "work_days",
-                                    onClick = { viewModel.updateSalaryDistribution("work_days") },
-                                    colors = RadioButtonDefaults.colors(selectedColor = AppColors.Green400)
-                                )
-                                Text("按工日", fontSize = 14.sp)
-                            }
-                        }
-
-                        // 按工日分配模式下，在分配方式与施工人员选择之间显示工日输入区
-                        // 每行固定3个施工人员，超过3个自动换行，每行宽度自动占满容器
-                        if (uiState.salaryDistribution == "work_days" &&
-                            uiState.selectedConstructorIds.isNotEmpty()
-                        ) {
-                            val selectedWorkers = uiState.constructors.filter {
-                                uiState.selectedConstructorIds.contains(it.id)
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "工日设置（每人默认1工日）",
-                                fontSize = 13.sp,
-                                color = AppColors.TextSecondary
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            // 总工日输入框：独立一行，占满容器宽度（位于工日设置上方）
-                            // 为空时不校验；有值时校验各施工人员工日之和是否等于此值
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text(
-                                    text = "总工日",
-                                    fontSize = 13.sp,
-                                    color = AppColors.TextSecondary
-                                )
-                                OutlinedTextField(
-                                    value = uiState.totalWorkdaysInput,
-                                    onValueChange = { newValue: String ->
-                                        viewModel.updateTotalWorkdaysInput(newValue)
-                                    },
-                                    placeholder = {
-                                        Text(
-                                            "输入总工数进行校验（可选）",
-                                            fontSize = 12.sp,
-                                            color = AppColors.TextTertiary
-                                        )
-                                    },
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(
-                                        keyboardType = KeyboardType.Decimal
-                                    ),
-                                    // 移除固定height，使用默认高度避免Material3内部padding裁切文字
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .heightIn(min = 48.dp),
-                                    textStyle = androidx.compose.ui.text.TextStyle(
-                                        fontSize = 14.sp,
-                                        textAlign = TextAlign.End
-                                    ),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = AppColors.Green400,
-                                        unfocusedBorderColor = AppColors.Outline
-                                    ),
-                                    shape = RoundedCornerShape(6.dp)
-                                )
-                                Text(
-                                    text = "天",
-                                    fontSize = 13.sp,
-                                    color = AppColors.TextSecondary
-                                )
-                            }
-                            // 校验结果提示
-                            // 一致时：绿色常规字号
-                            // 不一致时：橙色加大字号+加粗+闪烁动画（alpha 0.4↔1.0），提示用户注意
-                            if (uiState.workdaysValidationHint.isNotEmpty()) {
-                                val hint = uiState.workdaysValidationHint
-                                // 注意：不能使用contains("一致")，因为"不一致"也包含"一致"二字
-                                val isConsistent = !hint.contains("不一致")
-                                // 不一致时使用无限循环透明度动画
-                                val infiniteTransition = rememberInfiniteTransition(label = "workdaysHint")
-                                val alpha by infiniteTransition.animateFloat(
-                                    initialValue = 0.4f,
-                                    targetValue = 1.0f,
-                                    animationSpec = infiniteRepeatable(
-                                        animation = tween(durationMillis = 700),
-                                        repeatMode = RepeatMode.Reverse
-                                    ),
-                                    label = "hintAlpha"
-                                )
-                                Text(
-                                    text = hint,
-                                    fontSize = if (isConsistent) 11.sp else 14.sp,
-                                    fontWeight = if (isConsistent) FontWeight.Normal else FontWeight.Bold,
-                                    color = if (isConsistent) AppColors.Green400 else Color(0xFFE6A23C),
-                                    modifier = Modifier
-                                        .padding(start = 4.dp, top = 2.dp)
-                                        .graphicsLayer {
-                                            this.alpha = if (isConsistent) 1.0f else alpha
-                                        }
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            // 按每行3个分组，使用Row+weight实现等宽占满容器
-                            selectedWorkers.chunked(3).forEach { rowWorkers ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    rowWorkers.forEach { worker ->
-                                        // 每个施工人员一个等宽标签：姓名 + 工日输入框
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = AppColors.Green50,
-                                            border = androidx.compose.foundation.BorderStroke(
-                                                1.dp,
-                                                AppColors.Green200
-                                            ),
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.padding(
-                                                    horizontal = 6.dp,
-                                                    vertical = 6.dp
-                                                ),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = worker.nickname,
-                                                    fontSize = 12.sp,
-                                                    color = AppColors.Green700,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                                // 工日输入框：仅允许数字和小数点
-                                                // 默认值为空，placeholder提示"1"；空值在计算和保存时按1工日处理
-                                                // 修复：移除固定height，使用默认高度+heightIn下限，避免Material3内部padding裁切文字
-                                                val workdayValue = uiState.workerWorkdays[worker.id] ?: ""
-                                                OutlinedTextField(
-                                                    value = workdayValue,
-                                                    onValueChange = { newValue: String ->
-                                                        viewModel.updateWorkerWorkdays(worker.id, newValue)
-                                                    },
-                                                    placeholder = {
-                                                        Text(
-                                                            "1",
-                                                            fontSize = 12.sp,
-                                                            color = AppColors.TextTertiary
-                                                        )
-                                                    },
-                                                    singleLine = true,
-                                                    keyboardOptions = KeyboardOptions(
-                                                        keyboardType = KeyboardType.Decimal
-                                                    ),
-                                                    modifier = Modifier
-                                                        .width(56.dp)
-                                                        .heightIn(min = 48.dp),
-                                                    textStyle = androidx.compose.ui.text.TextStyle(
-                                                        fontSize = 14.sp,
-                                                        textAlign = TextAlign.Center
-                                                    ),
-                                                    colors = OutlinedTextFieldDefaults.colors(
-                                                        focusedContainerColor = Color.White,
-                                                        unfocusedContainerColor = Color.White,
-                                                        focusedBorderColor = AppColors.Green400,
-                                                        unfocusedBorderColor = AppColors.Green200
-                                                    ),
-                                                    shape = RoundedCornerShape(6.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(2.dp))
-                                                Text(
-                                                    text = "天",
-                                                    fontSize = 11.sp,
-                                                    color = AppColors.TextTertiary
-                                                )
-                                            }
-                                        }
-                                    }
-                                    // 不足3个时用空占位填充，保持每行等宽对齐
-                                    repeat(3 - rowWorkers.size) {
-                                        Spacer(modifier = Modifier.weight(1f))
-                                    }
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                        }
-
-                        // 施工人员选择（方形Checkbox标签，FlowRow自动换行，一行约7个）
-                        if (uiState.constructors.isNotEmpty()) {
-                            Column {
-                                Text(
-                                    text = "施工人员",
-                                    fontSize = 14.sp,
-                                    color = AppColors.TextSecondary
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                // 使用FlowRow实现自动换行，一行约7个
-                                FlowRow(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    uiState.constructors.forEach { worker ->
-                                        val isSelected = uiState.selectedConstructorIds.contains(worker.id)
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .background(
-                                                    if (isSelected) AppColors.Green50
-                                                    else AppColors.NeutralSurface
-                                                )
-                                                .border(
-                                                    width = 1.dp,
-                                                    color = if (isSelected) AppColors.Green400
-                                                    else AppColors.Outline,
-                                                    shape = RoundedCornerShape(4.dp)
-                                                )
-                                                .clickable { viewModel.toggleConstructor(worker.id) }
-                                                .padding(horizontal = 6.dp, vertical = 3.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                        ) {
-                                            // 缩小方形复选框图标
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(14.dp)
-                                                    .background(
-                                                        color = if (isSelected) AppColors.Green400
-                                                        else Color.Transparent,
-                                                        shape = RoundedCornerShape(2.dp)
-                                                    )
-                                                    .border(
-                                                        width = 1.dp,
-                                                        color = if (isSelected) AppColors.Green400
-                                                        else AppColors.NeutralBorder,
-                                                        shape = RoundedCornerShape(2.dp)
-                                                    ),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                if (isSelected) {
-                                                    // 使用矢量图标替代文字"✓"，在小尺寸下依然清晰可见
-                                                    Icon(
-                                                        imageVector = Icons.Filled.Check,
-                                                        contentDescription = null,
-                                                        modifier = Modifier.size(10.dp),
-                                                        tint = Color.White
-                                                    )
-                                                }
-                                            }
-                                            Text(
-                                                text = worker.nickname,
-                                                fontSize = 12.sp,
-                                                color = if (isSelected) AppColors.Green400
-                                                else AppColors.TextPrimary
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        } // end of form_card_distribution Column
-                    } // end of form_card_distribution Surface
-                } // end of form_card_distribution item
-
-                // form_card_action：计算预览、备注、保存按钮
-                item(key = "form_card_action") {
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp),
-                        shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp),
-                        color = Color.White,
-                        shadowElevation = 1.dp
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                        // 计算预览公式（浅绿背景+绿色边框）
-                        // 优化：直接用 Text + Modifier 修饰，去掉外层 Box 容器
-                        if (uiState.calculationFormula.isNotBlank()) {
-                            Text(
-                                text = "计算预览：${uiState.calculationFormula}",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                fontFamily = FontFamily.Monospace,
-                                color = AppColors.TextPrimary,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(
-                                        color = Color(0xFFF9FEF5),
-                                        shape = RoundedCornerShape(8.dp)
-                                    )
-                                    .border(
-                                        width = 1.dp,
-                                        color = Color(0xFFE6F4D0),
-                                        shape = RoundedCornerShape(8.dp)
-                                    )
-                                    .padding(8.dp)
-                            )
-                        }
-
-                        // 工程备注（压缩高度：限制最多2行，减少垂直占用）
-                        OutlinedTextField(
-                            value = uiState.remark,
-                            onValueChange = { viewModel.updateRemark(it) },
-                            label = { Text("工程备注") },
-                            placeholder = { Text("请输入工程备注") },
-                            maxLines = 2,
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = AppColors.Green400,
-                                focusedLabelColor = AppColors.Green400
-                            ),
-                            shape = RoundedCornerShape(8.dp)
-                        )
-
-                        // 保存按钮（绿色渐变，压缩高度）
-                        Button(
-                            onClick = { viewModel.saveProject() },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(40.dp),
-                            enabled = !uiState.isSaving,
-                            shape = RoundedCornerShape(24.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = AppColors.Green400,
-                                disabledContainerColor = AppColors.Green300
-                            ),
-                            contentPadding = ButtonDefaults.ContentPadding
-                        ) {
-                            if (uiState.isSaving) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    color = Color.White,
-                                    strokeWidth = 2.dp
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("保存中...", color = Color.White, fontSize = 15.sp)
-                            } else {
-                                Text(
-                                    text = "保存",
-                                    color = Color.White,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    }
+                // ===== 工程创建表单（已提取为独立 Composable DashboardFormSection）=====
+                // 通过 derivedStateOf 隔离表单状态：列表状态变化不会触发表单重组
+                item(key = "form_section") {
+                    DashboardFormSection(
+                        formState = formState,
+                        viewModel = viewModel,
+                        onShowSpaceTypeDialog = { showSpaceTypeDialog = true },
+                        onShowSchemeDialog = { showSchemeDialog = true }
+                    )
                 }
-                } // end of form_card_action item
 
                 item(key = "form_bottom_spacer") {
                     Spacer(modifier = Modifier.height(8.dp))
@@ -2019,4 +1390,696 @@ private fun ServerStatusText(latencyTracker: LatencyTracker?) {
             maxLines = 1
         )
     }
+}
+
+/**
+ * 工日校验提示组件（独立隔离动画作用域）
+ *
+ * 将无限循环动画限制在此独立 Composable 内部，避免动画驱动的重组波及外层
+ * DashboardScreen 和 LazyColumn 的其他 item。
+ *
+ * - 一致：绿色、11sp、Normal、无动画
+ * - 不一致：橙色、14sp、Bold、alpha 0.4↔1.0 闪烁（700ms 循环）
+ *
+ * @param hint 校验提示文本
+ */
+@Composable
+private fun WorkdaysValidationHint(hint: String) {
+    // 注意：不能使用contains("一致")，因为"不一致"也包含"一致"二字
+    val isConsistent = !hint.contains("不一致")
+    if (!isConsistent) {
+        // 不一致时才创建无限循环动画，避免一致时无谓的动画驱动重组
+        val infiniteTransition = rememberInfiniteTransition(label = "workdaysHint")
+        val alpha by infiniteTransition.animateFloat(
+            initialValue = 0.4f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 700),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "hintAlpha"
+        )
+        Text(
+            text = hint,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFFE6A23C),
+            modifier = Modifier
+                .padding(start = 4.dp, top = 2.dp)
+                .graphicsLayer { this.alpha = alpha }
+        )
+    } else {
+        Text(
+            text = hint,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Normal,
+            color = AppColors.Green400,
+            modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+        )
+    }
+}
+
+/**
+ * 工程创建表单区域（独立 Composable）
+ *
+ * 从 DashboardScreen 的 LazyColumn 中提取，配合 derivedStateOf 隔离表单状态：
+ * - 父级通过 derivedStateOf { uiState.toFormState() } 生成 DashboardFormState
+ * - 只有表单字段变化才会生成新的 formState 实例，触发本组件重组
+ * - 列表状态变化（如 isLoadingMoreProjects）不会波及本组件，解决主页滑动卡顿问题
+ *
+ * 视觉上由 3 个 Surface 上下拼接构成一个连续的 Card：
+ * - 顶部圆角 Surface：客户地址、空间类型、施工方案、参数输入、实测信息
+ * - 中间无圆角 Surface：分配方式、工日设置、施工人员
+ * - 底部圆角 Surface：计算预览、备注、保存按钮
+ *
+ * @param formState 表单状态（由父级 derivedStateOf 生成）
+ * @param viewModel ViewModel（用于触发表单操作）
+ * @param onShowSpaceTypeDialog 显示空间类型选择弹窗的回调
+ * @param onShowSchemeDialog 显示施工方案选择弹窗的回调
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DashboardFormSection(
+    formState: DashboardFormState,
+    viewModel: DashboardViewModel,
+    onShowSpaceTypeDialog: () -> Unit,
+    onShowSchemeDialog: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // ===== form_card_basic：客户地址、空间类型、施工方案、长度、宽度、实测信息 =====
+        // 顶部圆角 Surface，与下方两个 Surface 视觉上拼接成一个 Card
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp),
+            shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+            color = Color.White,
+            shadowElevation = 1.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // 客户地址
+                OutlinedTextField(
+                    value = formState.customerAddress,
+                    onValueChange = { viewModel.updateCustomerAddress(it) },
+                    label = { Text("客户地址") },
+                    placeholder = { Text("请输入客户地址") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = AppColors.Green400,
+                        focusedLabelColor = AppColors.Green400
+                    ),
+                    shape = RoundedCornerShape(8.dp)
+                )
+
+                // 空间类型（点击弹出选择器，用Box包裹实现点击）
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onShowSpaceTypeDialog() }
+                ) {
+                    OutlinedTextField(
+                        value = formState.selectedSpaceType,
+                        onValueChange = {},
+                        label = { Text("空间类型") },
+                        placeholder = { Text("请选择空间类型") },
+                        readOnly = true,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AppColors.Green400,
+                            focusedLabelColor = AppColors.Green400,
+                            disabledBorderColor = AppColors.Green400,
+                            disabledTextColor = AppColors.TextPrimary
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        enabled = false,
+                        trailingIcon = {
+                            Text("▼", fontSize = 12.sp, color = AppColors.TextTertiary)
+                        }
+                    )
+                }
+
+                // 施工方案（点击弹出选择器，用Box包裹实现点击）
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onShowSchemeDialog() }
+                ) {
+                    OutlinedTextField(
+                        value = formState.selectedScheme,
+                        onValueChange = {},
+                        label = { Text("施工方案") },
+                        placeholder = { Text("请选择施工方案") },
+                        readOnly = true,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AppColors.Green400,
+                            focusedLabelColor = AppColors.Green400,
+                            disabledBorderColor = AppColors.Green400,
+                            disabledTextColor = AppColors.TextPrimary
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        enabled = false,
+                        trailingIcon = {
+                            Text("▼", fontSize = 12.sp, color = AppColors.TextTertiary)
+                        }
+                    )
+                }
+
+                // ===== 参数输入区：按空间形状动态渲染 =====
+                // 形状与参数语义对照：
+                // - rectangle：长(length) + 宽(width)
+                // - right_triangle：底(length) + 高(width)
+                // - trapezoid：上底(length) + 下底(width) + 高(height)
+                // - circle：直径(length)
+                // 同时考虑施工方案 unit=length 时禁用宽度输入（与历史逻辑保持一致）
+                val currentShape = viewModel.currentSpaceShape()
+                val isLengthOnlyUnit = viewModel.currentSchemeUnit() == "length"
+
+                // 主参数标签（length）随形状变化，避免用户误填
+                val primaryLabel = when (currentShape) {
+                    "right_triangle" -> "底(cm)"
+                    "trapezoid" -> "上底(cm)"
+                    "circle" -> "直径(cm)"
+                    "rectangle" -> "长度(cm)"
+                    else -> "长度(cm)"
+                }
+                OutlinedTextField(
+                    value = formState.lengthCm,
+                    onValueChange = { viewModel.updateLength(it) },
+                    label = { Text(primaryLabel) },
+                    placeholder = { Text("请输入$primaryLabel") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = AppColors.Green400,
+                        focusedLabelColor = AppColors.Green400
+                    ),
+                    shape = RoundedCornerShape(8.dp)
+                )
+
+                // 次参数（width）：圆形不显示（仅用直径）；其他形状显示
+                // unit=length 时禁用（保留历史逻辑：长度计价不使用宽度）
+                val showWidthField = currentShape != "circle"
+                if (showWidthField) {
+                    val secondaryLabel = when (currentShape) {
+                        "right_triangle" -> "高(cm)"
+                        "trapezoid" -> "下底(cm)"
+                        "rectangle" -> "宽度(cm)"
+                        else -> "宽度(cm)"
+                    }
+                    OutlinedTextField(
+                        value = formState.widthCm,
+                        onValueChange = { viewModel.updateWidth(it) },
+                        label = { Text(secondaryLabel) },
+                        placeholder = { Text("请输入$secondaryLabel") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !isLengthOnlyUnit,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AppColors.Green400,
+                            focusedLabelColor = AppColors.Green400,
+                            disabledBorderColor = AppColors.TextPlaceholder,
+                            disabledTextColor = AppColors.TextTertiary
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
+
+                // 高度（height）：仅梯形显示，其他形状不渲染
+                if (currentShape == "trapezoid") {
+                    OutlinedTextField(
+                        value = formState.heightCm,
+                        onValueChange = { viewModel.updateHeight(it) },
+                        label = { Text("高(cm)") },
+                        placeholder = { Text("请输入梯形的高") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AppColors.Green400,
+                            focusedLabelColor = AppColors.Green400
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
+
+                // ===== 实测信息（可折叠，平时少用默认折叠；已填数据时显示标记） =====
+                // 用 Surface 模拟可点击的折叠标题行，点击切换展开/折叠
+                val hasMeasuredData = formState.measuredQuantity.isNotBlank() || formState.measuredNote.isNotBlank()
+                Surface(
+                    onClick = { viewModel.toggleMeasuredSection() },
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (hasMeasuredData) AppColors.Green50 else Color(0xFFF9FAFB),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("📏", fontSize = 15.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "实测信息（选填）",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = AppColors.TextPrimary
+                            )
+                            // 已填写实测数据时显示橙色"已填"标记
+                            if (hasMeasuredData) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "已填",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFFE67E22),
+                                    modifier = Modifier
+                                        .background(
+                                            color = Color(0xFFFFE8CC),
+                                            shape = RoundedCornerShape(4.dp)
+                                        )
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        // 展开/收起箭头
+                        Icon(
+                            imageVector = if (formState.isMeasuredSectionExpanded)
+                                Icons.Default.KeyboardArrowUp
+                            else
+                                Icons.Default.KeyboardArrowDown,
+                            contentDescription = if (formState.isMeasuredSectionExpanded) "收起" else "展开",
+                            tint = AppColors.TextSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                // 展开时显示实测数量和实测备注两个输入框
+                if (formState.isMeasuredSectionExpanded) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    // 实测数量（异形空间现场实测值，可选）
+                    // 填入后覆盖按长宽计算的数量，适用于L形/多边形/圆形等非矩形空间
+                    OutlinedTextField(
+                        value = formState.measuredQuantity,
+                        onValueChange = { viewModel.updateMeasuredQuantity(it) },
+                        label = { Text("实测数量（可选，覆盖计算值）") },
+                        placeholder = { Text("异形空间填实测值") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AppColors.Green400,
+                            focusedLabelColor = AppColors.Green400
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+
+                    // 实测备注（记录实测方式或现场说明，可选）
+                    OutlinedTextField(
+                        value = formState.measuredNote,
+                        onValueChange = { viewModel.updateMeasuredNote(it) },
+                        label = { Text("实测备注（可选）") },
+                        placeholder = { Text("如：L形客厅周长实测") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AppColors.Green400,
+                            focusedLabelColor = AppColors.Green400
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
+            } // end of form_card_basic Column
+        } // end of form_card_basic Surface
+
+        // ===== form_card_distribution：分配方式、工日设置、施工人员 =====
+        // 中间无圆角 Surface，与上下两个 Surface 视觉上拼接成一个 Card
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp),
+            shape = RectangleShape,
+            color = Color.White
+        ) {
+            Column(
+                modifier = Modifier.padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // 分配方式（单选：平均/按工日）
+                Column {
+                    Text(
+                        text = "分配方式",
+                        fontSize = 14.sp,
+                        color = AppColors.TextSecondary
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = formState.salaryDistribution == "average",
+                            onClick = { viewModel.updateSalaryDistribution("average") },
+                            colors = RadioButtonDefaults.colors(selectedColor = AppColors.Green400)
+                        )
+                        Text("平均", fontSize = 14.sp)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        RadioButton(
+                            selected = formState.salaryDistribution == "work_days",
+                            onClick = { viewModel.updateSalaryDistribution("work_days") },
+                            colors = RadioButtonDefaults.colors(selectedColor = AppColors.Green400)
+                        )
+                        Text("按工日", fontSize = 14.sp)
+                    }
+                }
+
+                // 按工日分配模式下，在分配方式与施工人员选择之间显示工日输入区
+                // 每行固定3个施工人员，超过3个自动换行，每行宽度自动占满容器
+                if (formState.salaryDistribution == "work_days" &&
+                    formState.selectedConstructorIds.isNotEmpty()
+                ) {
+                    val selectedWorkers = formState.constructors.filter {
+                        formState.selectedConstructorIds.contains(it.id)
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "工日设置（每人默认1工日）",
+                        fontSize = 13.sp,
+                        color = AppColors.TextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    // 总工日输入框：独立一行，占满容器宽度（位于工日设置上方）
+                    // 为空时不校验；有值时校验各施工人员工日之和是否等于此值
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "总工日",
+                            fontSize = 13.sp,
+                            color = AppColors.TextSecondary
+                        )
+                        OutlinedTextField(
+                            value = formState.totalWorkdaysInput,
+                            onValueChange = { newValue: String ->
+                                viewModel.updateTotalWorkdaysInput(newValue)
+                            },
+                            placeholder = {
+                                Text(
+                                    "输入总工数进行校验（可选）",
+                                    fontSize = 12.sp,
+                                    color = AppColors.TextTertiary
+                                )
+                            },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Decimal
+                            ),
+                            // 移除固定height，使用默认高度避免Material3内部padding裁切文字
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp),
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                fontSize = 14.sp,
+                                textAlign = TextAlign.End
+                            ),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = AppColors.Green400,
+                                unfocusedBorderColor = AppColors.Outline
+                            ),
+                            shape = RoundedCornerShape(6.dp)
+                        )
+                        Text(
+                            text = "天",
+                            fontSize = 13.sp,
+                            color = AppColors.TextSecondary
+                        )
+                    }
+                    // 校验结果提示
+                    // 一致时：绿色常规字号
+                    // 不一致时：橙色加大字号+加粗+闪烁动画（alpha 0.4↔1.0），提示用户注意
+                    if (formState.workdaysValidationHint.isNotEmpty()) {
+                        WorkdaysValidationHint(hint = formState.workdaysValidationHint)
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    // 按每行3个分组，使用Row+weight实现等宽占满容器
+                    selectedWorkers.chunked(3).forEach { rowWorkers ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            rowWorkers.forEach { worker ->
+                                // 每个施工人员一个等宽标签：姓名 + 工日输入框
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = AppColors.Green50,
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        AppColors.Green200
+                                    ),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(
+                                            horizontal = 6.dp,
+                                            vertical = 6.dp
+                                        ),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = worker.nickname,
+                                            fontSize = 12.sp,
+                                            color = AppColors.Green700,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        // 工日输入框：仅允许数字和小数点
+                                        // 默认值为空，placeholder提示"1"；空值在计算和保存时按1工日处理
+                                        // 修复：移除固定height，使用默认高度+heightIn下限，避免Material3内部padding裁切文字
+                                        val workdayValue = formState.workerWorkdays[worker.id] ?: ""
+                                        OutlinedTextField(
+                                            value = workdayValue,
+                                            onValueChange = { newValue: String ->
+                                                viewModel.updateWorkerWorkdays(worker.id, newValue)
+                                            },
+                                            placeholder = {
+                                                Text(
+                                                    "1",
+                                                    fontSize = 12.sp,
+                                                    color = AppColors.TextTertiary
+                                                )
+                                            },
+                                            singleLine = true,
+                                            keyboardOptions = KeyboardOptions(
+                                                keyboardType = KeyboardType.Decimal
+                                            ),
+                                            modifier = Modifier
+                                                .width(56.dp)
+                                                .heightIn(min = 48.dp),
+                                            textStyle = androidx.compose.ui.text.TextStyle(
+                                                fontSize = 14.sp,
+                                                textAlign = TextAlign.Center
+                                            ),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedContainerColor = Color.White,
+                                                unfocusedContainerColor = Color.White,
+                                                focusedBorderColor = AppColors.Green400,
+                                                unfocusedBorderColor = AppColors.Green200
+                                            ),
+                                            shape = RoundedCornerShape(6.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(2.dp))
+                                        Text(
+                                            text = "天",
+                                            fontSize = 11.sp,
+                                            color = AppColors.TextTertiary
+                                        )
+                                    }
+                                }
+                            }
+                            // 不足3个时用空占位填充，保持每行等宽对齐
+                            repeat(3 - rowWorkers.size) {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                // 施工人员选择（方形Checkbox标签，FlowRow自动换行，一行约7个）
+                if (formState.constructors.isNotEmpty()) {
+                    Column {
+                        Text(
+                            text = "施工人员",
+                            fontSize = 14.sp,
+                            color = AppColors.TextSecondary
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        // 使用FlowRow实现自动换行，一行约7个
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            formState.constructors.forEach { worker ->
+                                val isSelected = formState.selectedConstructorIds.contains(worker.id)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(
+                                            if (isSelected) AppColors.Green50
+                                            else AppColors.NeutralSurface
+                                        )
+                                        .border(
+                                            width = 1.dp,
+                                            color = if (isSelected) AppColors.Green400
+                                            else AppColors.Outline,
+                                            shape = RoundedCornerShape(4.dp)
+                                        )
+                                        .clickable { viewModel.toggleConstructor(worker.id) }
+                                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                ) {
+                                    // 缩小方形复选框图标
+                                    Box(
+                                        modifier = Modifier
+                                            .size(14.dp)
+                                            .background(
+                                                color = if (isSelected) AppColors.Green400
+                                                else Color.Transparent,
+                                                shape = RoundedCornerShape(2.dp)
+                                            )
+                                            .border(
+                                                width = 1.dp,
+                                                color = if (isSelected) AppColors.Green400
+                                                else AppColors.NeutralBorder,
+                                                shape = RoundedCornerShape(2.dp)
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (isSelected) {
+                                            // 使用矢量图标替代文字"✓"，在小尺寸下依然清晰可见
+                                            Icon(
+                                                imageVector = Icons.Filled.Check,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(10.dp),
+                                                tint = Color.White
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = worker.nickname,
+                                        fontSize = 12.sp,
+                                        color = if (isSelected) AppColors.Green400
+                                        else AppColors.TextPrimary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            } // end of form_card_distribution Column
+        } // end of form_card_distribution Surface
+
+        // ===== form_card_action：计算预览、备注、保存按钮 =====
+        // 底部圆角 Surface，与上方两个 Surface 视觉上拼接成一个 Card
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp),
+            shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp),
+            color = Color.White,
+            shadowElevation = 1.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // 计算预览公式（浅绿背景+绿色边框）
+                // 优化：直接用 Text + Modifier 修饰，去掉外层 Box 容器
+                if (formState.calculationFormula.isNotBlank()) {
+                    Text(
+                        text = "计算预览：${formState.calculationFormula}",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        fontFamily = FontFamily.Monospace,
+                        color = AppColors.TextPrimary,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                color = Color(0xFFF9FEF5),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = Color(0xFFE6F4D0),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            .padding(8.dp)
+                    )
+                }
+
+                // 工程备注（压缩高度：限制最多2行，减少垂直占用）
+                OutlinedTextField(
+                    value = formState.remark,
+                    onValueChange = { viewModel.updateRemark(it) },
+                    label = { Text("工程备注") },
+                    placeholder = { Text("请输入工程备注") },
+                    maxLines = 2,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = AppColors.Green400,
+                        focusedLabelColor = AppColors.Green400
+                    ),
+                    shape = RoundedCornerShape(8.dp)
+                )
+
+                // 保存按钮（绿色渐变，压缩高度）
+                Button(
+                    onClick = { viewModel.saveProject() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(40.dp),
+                    enabled = !formState.isSaving,
+                    shape = RoundedCornerShape(24.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = AppColors.Green400,
+                        disabledContainerColor = AppColors.Green300
+                    ),
+                    contentPadding = ButtonDefaults.ContentPadding
+                ) {
+                    if (formState.isSaving) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("保存中...", color = Color.White, fontSize = 15.sp)
+                    } else {
+                        Text(
+                            text = "保存",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            } // end of form_card_action Column
+        } // end of form_card_action Surface
+    } // end of form_section Column
 }
