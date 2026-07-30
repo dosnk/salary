@@ -1267,11 +1267,11 @@ private fun ProjectHistoryCard(
     onOpenFilePicker: () -> Unit
 ) {
     // 子项目表格展开/折叠状态
-    // 优化：子项目≤5个时默认展开（用户体验优先），>5个时默认折叠（减少渲染量）
+    // 优化：子项目≤15个时默认展开（体验与性能的平衡点），>15个时默认折叠（减少渲染量）
     // 注意：使用 remember 而非 rememberSaveable（后者需要 runtime-saveable 额外依赖）
     // 配置更改（屏幕旋转）时会重置为默认展开/折叠状态，可接受
     var isSubprojectExpanded by remember(project.id) {
-        mutableStateOf(project.subprojects.size <= 5)
+        mutableStateOf(project.subprojects.size <= 15)
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
