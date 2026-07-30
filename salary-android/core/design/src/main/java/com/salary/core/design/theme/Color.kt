@@ -34,6 +34,13 @@ object AppColors {
     val Warning = Color(0xFFF59E0B)
     val Error = Color(0xFFEF4444)
 
+    // 语义色背景/文字变体（用于标签、徽章等）
+    val WarningBg = Color(0xFFFFE8CC)         // 警告浅橙背景（实测标签、已填标记）
+    val WarningText = Color(0xFFE67E22)       // 警告深橙文字（统一替代 0xFFE6A23C / 0xFFE67E22 混用）
+    val GreenBgLight = Color(0xFFF9FEF5)      // 浅绿背景（计算预览区、实测区）
+    val GreenBorderLight = Color(0xFFE6F4D0)  // 浅绿边框（计算预览区）
+    val NeutralBgLight = Color(0xFFF9FAFB)    // 中性极浅灰背景（实测区折叠态）
+
     // 中性色（分隔线/边框/中性背景）
     val Divider = Color(0xFFE8E9E6)           // 分隔线
     val Outline = Color(0xFFE0E0E0)           // 默认描边

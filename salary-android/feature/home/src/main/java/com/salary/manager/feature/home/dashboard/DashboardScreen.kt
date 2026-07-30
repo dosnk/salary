@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -54,7 +53,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.SnackbarHost
@@ -69,8 +67,8 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,7 +80,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -106,8 +103,10 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.salary.core.common.util.AmountFormatter
 import com.salary.core.common.util.DateFormatter
 import com.salary.core.design.component.GreenTopNavBar
+import com.salary.core.design.component.SalaryTextFieldShape
+import com.salary.core.design.component.SalaryTextFieldShapeSmall
+import com.salary.core.design.component.salaryTextFieldColors
 import com.salary.core.design.theme.AppColors
-import com.salary.core.network.dto.FileDto
 import com.salary.core.network.interceptor.LatencyTracker
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
@@ -247,14 +246,12 @@ fun DashboardScreen(
                 )
             }
         }
-        com.salary.manager.feature.home.attachment.AttachmentDialog(
-            title = "附件浏览",
-            projectName = uiState.viewingFilesProjectName,
-            files = attachments,
-            isLoading = uiState.isLoadingFiles,
-            canDelete = false,
-            onDismiss = { viewModel.closeAttachmentList() },
-            onMediaClick = { safeUrl, fileName, fileType ->
+        // 用 remember 包装 onMediaClick/onFileClick/onDismiss lambda：
+        // 这三个回调内部捕获的状态引用（viewModel/scope/context/viewingMedia* setter）均稳定，
+        // 包装后 lambda 实例在重组间保持稳定，让 AttachmentDialog 在 files 未变时可被跳过重组
+        val onDismiss = remember(viewModel) { { viewModel.closeAttachmentList() } }
+        val onMediaClick = remember {
+            { safeUrl: String, fileName: String, fileType: String? ->
                 // 媒体文件：用内置 MediaViewerDialog 预览（safeUrl 已由组件内部编码）
                 try {
                     viewingMediaUrl = safeUrl
@@ -263,8 +260,10 @@ fun DashboardScreen(
                 } catch (_: Throwable) {
                     // 静默处理
                 }
-            },
-            onFileClick = { file ->
+            }
+        }
+        val onFileClick = remember(scope, context) {
+            { file: com.salary.manager.feature.home.attachment.AttachmentUiModel ->
                 // 非媒体文件：用系统应用打开
                 scope.launch {
                     try {
@@ -295,7 +294,18 @@ fun DashboardScreen(
                         // 兜底：任何异常均静默处理
                     }
                 }
+                Unit
             }
+        }
+        com.salary.manager.feature.home.attachment.AttachmentDialog(
+            title = "附件浏览",
+            projectName = uiState.viewingFilesProjectName,
+            files = attachments,
+            isLoading = uiState.isLoadingFiles,
+            canDelete = false,
+            onDismiss = onDismiss,
+            onMediaClick = onMediaClick,
+            onFileClick = onFileClick
         )
     }
 
@@ -367,14 +377,14 @@ fun DashboardScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(horizontal = 4.dp)
             ) {
-                item(key = "top_spacer") {
+                item(key = "top_spacer", contentType = "spacer") {
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
                 // ===== 工程创建表单（拆分为3个item，减少单个item体积，避免进出视口时卡顿）=====
                 // 3个Surface视觉上连续：顶部圆角 + 无圆角中间 + 底部圆角，看起来像一个Card
                 // form_card_basic：客户地址、空间类型、施工方案、长度、宽度
-                item(key = "form_card_basic") {
+                item(key = "form_card_basic", contentType = "form_card") {
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -395,11 +405,8 @@ fun DashboardScreen(
                             placeholder = { Text("请输入客户地址") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = AppColors.Green400,
-                                focusedLabelColor = AppColors.Green400
-                            ),
-                            shape = RoundedCornerShape(8.dp)
+                            colors = salaryTextFieldColors(),
+                            shape = SalaryTextFieldShape
                         )
 
                         // 空间类型（点击弹出选择器，用Box包裹实现点击）
@@ -416,13 +423,8 @@ fun DashboardScreen(
                                 readOnly = true,
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = AppColors.Green400,
-                                    focusedLabelColor = AppColors.Green400,
-                                    disabledBorderColor = AppColors.Green400,
-                                    disabledTextColor = AppColors.TextPrimary
-                                ),
-                                shape = RoundedCornerShape(8.dp),
+                                colors = salaryTextFieldColors(),
+                                shape = SalaryTextFieldShape,
                                 enabled = false,
                                 trailingIcon = {
                                     Text("▼", fontSize = 12.sp, color = AppColors.TextTertiary)
@@ -444,13 +446,8 @@ fun DashboardScreen(
                                 readOnly = true,
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = AppColors.Green400,
-                                    focusedLabelColor = AppColors.Green400,
-                                    disabledBorderColor = AppColors.Green400,
-                                    disabledTextColor = AppColors.TextPrimary
-                                ),
-                                shape = RoundedCornerShape(8.dp),
+                                colors = salaryTextFieldColors(),
+                                shape = SalaryTextFieldShape,
                                 enabled = false,
                                 trailingIcon = {
                                     Text("▼", fontSize = 12.sp, color = AppColors.TextTertiary)
@@ -484,11 +481,8 @@ fun DashboardScreen(
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = AppColors.Green400,
-                                focusedLabelColor = AppColors.Green400
-                            ),
-                            shape = RoundedCornerShape(8.dp)
+                            colors = salaryTextFieldColors(),
+                            shape = SalaryTextFieldShape
                         )
 
                         // 次参数（width）：圆形不显示（仅用直径）；其他形状显示
@@ -510,13 +504,11 @@ fun DashboardScreen(
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 modifier = Modifier.fillMaxWidth(),
                                 enabled = !isLengthOnlyUnit,
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = AppColors.Green400,
-                                    focusedLabelColor = AppColors.Green400,
+                                colors = salaryTextFieldColors(
                                     disabledBorderColor = AppColors.TextPlaceholder,
                                     disabledTextColor = AppColors.TextTertiary
                                 ),
-                                shape = RoundedCornerShape(8.dp)
+                                shape = SalaryTextFieldShape
                             )
                         }
 
@@ -530,11 +522,8 @@ fun DashboardScreen(
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 modifier = Modifier.fillMaxWidth(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = AppColors.Green400,
-                                    focusedLabelColor = AppColors.Green400
-                                ),
-                                shape = RoundedCornerShape(8.dp)
+                                colors = salaryTextFieldColors(),
+                                shape = SalaryTextFieldShape
                             )
                         }
 
@@ -544,7 +533,7 @@ fun DashboardScreen(
                         Surface(
                             onClick = { viewModel.toggleMeasuredSection() },
                             shape = RoundedCornerShape(8.dp),
-                            color = if (hasMeasuredData) AppColors.Green50 else Color(0xFFF9FAFB),
+                            color = if (hasMeasuredData) AppColors.Green50 else AppColors.NeutralBgLight,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
@@ -570,10 +559,10 @@ fun DashboardScreen(
                                             text = "已填",
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Medium,
-                                            color = Color(0xFFE67E22),
+                                            color = AppColors.WarningText,
                                             modifier = Modifier
                                                 .background(
-                                                    color = Color(0xFFFFE8CC),
+                                                    color = AppColors.WarningBg,
                                                     shape = RoundedCornerShape(4.dp)
                                                 )
                                                 .padding(horizontal = 6.dp, vertical = 2.dp)
@@ -606,11 +595,8 @@ fun DashboardScreen(
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.fillMaxWidth(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = AppColors.Green400,
-                                    focusedLabelColor = AppColors.Green400
-                                ),
-                                shape = RoundedCornerShape(8.dp)
+                                colors = salaryTextFieldColors(),
+                                shape = SalaryTextFieldShape
                             )
 
                             // 实测备注（记录实测方式或现场说明，可选）
@@ -621,11 +607,8 @@ fun DashboardScreen(
                                 placeholder = { Text("如：L形客厅周长实测") },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = AppColors.Green400,
-                                    focusedLabelColor = AppColors.Green400
-                                ),
-                                shape = RoundedCornerShape(8.dp)
+                                colors = salaryTextFieldColors(),
+                                shape = SalaryTextFieldShape
                             )
                         }
 
@@ -634,7 +617,7 @@ fun DashboardScreen(
                 } // end of form_card_basic item
 
                 // form_card_distribution：分配方式、工日设置、施工人员
-                item(key = "form_card_distribution") {
+                item(key = "form_card_distribution", contentType = "form_card") {
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -724,11 +707,10 @@ fun DashboardScreen(
                                         fontSize = 14.sp,
                                         textAlign = TextAlign.End
                                     ),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = AppColors.Green400,
+                                    colors = salaryTextFieldColors(
                                         unfocusedBorderColor = AppColors.Outline
                                     ),
-                                    shape = RoundedCornerShape(6.dp)
+                                    shape = SalaryTextFieldShapeSmall
                                 )
                                 Text(
                                     text = "天",
@@ -738,7 +720,10 @@ fun DashboardScreen(
                             }
                             // 校验结果提示（提取为独立 Composable，隔离无限循环动画作用域）
                             if (uiState.workdaysValidationHint.isNotEmpty()) {
-                                WorkdaysValidationHint(hint = uiState.workdaysValidationHint)
+                                WorkdaysValidationHint(
+                                    hint = uiState.workdaysValidationHint,
+                                    isConsistent = uiState.isWorkdaysConsistent
+                                )
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             // 按每行3个分组，使用Row+weight实现等宽占满容器
@@ -800,13 +785,12 @@ fun DashboardScreen(
                                                         fontSize = 14.sp,
                                                         textAlign = TextAlign.Center
                                                     ),
-                                                    colors = OutlinedTextFieldDefaults.colors(
+                                                    colors = salaryTextFieldColors(
                                                         focusedContainerColor = Color.White,
                                                         unfocusedContainerColor = Color.White,
-                                                        focusedBorderColor = AppColors.Green400,
                                                         unfocusedBorderColor = AppColors.Green200
                                                     ),
-                                                    shape = RoundedCornerShape(6.dp)
+                                                    shape = SalaryTextFieldShapeSmall
                                                 )
                                                 Spacer(modifier = Modifier.width(2.dp))
                                                 Text(
@@ -905,7 +889,7 @@ fun DashboardScreen(
                 } // end of form_card_distribution item
 
                 // form_card_action：计算预览、备注、保存按钮
-                item(key = "form_card_action") {
+                item(key = "form_card_action", contentType = "form_card") {
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -930,12 +914,12 @@ fun DashboardScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .background(
-                                        color = Color(0xFFF9FEF5),
+                                        color = AppColors.GreenBgLight,
                                         shape = RoundedCornerShape(8.dp)
                                     )
                                     .border(
                                         width = 1.dp,
-                                        color = Color(0xFFE6F4D0),
+                                        color = AppColors.GreenBorderLight,
                                         shape = RoundedCornerShape(8.dp)
                                     )
                                     .padding(8.dp)
@@ -950,11 +934,8 @@ fun DashboardScreen(
                             placeholder = { Text("请输入工程备注") },
                             maxLines = 2,
                             modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = AppColors.Green400,
-                                focusedLabelColor = AppColors.Green400
-                            ),
-                            shape = RoundedCornerShape(8.dp)
+                            colors = salaryTextFieldColors(),
+                            shape = SalaryTextFieldShape
                         )
 
                         // 保存按钮（绿色渐变，压缩高度）
@@ -992,14 +973,14 @@ fun DashboardScreen(
                 }
                 } // end of form_card_action item
 
-                item(key = "form_bottom_spacer") {
+                item(key = "form_bottom_spacer", contentType = "spacer") {
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
                 // ===== 工程历史区域标题 =====
                 // 抽成独立子组件：隔离 selectedYearMonth 状态读取，
                 // 避免年月变化或整页 uiState 重组时波及其他 item
-                item(key = "history_header") {
+                item(key = "history_header", contentType = "history_header") {
                     HistoryHeader(
                         selectedYearMonth = uiState.selectedYearMonth,
                         onMonthClick = onMonthDialogClick
@@ -1008,7 +989,7 @@ fun DashboardScreen(
 
                 // 工程列表：加载中/空状态/懒加载列表
                 if (uiState.isLoadingProjects) {
-                    item(key = "loading_projects") {
+                    item(key = "loading_projects", contentType = "loading_state") {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1020,7 +1001,7 @@ fun DashboardScreen(
                     }
                 } else if (uiState.projects.isEmpty()) {
                     // 空状态
-                    item(key = "empty_projects") {
+                    item(key = "empty_projects", contentType = "empty_state") {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1060,7 +1041,7 @@ fun DashboardScreen(
 
                     // 加载更多指示器（滚动到底部时自动触发分页加载）
                     if (uiState.isLoadingMoreProjects) {
-                        item(key = "loading_more") {
+                        item(key = "loading_more", contentType = "loading_state") {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1074,7 +1055,7 @@ fun DashboardScreen(
                             }
                         }
                     } else if (uiState.hasMoreProjects) {
-                        item(key = "load_more_hint") {
+                        item(key = "load_more_hint", contentType = "load_more_hint") {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1091,13 +1072,13 @@ fun DashboardScreen(
                     }
                 }
 
-                item(key = "footer_top_spacer") {
+                item(key = "footer_top_spacer", contentType = "spacer") {
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
                 // ===== 底部版权 + 服务器状态（版权左，状态右对齐）=====
                 // 补偿4dp水平padding，保持与表单Card一致的视觉边距
-                item(key = "footer") {
+                item(key = "footer", contentType = "footer") {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1116,7 +1097,7 @@ fun DashboardScreen(
                 }
                 } // end of footer item
 
-                item(key = "bottom_spacer") {
+                item(key = "bottom_spacer", contentType = "spacer") {
                     Spacer(modifier = Modifier.height(16.dp))
                 }
             }
@@ -1506,6 +1487,12 @@ private fun ProjectInfoScrollRow(
  * - 由于 Canvas 只有 1 个 Composable 节点，嵌套滚动开销极低
  *
  * 列宽（固定dp）：序号40 + 空间80 + 方案100 + 尺寸110 + 数量90 + 金额90 = 510dp
+ *
+ * 性能优化：
+ * 1. TextLayoutResult 缓存到 remember，避免每帧重复 measure（30行=186次/帧 → 0次/帧）
+ * 2. 行高通过 textMeasurer 动态测量获取，避免硬编码导致某些字体下文字被裁切
+ * 3. 长文本设置 overflow=Ellipsis + maxLines=1，显示省略号而非裁切
+ * 4. 列宽 px 数组在 Composable 层预计算，Canvas 内直接读取，减少 Density 查找
  */
 @Composable
 private fun SubprojectTable(
@@ -1546,6 +1533,7 @@ private fun SubprojectTable(
 
     // ===== Canvas 绘制表格（表头+数据行+边框线） =====
     val textMeasurer = rememberTextMeasurer()
+    val density = LocalDensity.current
 
     // 文本样式（预创建避免重复构建）
     val headerStyle = remember {
@@ -1572,6 +1560,18 @@ private fun SubprojectTable(
     val tableWidthDp = 510.dp
     // 各列固定宽度（dp）
     val colWidthsDp = floatArrayOf(40f, 80f, 100f, 110f, 90f, 90f)
+    // 预计算列宽 px 数组（在 Composable 层完成，避免 Canvas 内重复 toPx）
+    val colWidthsPx = with(density) { colWidthsDp.map { it.dp.toPx() } }
+    // 预计算各列起始 x 坐标
+    val colStartsPx = remember(colWidthsPx) {
+        val starts = FloatArray(6)
+        var x = 0f
+        for (i in 0 until 6) {
+            starts[i] = x
+            x += colWidthsPx[i]
+        }
+        starts
+    }
 
     // 尺寸常量
     val headerPaddingVDp = 8.dp
@@ -1599,10 +1599,62 @@ private fun SubprojectTable(
         }
     }
 
-    // 计算表格总高度（Canvas 需要固定高度才能在 LazyColumn 中正确占位）
-    val headerHeightDp = (headerPaddingVDp.value * 2 + 20)  // 约36dp
-    val rowHeightDp = (rowPaddingVDp.value * 2 + 20)        // 约32dp
-    val tableHeightDp = headerHeightDp + rows.size * rowHeightDp
+    // 预计算每列单元格的最大宽度 px（列宽 - 左右padding），用于 Constraints
+    val cellMaxWidthsPx = remember(colWidthsPx, rowPaddingHDp) {
+        with(density) {
+            val hPaddingPx = rowPaddingHDp.toPx()
+            colWidthsPx.map { (it - hPaddingPx * 2).toInt().coerceAtLeast(0) }
+        }
+    }
+
+    // 性能优化：缓存 TextLayoutResult 到 remember，避免 Canvas 每帧重复 measure
+    // 依赖项包含所有影响测量结果的因素：文本内容、样式、列宽约束
+    val headerLayouts = remember(headerTexts, headerStyle, cellMaxWidthsPx) {
+        headerTexts.mapIndexed { i, text ->
+            textMeasurer.measure(
+                text = AnnotatedString(text),
+                style = headerStyle,
+                constraints = Constraints(maxWidth = cellMaxWidthsPx[i]),
+                overflow = TextOverflow.Ellipsis,
+                maxLines = 1
+            )
+        }
+    }
+    val rowLayouts = remember(rowTexts, bodyStyle, amountStyle, cellMaxWidthsPx) {
+        rowTexts.map { row ->
+            row.mapIndexed { colIndex, text ->
+                val style = if (colIndex == 5) amountStyle else bodyStyle
+                textMeasurer.measure(
+                    text = AnnotatedString(text),
+                    style = style,
+                    constraints = Constraints(maxWidth = cellMaxWidthsPx[colIndex]),
+                    overflow = TextOverflow.Ellipsis,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+
+    // 动态测量行高：用 bodyStyle 测量单行高度，避免硬编码导致字体行高变化时文字被裁切
+    // 取表头和数据行各自实际测量高度的最大值，确保文字不被裁切
+    val headerHeightDp = remember(headerLayouts, headerPaddingVDp, density) {
+        val textHeightPx = headerLayouts.maxOfOrNull { it.size.height } ?: 0
+        with(density) { (headerPaddingVDp.toPx() * 2 + textHeightPx).toDp() }
+    }
+    val rowHeightDp = remember(rowLayouts, rowPaddingVDp, density) {
+        val textHeightPx = rowLayouts.flatMap { it }.maxOfOrNull { it.size.height } ?: 0
+        with(density) { (rowPaddingVDp.toPx() * 2 + textHeightPx).toDp() }
+    }
+    val tableHeightDp = headerHeightDp + rowHeightDp * rows.size
+
+    // 预计算 Canvas 内使用的 px 值（减少 DrawScope 内的 dp.toPx() 调用）
+    val headerPaddingVPx = with(density) { headerPaddingVDp.toPx() }
+    val rowPaddingVPx = with(density) { rowPaddingVDp.toPx() }
+    val rowPaddingHPx = with(density) { rowPaddingHDp.toPx() }
+    val headerHeightPx = with(density) { headerHeightDp.toPx() }
+    val rowHeightPx = with(density) { rowHeightDp.toPx() }
+    val headerLineStrokePx = with(density) { headerLineStrokeDp.toPx() }
+    val rowLineStrokePx = with(density) { rowLineStrokeDp.toPx() }
 
     // 水平滚动状态（Canvas 只有1个节点，嵌套滚动开销极低）
     val scrollState = rememberScrollState()
@@ -1615,23 +1667,9 @@ private fun SubprojectTable(
         Canvas(
             modifier = Modifier
                 .width(tableWidthDp)
-                .height(tableHeightDp.dp)
+                .height(tableHeightDp)
         ) {
             val canvasWidth = size.width
-
-            // 计算各列起始 x 坐标（按固定 dp 宽度）
-            val colStarts = FloatArray(6)
-            var startX = 0f
-            for (i in 0 until 6) {
-                colStarts[i] = startX
-                startX += colWidthsDp[i].dp.toPx()
-            }
-
-            val headerPaddingVPx = headerPaddingVDp.toPx()
-            val rowPaddingVPx = rowPaddingVDp.toPx()
-            val rowPaddingHPx = rowPaddingHDp.toPx()
-            val headerHeightPx = headerHeightDp.dp.toPx()
-            val rowHeightPx = rowHeightDp.dp.toPx()
 
             // 1. 绘制表头背景
             drawRect(
@@ -1640,18 +1678,12 @@ private fun SubprojectTable(
                 size = Size(canvasWidth, headerHeightPx)
             )
 
-            // 2. 绘制表头文本
+            // 2. 绘制表头文本（使用缓存的 TextLayoutResult，零 measure 调用）
             for (i in 0 until 6) {
-                val colWidthPx = colWidthsDp[i].dp.toPx()
-                val textLayout = textMeasurer.measure(
-                    text = AnnotatedString(headerTexts[i]),
-                    style = headerStyle,
-                    constraints = Constraints(maxWidth = (colWidthPx - rowPaddingHPx * 2).toInt().coerceAtLeast(0))
-                )
                 drawText(
-                    textLayoutResult = textLayout,
+                    textLayoutResult = headerLayouts[i],
                     topLeft = Offset(
-                        colStarts[i] + rowPaddingHPx,
+                        colStartsPx[i] + rowPaddingHPx,
                         headerPaddingVPx
                     )
                 )
@@ -1662,7 +1694,7 @@ private fun SubprojectTable(
                 color = AppColors.Green400,
                 start = Offset(0f, headerHeightPx),
                 end = Offset(canvasWidth, headerHeightPx),
-                strokeWidth = headerLineStrokeDp.toPx()
+                strokeWidth = headerLineStrokePx
             )
 
             // 4. 绘制数据行
@@ -1671,21 +1703,13 @@ private fun SubprojectTable(
                 val rowBottomY = rowTopY + rowHeightPx
                 val isLastRow = rowIndex == rows.lastIndex
 
-                // 4.1 绘制行内文本（6列）
-                val cellTexts = rowTexts[rowIndex]
+                // 4.1 绘制行内文本（6列，使用缓存的 TextLayoutResult）
+                val layouts = rowLayouts[rowIndex]
                 for (colIndex in 0 until 6) {
-                    val colWidthPx = colWidthsDp[colIndex].dp.toPx()
-                    // 金额列（索引5）用绿色
-                    val style = if (colIndex == 5) amountStyle else bodyStyle
-                    val textLayout = textMeasurer.measure(
-                        text = AnnotatedString(cellTexts[colIndex]),
-                        style = style,
-                        constraints = Constraints(maxWidth = (colWidthPx - rowPaddingHPx * 2).toInt().coerceAtLeast(0))
-                    )
                     drawText(
-                        textLayoutResult = textLayout,
+                        textLayoutResult = layouts[colIndex],
                         topLeft = Offset(
-                            colStarts[colIndex] + rowPaddingHPx,
+                            colStartsPx[colIndex] + rowPaddingHPx,
                             rowTopY + rowPaddingVPx
                         )
                     )
@@ -1696,7 +1720,7 @@ private fun SubprojectTable(
                     color = if (isLastRow) AppColors.Outline else AppColors.OutlineVariant,
                     start = Offset(0f, rowBottomY),
                     end = Offset(canvasWidth, rowBottomY),
-                    strokeWidth = rowLineStrokeDp.toPx()
+                    strokeWidth = rowLineStrokePx
                 )
             }
         }
@@ -1718,8 +1742,8 @@ private fun SubprojectTable(
                 ) {
                     // 标签：浅绿底+绿字小标签（"备注"）；实测标签用浅橙底+橙字区分
                     val isMeasured = entry.label == "实测"
-                    val labelBg = if (isMeasured) Color(0xFFFFE8CC) else AppColors.Green50
-                    val labelColor = if (isMeasured) Color(0xFFE67E22) else AppColors.Green400
+                    val labelBg = if (isMeasured) AppColors.WarningBg else AppColors.Green50
+                    val labelColor = if (isMeasured) AppColors.WarningText else AppColors.Green400
                     Text(
                         text = entry.label,
                         fontSize = 10.sp,
@@ -2030,7 +2054,11 @@ private fun ServerStatusText(latencyTracker: LatencyTracker?) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         // 检测中状态：isOnline=true && latencyMs=0 && lastError=null
         // HealthMonitor 刚启动尚未收到响应时的初始状态
-        val isChecking = isOnline && latencyMs == 0L && lastError == null
+        // 用 derivedStateOf 包裹：仅当 isChecking 结果翻转时才触发依赖它的分支重组，
+        // 避免每次 latencyMs 微小变化（如 30→35ms）时 isChecking 相关分支无谓重组
+        val isChecking by remember {
+            derivedStateOf { isOnline && latencyMs == 0L && lastError == null }
+        }
         Icon(
             imageVector = if (isChecking) Icons.Default.Info else if (isOnline) Icons.Default.CheckCircle else Icons.Default.Error,
             contentDescription = if (isChecking) "检测中" else if (isOnline) "在线" else "离线",
@@ -2075,11 +2103,10 @@ private fun ServerStatusText(latencyTracker: LatencyTracker?) {
  * - 不一致：橙色、14sp、Bold、alpha 0.4↔1.0 闪烁（700ms 循环）
  *
  * @param hint 校验提示文本
+ * @param isConsistent 是否一致（由 ViewModel 计算后传入，避免在 UI 层做字符串匹配）
  */
 @Composable
-private fun WorkdaysValidationHint(hint: String) {
-    // 注意：不能使用contains("一致")，因为"不一致"也包含"一致"二字
-    val isConsistent = !hint.contains("不一致")
+private fun WorkdaysValidationHint(hint: String, isConsistent: Boolean) {
     if (!isConsistent) {
         // 不一致时才创建无限循环动画，避免一致时无谓的动画驱动重组
         val infiniteTransition = rememberInfiniteTransition(label = "workdaysHint")
@@ -2096,7 +2123,7 @@ private fun WorkdaysValidationHint(hint: String) {
             text = hint,
             fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
-            color = Color(0xFFE6A23C),
+            color = AppColors.WarningText,
             modifier = Modifier
                 .padding(start = 4.dp, top = 2.dp)
                 .graphicsLayer { this.alpha = alpha }

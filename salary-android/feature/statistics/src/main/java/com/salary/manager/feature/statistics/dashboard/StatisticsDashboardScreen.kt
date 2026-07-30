@@ -797,7 +797,7 @@ fun StatsGridSection(
             title = "待结算工程",
             count = summary.totalProjects.toString(),
             amount = summary.grandTotal,
-            iconColor = Color(0xFFE6A23C), // 橙色
+            iconColor = AppColors.WarningText, // 橙色
             amountLabel = "应收：",
             hasData = hasData
         ),
@@ -2667,7 +2667,7 @@ private fun StatsProjectCard(project: ProjectDto) {
                     fontSize = 11.sp,
                     color = when (project.status) {
                         "constructing", "completed" -> AppColors.Green400
-                        "preparing" -> Color(0xFFE6A23C)
+                        "preparing" -> AppColors.WarningText
                         "canceled" -> Color(0xFF999999)
                         else -> AppColors.TextSecondary
                     },

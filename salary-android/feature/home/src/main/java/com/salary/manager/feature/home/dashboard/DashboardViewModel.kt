@@ -40,6 +40,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.text.DecimalFormat
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
 /**
@@ -174,6 +175,13 @@ data class DashboardUiState(
     val totalWorkdaysInput: String = "",
     /** 总工日校验结果提示（空字符串表示无提示） */
     val workdaysValidationHint: String = "",
+    /**
+     * 工日校验是否一致（仅当 workdaysValidationHint 非空时有意义）
+     *
+     * UI 层根据此 Boolean 决定颜色/动画样式，避免通过字符串 contains("不一致") 匹配，
+     * 防止后续文案调整导致 UI 判断失效。
+     */
+    val isWorkdaysConsistent: Boolean = false,
     /** 工程备注 */
     val remark: String = "",
 
@@ -278,9 +286,11 @@ class DashboardViewModel @Inject constructor(
          * ViewModel 重建（Tab 切换、返回主页）时直接命中内存缓存立即渲染，
          * 无需再走 DataStore IO 和 JSON 反序列化。
          * 网络刷新成功后覆盖对应月份的缓存。
+         *
+         * 使用 [ConcurrentHashMap] 保证多协程并发读写月份缓存时的线程安全，
+         * 替代原先的 @Volatile + mutableMapOf（后者只保证引用可见性，不保证内部操作原子性）。
          */
-        @Volatile
-        private var cachedProjectsByMonth: MutableMap<String, List<ProjectHistoryUiModel>> = mutableMapOf()
+        private val cachedProjectsByMonth: MutableMap<String, List<ProjectHistoryUiModel>> = ConcurrentHashMap()
 
         /** 工程列表缓存的 JSON 编解码器（忽略未知字段，兼容模型扩展） */
         private val PROJECTS_JSON = Json { ignoreUnknownKeys = true }
@@ -303,8 +313,6 @@ class DashboardViewModel @Inject constructor(
     private var projectsCurrentPage = 1
     /** 工程列表分页：每页数量 */
     private val projectsPageSize = 20
-    /** 工程列表分页：是否正在加载更多（防止重复触发） */
-    private var isLoadingMoreProjects = false
 
     init {
         loadInitialData()
@@ -633,11 +641,13 @@ class DashboardViewModel @Inject constructor(
 
     /**
      * 加载更多工程历史（分页加载，滚动到底部时触发）
+     *
+     * 防重复触发直接读取 [DashboardUiState.isLoadingMoreProjects]，
+     * 与 UI 层订阅的状态字段统一，避免双源状态不一致。
      */
     fun loadMoreProjects() {
-        if (isLoadingMoreProjects || !_uiState.value.hasMoreProjects) return
+        if (_uiState.value.isLoadingMoreProjects || !_uiState.value.hasMoreProjects) return
         viewModelScope.launch {
-            isLoadingMoreProjects = true
             _uiState.value = _uiState.value.copy(isLoadingMoreProjects = true)
             try {
                 val nextPage = projectsCurrentPage + 1
@@ -667,8 +677,6 @@ class DashboardViewModel @Inject constructor(
                 }
             } catch (_: Exception) {
                 _uiState.value = _uiState.value.copy(isLoadingMoreProjects = false)
-            } finally {
-                isLoadingMoreProjects = false
             }
         }
     }
@@ -1084,6 +1092,9 @@ class DashboardViewModel @Inject constructor(
      * 校验各施工人员工日之和与总工日输入是否一致
      * - 总工日输入为空时不校验，清空提示
      * - 总工日输入有值时：空值工日按1计算，比较合计与输入值
+     *
+     * 同时更新 [DashboardUiState.isWorkdaysConsistent] 供 UI 层判断样式，
+     * 避免在 Composable 中通过字符串 contains 判断（防止文案调整导致样式失效）。
      */
     private fun validateWorkdays() {
         val state = _uiState.value
@@ -1093,7 +1104,13 @@ class DashboardViewModel @Inject constructor(
             selectedConstructorIds = state.selectedConstructorIds,
             workerWorkdays = state.workerWorkdays
         )
-        _uiState.value = state.copy(workdaysValidationHint = hint)
+        // hint 为空表示无需提示（非工日分配模式或总工日为空），此时 isWorkdaysConsistent 重置为 false
+        // hint 包含"不一致"为不一致；其余非空 hint 视为一致
+        val isConsistent = hint.isNotEmpty() && !hint.contains("不一致")
+        _uiState.value = state.copy(
+            workdaysValidationHint = hint,
+            isWorkdaysConsistent = isConsistent
+        )
     }
 
     /**
@@ -1380,65 +1397,11 @@ class DashboardViewModel @Inject constructor(
             return
         }
 
-        // 表单验证
-        if (state.customerAddress.isBlank()) {
-            _uiState.value = state.copy(errorMessage = "请输入客户地址")
+        // 表单校验（抽取为独立函数，便于阅读与单测）
+        val formError = validateProjectForm(state)
+        if (formError != null) {
+            _uiState.value = state.copy(errorMessage = formError)
             return
-        }
-        if (state.selectedSpaceType.isBlank()) {
-            _uiState.value = state.copy(errorMessage = "请选择空间类型")
-            return
-        }
-        if (state.selectedScheme.isBlank()) {
-            _uiState.value = state.copy(errorMessage = "请选择施工方案")
-            return
-        }
-        // 参数校验：根据空间形状决定哪些字段必填
-        // - rectangle：长+宽
-        // - right_triangle：底(length)+高(width)
-        // - trapezoid：上底(length)+下底(width)+高(height)
-        // - circle：直径(length)
-        // 同时考虑施工方案 unit=length 时不强制 width（与历史逻辑保持一致）
-        val length = state.lengthCm.toDoubleOrNull()
-        if (length == null || length <= 0) {
-            _uiState.value = state.copy(errorMessage = "请输入有效的长度")
-            return
-        }
-        val schemeUnit = currentSchemeUnit()
-        val shape = getShapeForSpaceType(state.selectedSpaceType)
-        val needsWidth = schemeUnit != "length" && shape != "circle"
-        val width = state.widthCm.toDoubleOrNull()
-        if (needsWidth && (width == null || width <= 0)) {
-            _uiState.value = state.copy(errorMessage = "请输入有效的宽度")
-            return
-        }
-        // 梯形必须提供 height
-        val height = state.heightCm.toDoubleOrNull()
-        if (shape == "trapezoid" && (height == null || height <= 0)) {
-            _uiState.value = state.copy(errorMessage = "请输入梯形的高")
-            return
-        }
-        if (state.selectedConstructorIds.isEmpty()) {
-            _uiState.value = state.copy(errorMessage = "请选择施工人员")
-            return
-        }
-        if (state.unitPrice <= 0) {
-            _uiState.value = state.copy(errorMessage = "单价无效，请重新选择施工方案")
-            return
-        }
-
-        // 按工日分配模式校验：每人工日数必须>0（空值按默认1处理，无需用户必须输入）
-        if (state.salaryDistribution == "work_days") {
-            val invalidWorkdays = state.selectedConstructorIds.any { id ->
-                val raw = state.workerWorkdays[id]?.trim() ?: ""
-                // 空值视为1.0（有效）；非空时解析必须>0
-                if (raw.isEmpty()) false
-                else (raw.toDoubleOrNull() ?: 0.0) <= 0
-            }
-            if (invalidWorkdays) {
-                _uiState.value = state.copy(errorMessage = "按工日分配模式下，每位施工人员的工日数必须大于0")
-                return
-            }
         }
 
         viewModelScope.launch {
@@ -1452,6 +1415,12 @@ class DashboardViewModel @Inject constructor(
                         WorkerWorkdayItem(id, days)
                     }
                 } else null
+
+                // 校验已通过，这里重新解析数值参数（校验函数保证非空且>0）
+                val length = state.lengthCm.toDoubleOrNull()!!
+                val width = state.widthCm.toDoubleOrNull()
+                val height = state.heightCm.toDoubleOrNull()
+                val shape = getShapeForSpaceType(state.selectedSpaceType)
 
                 val request = CreateProjectRequest(
                     name = state.customerAddress,
@@ -1521,6 +1490,62 @@ class DashboardViewModel @Inject constructor(
                 )
             }
         }
+    }
+
+    /**
+     * 工程表单校验
+     *
+     * 抽取自 [saveProject]，便于阅读和单测。校验规则：
+     * - 客户地址、空间类型、施工方案 非空
+     * - 长度 必须为正数
+     * - 宽度：非 length 单位且非 circle 形状时必填
+     * - 高度：仅 trapezoid 形状必填
+     * - 施工人员 非空
+     * - 单价 必须>0
+     * - 按工日分配时：每位施工人员的工日数（非空时）必须>0
+     *
+     * @return 错误提示文案，null 表示校验通过
+     */
+    private fun validateProjectForm(state: DashboardUiState): String? {
+        // 表单验证
+        if (state.customerAddress.isBlank()) return "请输入客户地址"
+        if (state.selectedSpaceType.isBlank()) return "请选择空间类型"
+        if (state.selectedScheme.isBlank()) return "请选择施工方案"
+
+        // 参数校验：根据空间形状决定哪些字段必填
+        // - rectangle：长+宽
+        // - right_triangle：底(length)+高(width)
+        // - trapezoid：上底(length)+下底(width)+高(height)
+        // - circle：直径(length)
+        // 同时考虑施工方案 unit=length 时不强制 width（与历史逻辑保持一致）
+        val length = state.lengthCm.toDoubleOrNull()
+        if (length == null || length <= 0) return "请输入有效的长度"
+
+        val schemeUnit = currentSchemeUnit()
+        val shape = getShapeForSpaceType(state.selectedSpaceType)
+        val needsWidth = schemeUnit != "length" && shape != "circle"
+        val width = state.widthCm.toDoubleOrNull()
+        if (needsWidth && (width == null || width <= 0)) return "请输入有效的宽度"
+
+        // 梯形必须提供 height
+        val height = state.heightCm.toDoubleOrNull()
+        if (shape == "trapezoid" && (height == null || height <= 0)) return "请输入梯形的高"
+
+        if (state.selectedConstructorIds.isEmpty()) return "请选择施工人员"
+        if (state.unitPrice <= 0) return "单价无效，请重新选择施工方案"
+
+        // 按工日分配模式校验：每人工日数必须>0（空值按默认1处理，无需用户必须输入）
+        if (state.salaryDistribution == "work_days") {
+            val invalidWorkdays = state.selectedConstructorIds.any { id ->
+                val raw = state.workerWorkdays[id]?.trim() ?: ""
+                // 空值视为1.0（有效）；非空时解析必须>0
+                if (raw.isEmpty()) false
+                else (raw.toDoubleOrNull() ?: 0.0) <= 0
+            }
+            if (invalidWorkdays) return "按工日分配模式下，每位施工人员的工日数必须大于0"
+        }
+
+        return null
     }
 
     /**

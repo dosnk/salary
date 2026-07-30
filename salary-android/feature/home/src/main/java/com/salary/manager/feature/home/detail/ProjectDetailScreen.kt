@@ -1108,8 +1108,8 @@ internal fun SubprojectTable(
                 ) {
                     // 标签：浅绿底+绿字小标签（"备注"）；实测标签用浅橙底+橙字区分
                     val isMeasured = entry.label == "实测"
-                    val labelBg = if (isMeasured) Color(0xFFFFE8CC) else AppColors.Green50
-                    val labelColor = if (isMeasured) Color(0xFFE67E22) else AppColors.Green400
+                    val labelBg = if (isMeasured) AppColors.WarningBg else AppColors.Green50
+                    val labelColor = if (isMeasured) AppColors.WarningText else AppColors.Green400
                     Text(
                         text = entry.label,
                         fontSize = 10.sp,
@@ -1392,10 +1392,10 @@ internal fun SubprojectEditDialog(
                                     text = "已填",
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Medium,
-                                    color = Color(0xFFE67E22),
+                                    color = AppColors.WarningText,
                                     modifier = Modifier
                                         .background(
-                                            color = Color(0xFFFFE8CC),
+                                            color = AppColors.WarningBg,
                                             shape = RoundedCornerShape(4.dp)
                                         )
                                         .padding(horizontal = 6.dp, vertical = 2.dp)
@@ -1832,7 +1832,7 @@ internal fun EditProjectDialog(
                                     text = hint,
                                     fontSize = if (isConsistent) 11.sp else 14.sp,
                                     fontWeight = if (isConsistent) FontWeight.Normal else FontWeight.Bold,
-                                    color = if (isConsistent) AppColors.Green400 else Color(0xFFE6A23C),
+                                    color = if (isConsistent) AppColors.Green400 else AppColors.WarningText,
                                     modifier = Modifier
                                         .padding(start = 4.dp, top = 2.dp)
                                         .graphicsLayer {
