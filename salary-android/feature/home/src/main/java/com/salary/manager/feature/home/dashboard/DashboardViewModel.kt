@@ -17,7 +17,6 @@ import com.salary.core.network.api.DictionaryItemDto
 import com.salary.core.network.api.MessageApi
 import com.salary.core.network.api.ProjectApi
 import com.salary.core.network.api.UploadManager
-import com.salary.core.network.api.UploadOutcome
 import com.salary.core.network.api.UploadProgress
 import com.salary.core.network.api.UserApi
 import com.salary.core.network.api.UserDto

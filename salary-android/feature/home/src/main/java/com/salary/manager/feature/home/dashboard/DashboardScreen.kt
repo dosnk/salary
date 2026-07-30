@@ -8,7 +8,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,7 +30,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -62,7 +60,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -1267,11 +1264,11 @@ private fun ProjectHistoryCard(
     onOpenFilePicker: () -> Unit
 ) {
     // 子项目表格展开/折叠状态
-    // 优化：子项目≤15个时默认展开（体验与性能的平衡点），>15个时默认折叠（减少渲染量）
+    // 子项目表格已通过移除 horizontalScroll + 自适应列宽优化，可完整展开所有子项目
     // 注意：使用 remember 而非 rememberSaveable（后者需要 runtime-saveable 额外依赖）
     // 配置更改（屏幕旋转）时会重置为默认展开/折叠状态，可接受
     var isSubprojectExpanded by remember(project.id) {
-        mutableStateOf(project.subprojects.size <= 15)
+        mutableStateOf(project.subprojects.size <= 30)
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -1489,17 +1486,19 @@ private fun ProjectInfoScrollRow(
 /**
  * 子项目表格组件
  *
- * 支持水平滚动：表头与表体使用固定列宽，总宽度超过容器可用宽度时可左右滑动查看。
- * 列宽方案：序号40 + 空间80 + 方案100 + 尺寸110 + 数量90 + 金额90 = 510dp
+ * 性能优化方案（解决滑动卡顿）：
+ * 1. 移除 horizontalScroll：消除"父纵向滚动+子横向滚动"的嵌套滚动冲突，
+ *    这是滑动卡顿的主要原因。改用 weight 自适应列宽，所有列填满容器宽度。
+ * 2. 内联 TableCell/TableHeaderCell：消除每行 6 个 Composable 函数调用层，
+ *    直接在 Row 内写 Text + Modifier.weight()。
+ * 3. 保留 drawBehind 绘制行底线：单个 drawLine 开销极低，无需额外优化。
+ *
+ * 列宽分配（weight）：序号0.5 + 空间1 + 方案1.3 + 尺寸1.5 + 数量1 + 金额1.2
  */
 @Composable
 private fun SubprojectTable(
     subprojects: List<SubprojectUiModel>
 ) {
-    val scrollState = rememberScrollState()
-    // 固定总宽度，超过容器宽度时启用水平滚动
-    val tableWidth = 510.dp
-
     // 性能优化：一次性预计算所有行的显示文本和备注列表，避免每次重组都重复执行
     // String.format 和字符串拼接（30个子项目 × 3次格式化 = 90次 String.format/卡片/重组）
     data class NoteEntry(val index: Int, val sub: SubprojectUiModel, val label: String, val content: String)
@@ -1534,15 +1533,11 @@ private fun SubprojectTable(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(scrollState)  // 启用水平滚动，无背景无描边融入卡片
-    ) {
-        // 表头（固定宽度，浅灰底+主色底线，区分表头与表体）
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // 表头（自适应列宽，浅灰底+主色底线，区分表头与表体）
         Row(
             modifier = Modifier
-                .width(tableWidth)
+                .fillMaxWidth()
                 .background(AppColors.NeutralSurface)
                 .drawBehind {
                     // 表头底部水平边框线（主色，加粗，区分表头与表体）
@@ -1555,22 +1550,28 @@ private fun SubprojectTable(
                 }
                 .padding(vertical = 8.dp, horizontal = 2.dp)
         ) {
-            TableHeaderCell("序号", 40.dp)
-            TableHeaderCell("空间", 80.dp)
-            TableHeaderCell("方案", 100.dp)
-            TableHeaderCell("尺寸(米)", 110.dp)
-            TableHeaderCell("数量", 90.dp)
-            TableHeaderCell("金额", 90.dp)
+            Text("序号", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary,
+                modifier = Modifier.weight(0.5f))
+            Text("空间", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary,
+                modifier = Modifier.weight(1f))
+            Text("方案", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary,
+                modifier = Modifier.weight(1.3f))
+            Text("尺寸(米)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary,
+                modifier = Modifier.weight(1.5f))
+            Text("数量", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary,
+                modifier = Modifier.weight(1f))
+            Text("金额", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary,
+                modifier = Modifier.weight(1.2f))
         }
 
-        // 表体（与表头对齐，相同列宽）- 每行底部加浅灰水平线
+        // 表体 - 每行底部加浅灰水平线
         // 用 key(sub.id) 包裹每行，让 Compose 在重组时能复用已组合的行，避免重复组合
         rows.forEach { row ->
             key(row.sub.id) {
                 val isLastRow = row.index == rows.lastIndex
                 Row(
                     modifier = Modifier
-                        .width(tableWidth)
+                        .fillMaxWidth()
                         .drawBehind {
                             // 数据行底部水平边框线：行间用浅灰，末行用中灰收尾
                             drawLine(
@@ -1582,14 +1583,26 @@ private fun SubprojectTable(
                         }
                         .padding(vertical = 6.dp, horizontal = 2.dp)
                 ) {
-                    TableCell(row.indexText, 40.dp)
-                    TableCell(row.sub.spaceTypeName, 80.dp)
-                    TableCell(row.sub.constructionPlanName, 100.dp)
+                    Text(row.indexText, fontSize = 13.sp, color = AppColors.TextPrimary,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(0.5f))
+                    Text(row.sub.spaceTypeName, fontSize = 13.sp, color = AppColors.TextPrimary,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f))
+                    Text(row.sub.constructionPlanName, fontSize = 13.sp, color = AppColors.TextPrimary,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1.3f))
                     // 数据库存储厘米，UI显示时除以100转为米（与表头"尺寸(米)"单位一致）
-                    TableCell(row.sizeText, 110.dp)
-                    TableCell(row.quantityText, 90.dp)
+                    Text(row.sizeText, fontSize = 13.sp, color = AppColors.TextPrimary,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1.5f))
+                    Text(row.quantityText, fontSize = 13.sp, color = AppColors.TextPrimary,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f))
                     // sub.amount 已由 AmountFormatter.format 格式化为 "¥12,345.00" 格式，直接显示即可
-                    TableCell(row.sub.amount, 90.dp, color = AppColors.Green400)
+                    Text(row.sub.amount, fontSize = 13.sp, color = AppColors.Green400,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1.2f))
                 }
             }
         }
@@ -1608,7 +1621,7 @@ private fun SubprojectTable(
                 }
                 Row(
                     modifier = Modifier
-                        .width(tableWidth)
+                        .fillMaxWidth()
                         .padding(start = 4.dp, top = 2.dp, bottom = 2.dp),
                     verticalAlignment = Alignment.Top
                 ) {
@@ -1641,35 +1654,6 @@ private fun SubprojectTable(
             }
         }
     }
-}
-
-/**
- * 表头单元格（固定宽度）
- */
-@Composable
-private fun RowScope.TableHeaderCell(text: String, width: androidx.compose.ui.unit.Dp) {
-    Text(
-        text = text,
-        fontSize = 13.sp,
-        fontWeight = FontWeight.SemiBold,
-        color = AppColors.TextPrimary,
-        modifier = Modifier.width(width)
-    )
-}
-
-/**
- * 表体单元格（固定宽度，超长省略）
- */
-@Composable
-private fun RowScope.TableCell(text: String, width: androidx.compose.ui.unit.Dp, color: Color = AppColors.TextPrimary) {
-    Text(
-        text = text,
-        fontSize = 13.sp,
-        color = color,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.width(width)
-    )
 }
 
 /**
