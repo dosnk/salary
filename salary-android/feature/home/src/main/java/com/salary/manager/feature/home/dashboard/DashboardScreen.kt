@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +32,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -1492,19 +1494,18 @@ private fun ProjectInfoScrollRow(
 }
 
 /**
- * 子项目表格组件（Canvas 高性能版本）
+ * 子项目表格组件（Canvas 高性能版本，支持水平滑动）
  *
  * 性能优化方案（解决滑动卡顿的终极方案）：
  * 用单个 Canvas 一次性绘制整个表格（表头+所有数据行+边框线），
  * 将单卡组合量从 280+ 个 Composable 降到 1 个 Canvas + 备注区。
  *
- * 原理：
- * - Compose 的 Composable 节点越多，组合/布局/绘制阶段开销越大
- * - 30 行表格 × 6 列 = 180+ 个 Text 节点，每个都要走组合-布局-绘制流程
- * - Canvas 只产生 1 个 Composable 节点，内部用 drawText/drawLine 直接绘制
- * - 文本测量用 TextMeasurer，省略号用 Constraints(maxWidth) 实现
+ * 水平滑动：
+ * - Canvas 外层用 horizontalScroll 包裹，固定宽度 510dp
+ * - 窄屏手机可左右滑动查看完整表格内容
+ * - 由于 Canvas 只有 1 个 Composable 节点，嵌套滚动开销极低
  *
- * 列宽分配（weight）：序号0.5 + 空间1 + 方案1.3 + 尺寸1.5 + 数量1 + 金额1.2
+ * 列宽（固定dp）：序号40 + 空间80 + 方案100 + 尺寸110 + 数量90 + 金额90 = 510dp
  */
 @Composable
 private fun SubprojectTable(
@@ -1545,7 +1546,6 @@ private fun SubprojectTable(
 
     // ===== Canvas 绘制表格（表头+数据行+边框线） =====
     val textMeasurer = rememberTextMeasurer()
-    val density = LocalDensity.current
 
     // 文本样式（预创建避免重复构建）
     val headerStyle = remember {
@@ -1568,21 +1568,25 @@ private fun SubprojectTable(
         )
     }
 
-    // 尺寸常量（px）
+    // 表格固定总宽度（6列：序号40 + 空间80 + 方案100 + 尺寸110 + 数量90 + 金额90）
+    val tableWidthDp = 510.dp
+    // 各列固定宽度（dp）
+    val colWidthsDp = floatArrayOf(40f, 80f, 100f, 110f, 90f, 90f)
+
+    // 尺寸常量
     val headerPaddingVDp = 8.dp
     val rowPaddingVDp = 6.dp
     val rowPaddingHDp = 2.dp
     val headerLineStrokeDp = 1.5.dp
     val rowLineStrokeDp = 1.dp
 
-    // 预测量表头文本（固定文本，只测一次）
-    val headerTexts = remember(textMeasurer) {
+    // 预存表头文本
+    val headerTexts = remember {
         listOf("序号", "空间", "方案", "尺寸(米)", "数量", "金额")
     }
 
-    // 预测量所有数据行文本（按列测量，带 maxWidth 约束实现省略号）
-    // 注意：实际 maxWidth 需要在 Canvas 绘制时根据容器宽度计算，这里先存原始文本
-    val rowTexts = remember(rows, textMeasurer) {
+    // 预计算所有数据行文本
+    val rowTexts = remember(rows) {
         rows.map { row ->
             listOf(
                 row.indexText,
@@ -1595,145 +1599,148 @@ private fun SubprojectTable(
         }
     }
 
-    // 列权重（序号0.5 + 空间1 + 方案1.3 + 尺寸1.5 + 数量1 + 金额1.2）
-    val colWeights = floatArrayOf(0.5f, 1f, 1.3f, 1.5f, 1f, 1.2f)
-    val colWeightSum = colWeights.sum()
-
     // 计算表格总高度（Canvas 需要固定高度才能在 LazyColumn 中正确占位）
-    // 表头高度 = paddingV*2 + 文本行高(约18sp→约24dp)
-    // 数据行高度 = paddingV*2 + 文本行高(约18sp→约24dp)
     val headerHeightDp = (headerPaddingVDp.value * 2 + 20)  // 约36dp
     val rowHeightDp = (rowPaddingVDp.value * 2 + 20)        // 约32dp
     val tableHeightDp = headerHeightDp + rows.size * rowHeightDp
-    val tableHeightPx = with(density) { tableHeightDp.dp.toPx() }
 
-    Canvas(
+    // 水平滚动状态（Canvas 只有1个节点，嵌套滚动开销极低）
+    val scrollState = rememberScrollState()
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(tableHeightDp.dp)
+            .horizontalScroll(scrollState)
     ) {
-        val canvasWidth = size.width
-        val canvasHeight = size.height
+        Canvas(
+            modifier = Modifier
+                .width(tableWidthDp)
+                .height(tableHeightDp.dp)
+        ) {
+            val canvasWidth = size.width
 
-        // 计算各列起始 x 坐标和宽度
-        val colWidths = FloatArray(6) { colWeights[it] / colWeightSum * canvasWidth }
-        val colStarts = FloatArray(6)
-        var startX = 0f
-        for (i in 0 until 6) {
-            colStarts[i] = startX
-            startX += colWidths[i]
-        }
+            // 计算各列起始 x 坐标（按固定 dp 宽度）
+            val colStarts = FloatArray(6)
+            var startX = 0f
+            for (i in 0 until 6) {
+                colStarts[i] = startX
+                startX += colWidthsDp[i].dp.toPx()
+            }
 
-        val headerPaddingVPx = headerPaddingVDp.toPx()
-        val rowPaddingVPx = rowPaddingVDp.toPx()
-        val rowPaddingHPx = rowPaddingHDp.toPx()
-        val headerHeightPx = headerHeightDp.dp.toPx()
-        val rowHeightPx = rowHeightDp.dp.toPx()
+            val headerPaddingVPx = headerPaddingVDp.toPx()
+            val rowPaddingVPx = rowPaddingVDp.toPx()
+            val rowPaddingHPx = rowPaddingHDp.toPx()
+            val headerHeightPx = headerHeightDp.dp.toPx()
+            val rowHeightPx = rowHeightDp.dp.toPx()
 
-        // 1. 绘制表头背景
-        drawRect(
-            color = AppColors.NeutralSurface,
-            topLeft = Offset(0f, 0f),
-            size = Size(canvasWidth, headerHeightPx)
-        )
-
-        // 2. 绘制表头文本
-        for (i in 0 until 6) {
-            val textLayout = textMeasurer.measure(
-                text = AnnotatedString(headerTexts[i]),
-                style = headerStyle,
-                constraints = Constraints(maxWidth = (colWidths[i] - rowPaddingHPx * 2).toInt().coerceAtLeast(0))
+            // 1. 绘制表头背景
+            drawRect(
+                color = AppColors.NeutralSurface,
+                topLeft = Offset(0f, 0f),
+                size = Size(canvasWidth, headerHeightPx)
             )
-            drawText(
-                textLayoutResult = textLayout,
-                topLeft = Offset(
-                    colStarts[i] + rowPaddingHPx,
-                    headerPaddingVPx
-                )
-            )
-        }
 
-        // 3. 绘制表头底线（主色加粗）
-        drawLine(
-            color = AppColors.Green400,
-            start = Offset(0f, headerHeightPx),
-            end = Offset(canvasWidth, headerHeightPx),
-            strokeWidth = headerLineStrokeDp.toPx()
-        )
-
-        // 4. 绘制数据行
-        for (rowIndex in rows.indices) {
-            val rowTopY = headerHeightPx + rowIndex * rowHeightPx
-            val rowBottomY = rowTopY + rowHeightPx
-            val isLastRow = rowIndex == rows.lastIndex
-
-            // 4.1 绘制行内文本（6列）
-            val cellTexts = rowTexts[rowIndex]
-            for (colIndex in 0 until 6) {
-                // 金额列（索引5）用绿色
-                val style = if (colIndex == 5) amountStyle else bodyStyle
+            // 2. 绘制表头文本
+            for (i in 0 until 6) {
+                val colWidthPx = colWidthsDp[i].dp.toPx()
                 val textLayout = textMeasurer.measure(
-                    text = AnnotatedString(cellTexts[colIndex]),
-                    style = style,
-                    constraints = Constraints(maxWidth = (colWidths[colIndex] - rowPaddingHPx * 2).toInt().coerceAtLeast(0))
+                    text = AnnotatedString(headerTexts[i]),
+                    style = headerStyle,
+                    constraints = Constraints(maxWidth = (colWidthPx - rowPaddingHPx * 2).toInt().coerceAtLeast(0))
                 )
                 drawText(
                     textLayoutResult = textLayout,
                     topLeft = Offset(
-                        colStarts[colIndex] + rowPaddingHPx,
-                        rowTopY + rowPaddingVPx
+                        colStarts[i] + rowPaddingHPx,
+                        headerPaddingVPx
                     )
                 )
             }
 
-            // 4.2 绘制行底线（浅灰，末行中灰）
+            // 3. 绘制表头底线（主色加粗）
             drawLine(
-                color = if (isLastRow) AppColors.Outline else AppColors.OutlineVariant,
-                start = Offset(0f, rowBottomY),
-                end = Offset(canvasWidth, rowBottomY),
-                strokeWidth = rowLineStrokeDp.toPx()
+                color = AppColors.Green400,
+                start = Offset(0f, headerHeightPx),
+                end = Offset(canvasWidth, headerHeightPx),
+                strokeWidth = headerLineStrokeDp.toPx()
             )
-        }
-    }
 
-    // ===== 备注汇总区（保留 Composable，量少且需要圆角背景胶囊） =====
-    // 集中显示在表格最下方，每条备注以"序号. 空间-方案"作为前缀标识所属子项目
-    if (noteList.isNotEmpty()) {
-        Spacer(modifier = Modifier.height(8.dp))
-        noteList.forEach { entry ->
-            val entryText = remember(entry) {
-                "${entry.index + 1}. ${entry.sub.spaceTypeName}-${entry.sub.constructionPlanName}：${entry.content}"
+            // 4. 绘制数据行
+            for (rowIndex in rows.indices) {
+                val rowTopY = headerHeightPx + rowIndex * rowHeightPx
+                val rowBottomY = rowTopY + rowHeightPx
+                val isLastRow = rowIndex == rows.lastIndex
+
+                // 4.1 绘制行内文本（6列）
+                val cellTexts = rowTexts[rowIndex]
+                for (colIndex in 0 until 6) {
+                    val colWidthPx = colWidthsDp[colIndex].dp.toPx()
+                    // 金额列（索引5）用绿色
+                    val style = if (colIndex == 5) amountStyle else bodyStyle
+                    val textLayout = textMeasurer.measure(
+                        text = AnnotatedString(cellTexts[colIndex]),
+                        style = style,
+                        constraints = Constraints(maxWidth = (colWidthPx - rowPaddingHPx * 2).toInt().coerceAtLeast(0))
+                    )
+                    drawText(
+                        textLayoutResult = textLayout,
+                        topLeft = Offset(
+                            colStarts[colIndex] + rowPaddingHPx,
+                            rowTopY + rowPaddingVPx
+                        )
+                    )
+                }
+
+                // 4.2 绘制行底线（浅灰，末行中灰）
+                drawLine(
+                    color = if (isLastRow) AppColors.Outline else AppColors.OutlineVariant,
+                    start = Offset(0f, rowBottomY),
+                    end = Offset(canvasWidth, rowBottomY),
+                    strokeWidth = rowLineStrokeDp.toPx()
+                )
             }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 4.dp, top = 2.dp, bottom = 2.dp),
-                verticalAlignment = Alignment.Top
-            ) {
-                // 标签：浅绿底+绿字小标签（"备注"）；实测标签用浅橙底+橙字区分
-                val isMeasured = entry.label == "实测"
-                val labelBg = if (isMeasured) Color(0xFFFFE8CC) else AppColors.Green50
-                val labelColor = if (isMeasured) Color(0xFFE67E22) else AppColors.Green400
-                Text(
-                    text = entry.label,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = labelColor,
-                    maxLines = 1,
+        }
+
+        // ===== 备注汇总区（保留 Composable，量少且需要圆角背景胶囊） =====
+        // 集中显示在表格最下方，每条备注以"序号. 空间-方案"作为前缀标识所属子项目
+        // 宽度与表格对齐（510dp），在 horizontalScroll 容器内同步水平滚动
+        if (noteList.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(8.dp))
+            noteList.forEach { entry ->
+                val entryText = remember(entry) {
+                    "${entry.index + 1}. ${entry.sub.spaceTypeName}-${entry.sub.constructionPlanName}：${entry.content}"
+                }
+                Row(
                     modifier = Modifier
-                        .background(color = labelBg, shape = RoundedCornerShape(4.dp))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                // 备注内容：灰色小字，带序号标识，最多2行省略
-                Text(
-                    text = entryText,
-                    fontSize = 11.sp,
-                    color = AppColors.TextTertiary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
+                        .width(tableWidthDp)
+                        .padding(start = 4.dp, top = 2.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    // 标签：浅绿底+绿字小标签（"备注"）；实测标签用浅橙底+橙字区分
+                    val isMeasured = entry.label == "实测"
+                    val labelBg = if (isMeasured) Color(0xFFFFE8CC) else AppColors.Green50
+                    val labelColor = if (isMeasured) Color(0xFFE67E22) else AppColors.Green400
+                    Text(
+                        text = entry.label,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = labelColor,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .background(color = labelBg, shape = RoundedCornerShape(4.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    // 备注内容：灰色小字，带序号标识，最多2行省略
+                    Text(
+                        text = entryText,
+                        fontSize = 11.sp,
+                        color = AppColors.TextTertiary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
         }
     }
