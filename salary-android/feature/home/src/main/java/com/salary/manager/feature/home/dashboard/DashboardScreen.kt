@@ -61,6 +61,9 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshState
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -109,6 +112,7 @@ import kotlinx.coroutines.launch
  * @param onNavigateToProject 点击工程卡片时导航到工程详情
  * @param onMessageClick 顶部导航栏消息图标点击回调
  * @param unreadCount 未读消息数（由AppNavHost全局传入，确保与个人中心一致）
+ * @param refreshTrigger 刷新触发器：工程详情页保存工程后递增此值，主页监听变化后自动刷新工程历史
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -118,7 +122,8 @@ fun DashboardScreen(
     latencyTracker: LatencyTracker? = null,
     userNickname: String = "",
     onMessageClick: (() -> Unit)? = null,
-    unreadCount: Int = 0
+    unreadCount: Int = 0,
+    refreshTrigger: Int = 0
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -136,6 +141,29 @@ fun DashboardScreen(
     // 年月选择器点击回调：用 remember 包装避免每次重组创建新 lambda 实例，
     // 让 HistoryHeader 子组件在参数未变时可被跳过重组
     val onMonthDialogClick = remember { { showMonthDialog = true } }
+
+    // ===== 下拉刷新状态 =====
+    // 用户在主页顶部下拉时触发工程历史刷新（从网络拉取最新数据并更新缓存）
+    val refreshState = rememberPullToRefreshState()
+    var isRefreshing by remember { mutableStateOf(false) }
+
+    // 监听工程详情页保存工程后的刷新触发器
+    // refreshTrigger 由 AppNavHost 在 onDataChanged 回调中递增
+    LaunchedEffect(refreshTrigger) {
+        if (refreshTrigger > 0) {
+            viewModel.loadProjects()
+        }
+    }
+
+    // 下拉刷新指示器关闭逻辑：
+    // isLoadingProjects 变化时检查：若正在刷新且加载已结束，则关闭指示器
+    // 时序保证：forceRefreshProjects 先将 isLoadingProjects 置 true，网络完成后置 false，
+    // 此处仅在 false 且 isRefreshing=true 时关闭，避免提前关闭
+    LaunchedEffect(uiState.isLoadingProjects) {
+        if (isRefreshing && !uiState.isLoadingProjects) {
+            isRefreshing = false
+        }
+    }
 
     // 图库选择器：调用 Android 官方 Photo Picker，直接进入手机图库
     // 特点：
@@ -313,11 +341,23 @@ fun DashboardScreen(
                 }
             }
 
-            LazyColumn(
-                state = listState,
+            // 用 PullToRefreshBox 包裹 LazyColumn，实现"滑到顶后再下拉触发刷新"
+            // onRefresh 回调：设置刷新指示器可见并触发网络拉取，加载完成后由上方
+            // LaunchedEffect(uiState.isLoadingProjects) 自动关闭指示器
+            PullToRefreshBox(
+                state = refreshState,
+                isRefreshing = isRefreshing,
+                onRefresh = {
+                    isRefreshing = true
+                    viewModel.forceRefreshProjects()
+                },
                 modifier = Modifier
                     .weight(1f)
-                    .background(AppColors.Background),
+                    .background(AppColors.Background)
+            ) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(horizontal = 4.dp)
             ) {
                 item(key = "top_spacer") {
@@ -1099,6 +1139,7 @@ fun DashboardScreen(
                     Spacer(modifier = Modifier.height(16.dp))
                 }
             }
+            } // end of PullToRefreshBox
         }
 
         // Snackbar

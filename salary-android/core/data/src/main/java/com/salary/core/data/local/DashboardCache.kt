@@ -38,6 +38,13 @@ class DashboardCache @Inject constructor(
          * 后台再向后端请求最新列表并覆盖 & 回写缓存（stale-while-revalidate）
          */
         private val CONSTRUCTORS_KEY = stringPreferencesKey("constructors_list")
+
+        /**
+         * 工程历史列表缓存前缀（按月份区分，完整 key = "projects_cache_${yearMonth}"）
+         * 不同月份的工程列表分别缓存，切换月份时可用缓存立即渲染，再后台拉取最新数据覆盖。
+         * 缓存内容为已映射好的 UI 模型 JSON，避免重复执行 DTO→UI 映射。
+         */
+        private const val PROJECTS_CACHE_PREFIX = "projects_cache_"
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -154,6 +161,54 @@ class DashboardCache @Inject constructor(
     suspend fun saveConstructorsJson(jsonStr: String) {
         try {
             context.dataStore.edit { it[CONSTRUCTORS_KEY] = jsonStr }
+        } catch (_: Exception) {
+            // 静默处理
+        }
+    }
+
+    /**
+     * 加载指定月份的工程列表缓存（原始 JSON 字符串）
+     *
+     * 缓存内容为调用方序列化后的 UI 模型 JSON，这里不关心具体结构，
+     * 由 ViewModel 负责反序列化为 List<ProjectHistoryUiModel>。
+     *
+     * @param yearMonth 月份字符串（格式 yyyy-MM）
+     * @return JSON 字符串；无缓存时返回空字符串
+     */
+    suspend fun loadProjectsJson(yearMonth: String): String {
+        return try {
+            val key = stringPreferencesKey(PROJECTS_CACHE_PREFIX + yearMonth)
+            context.dataStore.data.map { it[key] ?: "" }.first()
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    /**
+     * 保存指定月份的工程列表缓存
+     *
+     * @param yearMonth 月份字符串（格式 yyyy-MM）
+     * @param jsonStr 已序列化的工程列表 JSON 字符串（由调用方序列化）
+     */
+    suspend fun saveProjectsJson(yearMonth: String, jsonStr: String) {
+        try {
+            val key = stringPreferencesKey(PROJECTS_CACHE_PREFIX + yearMonth)
+            context.dataStore.edit { it[key] = jsonStr }
+        } catch (_: Exception) {
+            // 静默处理
+        }
+    }
+
+    /**
+     * 清除指定月份的工程列表缓存
+     * 工程保存/删除后，对应月份的缓存需要失效，避免显示过期数据。
+     *
+     * @param yearMonth 月份字符串（格式 yyyy-MM）
+     */
+    suspend fun clearProjectsCache(yearMonth: String) {
+        try {
+            val key = stringPreferencesKey(PROJECTS_CACHE_PREFIX + yearMonth)
+            context.dataStore.edit { it.remove(key) }
         } catch (_: Exception) {
             // 静默处理
         }

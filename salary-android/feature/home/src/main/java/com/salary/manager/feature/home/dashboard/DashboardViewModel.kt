@@ -60,8 +60,12 @@ data class SchemeInfo(
  *
  * @Immutable 标注：告知 Compose 编译器该类型所有字段不可变，
  * 当实例未变时可安全跳过依赖该参数的 Composable 重组，减少主页滑动时的不必要重组
+ *
+ * @Serializable 标注：支持将工程列表序列化为 JSON 缓存到 DataStore，
+ * 冷启动时可用缓存立即渲染，再后台拉取最新数据覆盖（stale-while-revalidate）
  */
 @Immutable
+@kotlinx.serialization.Serializable
 data class ProjectHistoryUiModel(
     val id: Int,
     val name: String,
@@ -79,8 +83,11 @@ data class ProjectHistoryUiModel(
  * 子项目UI模型
  *
  * @Immutable 标注：与 ProjectHistoryUiModel 配合，让 SubprojectTable 在参数未变时能被跳过
+ *
+ * @Serializable 标注：随 ProjectHistoryUiModel 一起序列化缓存
  */
 @Immutable
+@kotlinx.serialization.Serializable
 data class SubprojectUiModel(
     val id: Int,
     val spaceTypeName: String,
@@ -264,6 +271,20 @@ class DashboardViewModel @Inject constructor(
 
         /** 施工人员缓存的 JSON 编解码器（忽略未知字段，兼容后端字段扩展） */
         private val CONSTRUCTORS_JSON = Json { ignoreUnknownKeys = true }
+
+        /**
+         * 工程历史列表进程内缓存（按月份区分）
+         *
+         * key: yearMonth(yyyy-MM)，value: 该月份第一页工程列表
+         * ViewModel 重建（Tab 切换、返回主页）时直接命中内存缓存立即渲染，
+         * 无需再走 DataStore IO 和 JSON 反序列化。
+         * 网络刷新成功后覆盖对应月份的缓存。
+         */
+        @Volatile
+        private var cachedProjectsByMonth: MutableMap<String, List<ProjectHistoryUiModel>> = mutableMapOf()
+
+        /** 工程列表缓存的 JSON 编解码器（忽略未知字段，兼容模型扩展） */
+        private val PROJECTS_JSON = Json { ignoreUnknownKeys = true }
     }
 
     /** 数字格式化工具 */
@@ -305,6 +326,11 @@ class DashboardViewModel @Inject constructor(
             // 施工人员数据变更频率极低，先用内存/磁盘缓存立即渲染，避免冷启动等待网络。
             // 后续 loadConstructors() 会在后台异步向服务端拉取最新列表并覆盖 UI 与缓存。
             primeConstructorsFromCache()
+
+            // ========== 工程列表缓存优先注入 ==========
+            // 先用内存/磁盘缓存渲染工程历史，避免冷启动白屏等待网络。
+            // 后续 loadProjectsSuspend() 会从网络拉取最新数据覆盖。
+            primeProjectsFromCache()
 
             try {
                 coroutineScope {
@@ -539,6 +565,74 @@ class DashboardViewModel @Inject constructor(
     }
 
     /**
+     * 强制从网络刷新工程历史（下拉刷新时调用）
+     *
+     * 与 [loadProjects] 的区别：
+     * - 不清空已有列表（避免下拉时列表闪烁消失）
+     * - 网络失败时若已有缓存数据则不弹错误提示，仅提示"网络异常，显示缓存数据"
+     */
+    fun forceRefreshProjects() {
+        viewModelScope.launch {
+            val yearMonth = _uiState.value.selectedYearMonth
+            // 标记加载中但不清空列表，让用户看到当前内容上有刷新指示器
+            _uiState.value = _uiState.value.copy(isLoadingProjects = true)
+            projectsCurrentPage = 1
+            try {
+                val response = projectApi.getProjects(
+                    page = 1,
+                    size = projectsPageSize,
+                    yearMonth = yearMonth
+                )
+                if (response.code == 200) {
+                    val pageData = response.data
+                    if (pageData == null) {
+                        _uiState.value = _uiState.value.copy(
+                            projects = emptyList(),
+                            isLoadingProjects = false,
+                            hasMoreProjects = false
+                        )
+                        // 清空对应月份缓存
+                        cachedProjectsByMonth.remove(yearMonth)
+                        withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            dashboardCache.clearProjectsCache(yearMonth)
+                        }
+                        return@launch
+                    }
+                    val projects = pageData.list.map { mapProjectDtoToUiModel(it) }
+                    _uiState.value = _uiState.value.copy(
+                        projects = projects,
+                        isLoadingProjects = false,
+                        hasMoreProjects = pageData.list.size >= projectsPageSize
+                    )
+                    // 网络成功 → 回写内存缓存和磁盘缓存
+                    saveProjectsToCache(projects, yearMonth)
+                } else {
+                    // 服务器返回错误：若已有缓存数据则保留，仅提示
+                    val hasCache = _uiState.value.projects.isNotEmpty()
+                    _uiState.value = _uiState.value.copy(
+                        isLoadingProjects = false,
+                        errorMessage = if (hasCache) {
+                            "网络异常，显示缓存数据"
+                        } else {
+                            NetworkErrorHandler.translateServerError(response.msg, "加载工程历史失败")
+                        }
+                    )
+                }
+            } catch (e: Exception) {
+                val hasCache = _uiState.value.projects.isNotEmpty()
+                _uiState.value = _uiState.value.copy(
+                    isLoadingProjects = false,
+                    errorMessage = if (hasCache) {
+                        "网络异常，显示缓存数据"
+                    } else {
+                        NetworkErrorHandler.translate(e, "加载工程历史失败")
+                    }
+                )
+            }
+        }
+    }
+
+    /**
      * 加载更多工程历史（分页加载，滚动到底部时触发）
      */
     fun loadMoreProjects() {
@@ -581,17 +675,86 @@ class DashboardViewModel @Inject constructor(
     }
 
     /**
+     * 冷启动前用缓存立即填充工程历史列表
+     *
+     * 优先级：进程内存缓存 > 磁盘 DataStore 缓存
+     * 目的：让工程历史区域在首屏渲染时就有数据可显示，避免白屏等待网络。
+     * 已有内存缓存时跳过磁盘读，减少 IO 开销。
+     */
+    private suspend fun primeProjectsFromCache() {
+        val yearMonth = _uiState.value.selectedYearMonth
+        // 1. 内存缓存命中
+        cachedProjectsByMonth[yearMonth]?.let { mem ->
+            if (mem.isNotEmpty()) {
+                _uiState.value = _uiState.value.copy(
+                    projects = mem,
+                    // 缓存只保存第一页，假设可能还有更多
+                    hasMoreProjects = mem.size >= projectsPageSize
+                )
+                return
+            }
+        }
+        // 2. 磁盘缓存回填
+        try {
+            val jsonStr = dashboardCache.loadProjectsJson(yearMonth)
+            if (jsonStr.isNotBlank()) {
+                val list = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    PROJECTS_JSON.decodeFromString(
+                        ListSerializer(ProjectHistoryUiModel.serializer()),
+                        jsonStr
+                    )
+                }
+                if (list.isNotEmpty()) {
+                    cachedProjectsByMonth[yearMonth] = list
+                    _uiState.value = _uiState.value.copy(
+                        projects = list,
+                        hasMoreProjects = list.size >= projectsPageSize
+                    )
+                }
+            }
+        } catch (_: Exception) {
+            // 缓存损坏时静默忽略，等 loadProjectsSuspend 从网络补齐
+        }
+    }
+
+    /**
+     * 将工程列表写入内存缓存和磁盘缓存
+     */
+    private suspend fun saveProjectsToCache(projects: List<ProjectHistoryUiModel>, yearMonth: String) {
+        // 1. 更新内存缓存
+        cachedProjectsByMonth[yearMonth] = projects
+        // 2. 异步写入磁盘缓存（IO 线程，避免序列化阻塞主线程）
+        withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val jsonStr = PROJECTS_JSON.encodeToString(
+                    ListSerializer(ProjectHistoryUiModel.serializer()),
+                    projects
+                )
+                dashboardCache.saveProjectsJson(yearMonth, jsonStr)
+            } catch (_: Exception) {
+                // 静默：写盘失败不影响业务
+            }
+        }
+    }
+
+    /**
      * 加载工程历史列表的suspend实现（供并行调用，加载第一页）
+     *
+     * 采用 cache-first 策略：
+     * 1. primeProjectsFromCache 已在冷启动时用缓存渲染，这里直接走网络拉取最新数据
+     * 2. 网络成功 → 覆盖 UI 列表并回写缓存
+     * 3. 网络失败 → 若已有缓存数据则保留，仅提示"网络异常"；无缓存则提示错误
      */
     private suspend fun loadProjectsSuspend() {
         _uiState.value = _uiState.value.copy(isLoadingProjects = true)
         projectsCurrentPage = 1
+        val yearMonth = _uiState.value.selectedYearMonth
 
         try {
             val response = projectApi.getProjects(
                 page = 1,
                 size = projectsPageSize,
-                yearMonth = _uiState.value.selectedYearMonth
+                yearMonth = yearMonth
             )
 
             if (response.code == 200) {
@@ -602,6 +765,11 @@ class DashboardViewModel @Inject constructor(
                         isLoadingProjects = false,
                         hasMoreProjects = false
                     )
+                    // 清空对应月份缓存
+                    cachedProjectsByMonth.remove(yearMonth)
+                    withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        dashboardCache.clearProjectsCache(yearMonth)
+                    }
                     return
                 }
                 // 直接使用列表接口返回的数据（含subprojects），无需再发起N+1详情请求
@@ -611,20 +779,30 @@ class DashboardViewModel @Inject constructor(
                     isLoadingProjects = false,
                     hasMoreProjects = pageData.list.size >= projectsPageSize
                 )
+                // 网络成功 → 回写内存缓存和磁盘缓存
+                saveProjectsToCache(projects, yearMonth)
             } else {
+                // 服务器返回错误：若已有缓存数据则保留，仅提示
+                val hasCache = _uiState.value.projects.isNotEmpty()
                 _uiState.value = _uiState.value.copy(
-                    projects = emptyList(),
                     isLoadingProjects = false,
-                    hasMoreProjects = false,
-                    errorMessage = NetworkErrorHandler.translateServerError(response.msg, "加载工程历史失败")
+                    errorMessage = if (hasCache) {
+                        "网络异常，显示缓存数据"
+                    } else {
+                        NetworkErrorHandler.translateServerError(response.msg, "加载工程历史失败")
+                    }
                 )
             }
         } catch (e: Exception) {
+            // 网络异常：若已有缓存数据则保留，仅提示
+            val hasCache = _uiState.value.projects.isNotEmpty()
             _uiState.value = _uiState.value.copy(
-                projects = emptyList(),
                 isLoadingProjects = false,
-                hasMoreProjects = false,
-                errorMessage = NetworkErrorHandler.translate(e, "加载工程历史失败")
+                errorMessage = if (hasCache) {
+                    "网络异常，显示缓存数据"
+                } else {
+                    NetworkErrorHandler.translate(e, "加载工程历史失败")
+                }
             )
         }
     }
@@ -978,7 +1156,11 @@ class DashboardViewModel @Inject constructor(
      */
     fun selectYearMonth(yearMonth: String) {
         _uiState.value = _uiState.value.copy(selectedYearMonth = yearMonth)
-        loadProjects()
+        // 切换月份时先用缓存立即渲染，再后台拉取最新数据
+        viewModelScope.launch {
+            primeProjectsFromCache()
+            loadProjectsSuspend()
+        }
     }
 
     /**

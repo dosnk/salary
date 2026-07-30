@@ -213,6 +213,8 @@ fun MainScaffold(
     // 解决：主页新建工程后切换Tab数据不更新的问题
     var projectListRefreshTrigger by rememberSaveable { mutableIntStateOf(0) }
     var statisticsRefreshTrigger by rememberSaveable { mutableIntStateOf(0) }
+    // 主页工程历史刷新触发器：工程详情页保存/修改工程后递增，触发主页静默刷新
+    var dashboardRefreshTrigger by rememberSaveable { mutableIntStateOf(0) }
 
     // 检测键盘是否弹出（IME可见时隐藏底部导航栏，避免输入栏与键盘间产生间距）
     val density = LocalDensity.current
@@ -340,7 +342,8 @@ fun MainScaffold(
                             latencyTracker = latencyTracker,
                             userNickname = userNickname,
                             onMessageClick = onMessageClick,
-                            unreadCount = unreadCount
+                            unreadCount = unreadCount,
+                            refreshTrigger = dashboardRefreshTrigger
                         )
                         1 -> {
                             // 工程详情页：滑动返回 + 系统返回拦截，避免误退出应用
@@ -350,7 +353,8 @@ fun MainScaffold(
                                     projectId = homeProjectId,
                                     onBack = { homeSubPage = 0 },
                                     onDataChanged = {
-                                        // 工程数据变更时，递增工程管理和统计的刷新触发器
+                                        // 工程数据变更时，递增主页、工程管理和统计的刷新触发器
+                                        dashboardRefreshTrigger++
                                         projectListRefreshTrigger++
                                         statisticsRefreshTrigger++
                                     }
@@ -380,7 +384,8 @@ fun MainScaffold(
                                     projectId = projectProjectId,
                                     onBack = { projectSubPage = 0 },
                                     onDataChanged = {
-                                        // 工程数据变更时，递增工程管理和统计的刷新触发器
+                                        // 工程数据变更时，递增主页、工程管理和统计的刷新触发器
+                                        dashboardRefreshTrigger++
                                         projectListRefreshTrigger++
                                         statisticsRefreshTrigger++
                                     }
