@@ -1386,12 +1386,22 @@ private fun ProjectHistoryCard(
         }
 
         // 工程备注预览（单行省略，空备注不显示，保持卡片紧凑）
+        // 标签样式与子项目备注标签统一：浅绿底+绿字"备注"文字（原为📝图标）
         if (!project.remark.isNullOrBlank()) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(vertical = 2.dp)
             ) {
-                Text(text = "📝", fontSize = 12.sp)
+                Text(
+                    text = "备注",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = AppColors.Green400,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .background(color = AppColors.Green50, shape = RoundedCornerShape(4.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = project.remark,
