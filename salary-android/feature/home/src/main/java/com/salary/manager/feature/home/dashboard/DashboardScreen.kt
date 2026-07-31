@@ -100,6 +100,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.salary.core.common.constants.AppConstants
 import com.salary.core.common.util.AmountFormatter
 import com.salary.core.common.util.DateFormatter
 import com.salary.core.design.component.GreenTopNavBar
@@ -1032,7 +1033,7 @@ fun DashboardScreen(
                         ProjectHistoryCard(
                             project = project,
                             // 仅施工员可上传附件（admin/documenter 只读）
-                            canUploadFile = userRole == "constructor",
+                            canUploadFile = userRole == AppConstants.ROLE_CONSTRUCTOR,
                             onOpenAttachmentList = openAttachmentList,
                             onOpenFilePicker = openFilePicker
                         )

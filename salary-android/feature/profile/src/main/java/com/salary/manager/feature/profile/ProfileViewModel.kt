@@ -2,6 +2,7 @@ package com.salary.manager.feature.profile
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.salary.core.common.constants.AppConstants
 import com.salary.core.data.local.TokenStorage
 import com.salary.core.data.local.UserStorage
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -37,9 +38,9 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch {
             userStorage.roleFlow.collect { roleValue ->
                 _roleDisplay.value = when (roleValue) {
-                    "admin" -> "管理员"
-                    "constructor" -> "施工员"
-                    "documenter" -> "资料员"
+                    AppConstants.ROLE_ADMIN -> "管理员"
+                    AppConstants.ROLE_CONSTRUCTOR -> "施工员"
+                    AppConstants.ROLE_DOCUMENTER -> "资料员"
                     else -> "未知"
                 }
             }

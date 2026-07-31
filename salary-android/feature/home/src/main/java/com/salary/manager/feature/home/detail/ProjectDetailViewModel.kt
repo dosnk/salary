@@ -15,8 +15,11 @@ import com.salary.core.network.dto.UpdateProjectRequest
 import com.salary.core.network.dto.WorkerWorkdayItem
 import com.salary.core.ui.state.UiState
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -123,13 +126,13 @@ class ProjectDetailViewModel @Inject constructor(
     /** 当前用户角色（用于UI层按角色控制编辑/删除等操作按钮的显示） */
     val userRole: StateFlow<String> = userStorage.roleFlow
 
-    /** 错误消息（一次性事件） */
-    private val _errorMessage = MutableStateFlow<String?>(null)
-    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+    /** 错误消息（一次性事件，使用 SharedFlow 避免配置变化后重复消费） */
+    private val _errorMessage = MutableSharedFlow<String>()
+    val errorMessage: SharedFlow<String> = _errorMessage.asSharedFlow()
 
-    /** 成功消息（一次性事件） */
-    private val _successMessage = MutableStateFlow<String?>(null)
-    val successMessage: StateFlow<String?> = _successMessage.asStateFlow()
+    /** 成功消息（一次性事件，使用 SharedFlow 避免配置变化后重复消费） */
+    private val _successMessage = MutableSharedFlow<String>()
+    val successMessage: SharedFlow<String> = _successMessage.asSharedFlow()
 
     /** 子项目保存中状态 */
     private val _savingSubproject = MutableStateFlow(false)
@@ -269,9 +272,7 @@ class ProjectDetailViewModel @Inject constructor(
     ) {
         viewModelScope.launch {
             _savingSubproject.value = true
-            // 清除上一次操作的消息，避免残留的 successMessage 导致弹窗误判保存成功
-            _successMessage.value = null
-            _errorMessage.value = null
+            // SharedFlow 不保留值，无需清除上一次消息
             try {
                 // 米转厘米
                 val lengthCm = lengthMeter * 100
@@ -291,15 +292,15 @@ class ProjectDetailViewModel @Inject constructor(
                     )
                 )
                 if (response.code == 200) {
-                    _successMessage.value = "子项目保存成功"
+                    _successMessage.emit("子项目保存成功")
                     // 保存成功后静默刷新工程详情，避免页面闪烁（保留当前显示，仅更新数据）
                     loadProject(projectId, silent = true)
                 } else {
-                    _errorMessage.value = NetworkErrorHandler.translateServerError(response.msg, "保存子项目失败")
+                    _errorMessage.emit(NetworkErrorHandler.translateServerError(response.msg, "保存子项目失败"))
                 }
             } catch (e: Exception) {
                 AppLog.e(TAG, "更新子项目异常: subprojectId=$subprojectId, ${e.javaClass.simpleName}: ${e.message}", e)
-                _errorMessage.value = NetworkErrorHandler.translate(e, "保存子项目失败")
+                _errorMessage.emit(NetworkErrorHandler.translate(e, "保存子项目失败"))
             } finally {
                 _savingSubproject.value = false
             }
@@ -323,13 +324,13 @@ class ProjectDetailViewModel @Inject constructor(
                         val updatedFiles = currentState.data.files.filterNot { it.id == fileId }
                         _state.value = UiState.Success(currentState.data.copy(files = updatedFiles))
                     }
-                    _successMessage.value = "附件已删除"
+                    _successMessage.emit("附件已删除")
                 } else {
-                    _errorMessage.value = NetworkErrorHandler.translateServerError(response.msg, "删除附件失败")
+                    _errorMessage.emit(NetworkErrorHandler.translateServerError(response.msg, "删除附件失败"))
                 }
             } catch (e: Exception) {
                 AppLog.e(TAG, "删除附件异常: fileId=$fileId, ${e.javaClass.simpleName}: ${e.message}", e)
-                _errorMessage.value = NetworkErrorHandler.translate(e, "删除附件失败")
+                _errorMessage.emit(NetworkErrorHandler.translate(e, "删除附件失败"))
             }
         }
     }
@@ -374,9 +375,7 @@ class ProjectDetailViewModel @Inject constructor(
     ) {
         viewModelScope.launch {
             _savingProject.value = true
-            // 清除上一次操作的消息，避免残留的 successMessage 导致弹窗误判保存成功
-            _successMessage.value = null
-            _errorMessage.value = null
+            // SharedFlow 不保留值，无需清除上一次消息
             try {
                 // 构造施工人员列表
                 val constructors = constructorIds.map { ConstructorItem(it) }
@@ -399,28 +398,20 @@ class ProjectDetailViewModel @Inject constructor(
 
                 val response = projectApi.updateProject(projectId, request)
                 if (response.code == 200) {
-                    _successMessage.value = "工程信息已保存"
+                    _successMessage.emit("工程信息已保存")
                     // 保存成功后静默刷新工程详情，避免页面闪烁（保留当前显示，仅更新数据）
                     loadProject(projectId, silent = true)
                 } else {
-                    _errorMessage.value = NetworkErrorHandler.translateServerError(response.msg, "保存工程失败")
+                    _errorMessage.emit(NetworkErrorHandler.translateServerError(response.msg, "保存工程失败"))
                 }
             } catch (e: Exception) {
                 AppLog.e(TAG, "更新工程异常: projectId=$projectId, ${e.javaClass.simpleName}: ${e.message}", e)
-                _errorMessage.value = NetworkErrorHandler.translate(e, "保存工程失败")
+                _errorMessage.emit(NetworkErrorHandler.translate(e, "保存工程失败"))
             } finally {
                 _savingProject.value = false
             }
         }
     }
 
-    /** 清除错误消息 */
-    fun clearErrorMessage() {
-        _errorMessage.value = null
-    }
-
-    /** 清除成功消息 */
-    fun clearSuccessMessage() {
-        _successMessage.value = null
-    }
+    // 注：原 clearErrorMessage/clearSuccessMessage 已移除，SharedFlow 不保留值无需清除
 }

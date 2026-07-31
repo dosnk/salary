@@ -8,8 +8,11 @@ import com.salary.core.data.local.UserStorage
 import com.salary.core.network.api.ProjectApi
 import com.salary.core.network.dto.UpdateProjectRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -97,13 +100,13 @@ class ProjectListViewModel @Inject constructor(
     /** 当前用户角色（用于UI层按角色控制元素显示，如资料员隐藏确认完工按钮） */
     val userRole: StateFlow<String> = userStorage.roleFlow
 
-    /** 成功消息 */
-    private val _successMessage = MutableStateFlow<String?>(null)
-    val successMessage: StateFlow<String?> = _successMessage.asStateFlow()
+    /** 成功消息（一次性事件，使用 SharedFlow 避免配置变化后重复消费） */
+    private val _successMessage = MutableSharedFlow<String>()
+    val successMessage: SharedFlow<String> = _successMessage.asSharedFlow()
 
-    /** 错误消息 */
-    private val _errorMessage = MutableStateFlow<String?>(null)
-    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+    /** 错误消息（一次性事件，使用 SharedFlow 避免配置变化后重复消费） */
+    private val _errorMessage = MutableSharedFlow<String>()
+    val errorMessage: SharedFlow<String> = _errorMessage.asSharedFlow()
 
     private var currentKeyword: String? = null
     private var currentPage = 1
@@ -332,23 +335,15 @@ class ProjectListViewModel @Inject constructor(
                         }
                         _state.value = currentState.copy(items = updatedItems)
                     }
-                    _successMessage.value = "工程状态已更新"
+                    _successMessage.emit("工程状态已更新")
                 } else {
-                    _errorMessage.value = NetworkErrorHandler.translateServerError(response.msg, "修改工程状态失败")
+                    _errorMessage.emit(NetworkErrorHandler.translateServerError(response.msg, "修改工程状态失败"))
                 }
             } catch (e: Exception) {
-                _errorMessage.value = NetworkErrorHandler.translate(e, "修改工程状态失败")
+                _errorMessage.emit(NetworkErrorHandler.translate(e, "修改工程状态失败"))
             }
         }
     }
 
-    /** 清除成功消息 */
-    fun clearSuccessMessage() {
-        _successMessage.value = null
-    }
-
-    /** 清除错误消息 */
-    fun clearErrorMessage() {
-        _errorMessage.value = null
-    }
+    // 注：原 clearSuccessMessage/clearErrorMessage 已移除，SharedFlow 不保留值无需清除
 }

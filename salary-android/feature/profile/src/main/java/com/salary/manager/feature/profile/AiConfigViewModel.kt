@@ -10,8 +10,11 @@ import com.salary.core.network.api.AiProviderConfigDto
 import com.salary.core.network.api.AiProviderConfigUpdate
 import com.salary.core.network.api.AiTestRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -38,14 +41,17 @@ class AiConfigViewModel @Inject constructor(
     private val _isTesting = MutableStateFlow(false)
     val isTesting: StateFlow<Boolean> = _isTesting.asStateFlow()
 
-    private val _testResult = MutableStateFlow<String?>(null)
-    val testResult: StateFlow<String?> = _testResult.asStateFlow()
+    /** 测试结果（一次性事件，使用 SharedFlow 避免配置变化后重复消费） */
+    private val _testResult = MutableSharedFlow<String>()
+    val testResult: SharedFlow<String> = _testResult.asSharedFlow()
 
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
+    /** 错误信息（一次性事件，使用 SharedFlow 避免配置变化后重复消费） */
+    private val _error = MutableSharedFlow<String>()
+    val error: SharedFlow<String> = _error.asSharedFlow()
 
-    private val _saveSuccess = MutableStateFlow(false)
-    val saveSuccess: StateFlow<Boolean> = _saveSuccess.asStateFlow()
+    /** 保存成功事件（一次性事件，使用 SharedFlow 避免配置变化后重复消费） */
+    private val _saveSuccess = MutableSharedFlow<Unit>()
+    val saveSuccess: SharedFlow<Unit> = _saveSuccess.asSharedFlow()
 
     // 各提供商的编辑状态
     private val _editedProviders = MutableStateFlow<Map<String, EditedProvider>>(emptyMap())
@@ -59,7 +65,6 @@ class AiConfigViewModel @Inject constructor(
     fun loadConfig() {
         viewModelScope.launch {
             _isLoading.value = true
-            _error.value = null
             try {
                 val response = aiApi.getAiConfig()
                 if (response.code == 200) {
@@ -76,10 +81,10 @@ class AiConfigViewModel @Inject constructor(
                     }
                     _editedProviders.value = edited
                 } else {
-                    _error.value = NetworkErrorHandler.translateServerError(response.msg, "加载AI配置失败")
+                    _error.emit(NetworkErrorHandler.translateServerError(response.msg, "加载AI配置失败"))
                 }
             } catch (e: Exception) {
-                _error.value = NetworkErrorHandler.translate(e, "加载AI配置失败")
+                _error.emit(NetworkErrorHandler.translate(e, "加载AI配置失败"))
             } finally {
                 _isLoading.value = false
             }
@@ -116,8 +121,6 @@ class AiConfigViewModel @Inject constructor(
     fun saveConfig() {
         viewModelScope.launch {
             _isSaving.value = true
-            _error.value = null
-            _saveSuccess.value = false
             try {
                 val providerConfigs = mutableMapOf<String, AiProviderConfigUpdate>()
                 _editedProviders.value.forEach { (key, edited) ->
@@ -136,14 +139,14 @@ class AiConfigViewModel @Inject constructor(
 
                 val response = aiApi.updateAiConfig(request)
                 if (response.code == 200) {
-                    _saveSuccess.value = true
+                    _saveSuccess.emit(Unit)
                     // 重新加载配置
                     loadConfig()
                 } else {
-                    _error.value = NetworkErrorHandler.translateServerError(response.msg, "保存AI配置失败")
+                    _error.emit(NetworkErrorHandler.translateServerError(response.msg, "保存AI配置失败"))
                 }
             } catch (e: Exception) {
-                _error.value = NetworkErrorHandler.translate(e, "保存AI配置失败")
+                _error.emit(NetworkErrorHandler.translate(e, "保存AI配置失败"))
             } finally {
                 _isSaving.value = false
             }
@@ -154,31 +157,19 @@ class AiConfigViewModel @Inject constructor(
     fun testConnection() {
         viewModelScope.launch {
             _isTesting.value = true
-            _testResult.value = null
-            _error.value = null
             try {
                 val response = aiApi.testConnection(AiTestRequest(_selectedProvider.value))
                 if (response.code == 200) {
-                    _testResult.value = response.data?.providerName + " 连接测试成功"
+                    _testResult.emit(response.data?.providerName + " 连接测试成功")
                 } else {
-                    _testResult.value = NetworkErrorHandler.translateServerError(response.msg, "连接测试失败")
+                    _testResult.emit(NetworkErrorHandler.translateServerError(response.msg, "连接测试失败"))
                 }
             } catch (e: Exception) {
-                _testResult.value = NetworkErrorHandler.translate(e, "连接测试失败")
+                _testResult.emit(NetworkErrorHandler.translate(e, "连接测试失败"))
             } finally {
                 _isTesting.value = false
             }
         }
-    }
-
-    /** 清除测试结果 */
-    fun clearTestResult() {
-        _testResult.value = null
-    }
-
-    /** 清除保存成功标记 */
-    fun clearSaveSuccess() {
-        _saveSuccess.value = false
     }
 }
 

@@ -2,6 +2,7 @@ package com.salary.manager.feature.statistics.advance
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.salary.core.common.constants.AppConstants
 import com.salary.core.common.util.NetworkErrorHandler
 import com.salary.core.data.local.UserStorage
 import com.salary.core.network.api.AdvanceApi
@@ -79,10 +80,10 @@ class AdvanceViewModel @Inject constructor(
     }
 
     /** 当前用户是否可以创建预支（仅施工员constructor可以） */
-    fun canCreateAdvance(): Boolean = _currentUserRole.value == "constructor"
+    fun canCreateAdvance(): Boolean = _currentUserRole.value == AppConstants.ROLE_CONSTRUCTOR
 
     /** 当前用户是否可以按人员筛选预支（资料员和管理员可以） */
-    fun canFilterByUser(): Boolean = _currentUserRole.value == "admin" || _currentUserRole.value == "documenter"
+    fun canFilterByUser(): Boolean = _currentUserRole.value == AppConstants.ROLE_ADMIN || _currentUserRole.value == AppConstants.ROLE_DOCUMENTER
 
     /** 加载施工人员列表（仅资料员/管理员需要，用于按人员筛选） */
     private suspend fun loadConstructorsIfNeeded() {

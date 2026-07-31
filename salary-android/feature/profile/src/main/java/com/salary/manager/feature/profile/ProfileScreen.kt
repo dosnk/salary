@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.salary.core.common.constants.AppConstants
 import com.salary.core.design.component.GreenTopNavBar
 import com.salary.core.design.theme.AppColors
 
@@ -110,7 +111,7 @@ fun ProfileScreen(
             add(MenuItemData(Icons.Default.Person, "个人信息 · $nickname · $roleDisplay", {}, showArrow = false))
             add(MenuItemData(Icons.Default.Notifications, "消息通知", onMessages))
             add(MenuItemData(Icons.Default.Lock, "修改密码", onChangePassword))
-            if (role == "admin") {
+            if (role == AppConstants.ROLE_ADMIN) {
                 add(MenuItemData(Icons.Default.Book, "字典管理", onDictionaryManage))
                 add(MenuItemData(Icons.Default.People, "用户管理", onUserManage))
                 add(MenuItemData(Icons.Default.SmartToy, "AI大模型配置", onAiConfig))

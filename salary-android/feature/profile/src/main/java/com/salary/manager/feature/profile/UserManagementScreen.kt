@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
+import com.salary.core.common.constants.AppConstants
 import com.salary.core.design.theme.AppColors
 import com.salary.core.network.api.CreateUserRequest
 import com.salary.core.network.api.UserDto
@@ -245,21 +246,21 @@ private fun UserCard(
                     Surface(
                         shape = RoundedCornerShape(4.dp),
                         color = when (user.role) {
-                            "admin" -> AppColors.Error.copy(alpha = 0.1f)
-                            "constructor" -> AppColors.Green50
+                            AppConstants.ROLE_ADMIN -> AppColors.Error.copy(alpha = 0.1f)
+                            AppConstants.ROLE_CONSTRUCTOR -> AppColors.Green50
                             else -> AppColors.SurfaceVariant
                         }
                     ) {
                         Text(
                             when (user.role) {
-                                "admin" -> "管理员"
-                                "constructor" -> "施工员"
+                                AppConstants.ROLE_ADMIN -> "管理员"
+                                AppConstants.ROLE_CONSTRUCTOR -> "施工员"
                                 else -> "资料员"
                             },
                             fontSize = 12.sp,
                             color = when (user.role) {
-                                "admin" -> AppColors.Error
-                                "constructor" -> AppColors.Green600
+                                AppConstants.ROLE_ADMIN -> AppColors.Error
+                                AppConstants.ROLE_CONSTRUCTOR -> AppColors.Green600
                                 else -> AppColors.TextSecondary
                             },
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -301,7 +302,7 @@ private fun AddUserDialog(
     var password by remember { mutableStateOf("") }
     var nickname by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
-    var selectedRole by remember { mutableStateOf("constructor") }
+    var selectedRole by remember { mutableStateOf(AppConstants.ROLE_CONSTRUCTOR) }
     // 本地校验错误提示
     var localError by remember { mutableStateOf<String?>(null) }
 
@@ -342,7 +343,7 @@ private fun AddUserDialog(
                 )
                 // 角色选择
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("施工员" to "constructor", "资料员" to "documenter").forEach { (label, value) ->
+                    listOf("施工员" to AppConstants.ROLE_CONSTRUCTOR, "资料员" to AppConstants.ROLE_DOCUMENTER).forEach { (label, value) ->
                         FilterChip(
                             selected = selectedRole == value,
                             onClick = { selectedRole = value },

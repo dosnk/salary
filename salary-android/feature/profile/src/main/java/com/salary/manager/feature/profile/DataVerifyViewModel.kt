@@ -6,8 +6,11 @@ import com.salary.core.common.util.NetworkErrorHandler
 import com.salary.core.network.api.DataVerifyResultDto
 import com.salary.core.network.api.SystemApi
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -33,9 +36,9 @@ class DataVerifyViewModel @Inject constructor(
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    /** 错误信息（null 表示无错误） */
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
+    /** 错误信息（一次性事件，使用 SharedFlow 避免配置变化后重复消费） */
+    private val _error = MutableSharedFlow<String>()
+    val error: SharedFlow<String> = _error.asSharedFlow()
 
     /**
      * 执行数据一致性校验
@@ -44,27 +47,21 @@ class DataVerifyViewModel @Inject constructor(
     fun verify(userId: Int? = null) {
         viewModelScope.launch {
             _isLoading.value = true
-            _error.value = null
             try {
                 val response = systemApi.verifyDataConsistency(userId = userId, tolerance = 0.01)
                 if (response.code == 200 && response.data != null) {
                     _result.value = response.data
                 } else {
-                    _error.value = NetworkErrorHandler.translateServerError(
+                    _error.emit(NetworkErrorHandler.translateServerError(
                         response.msg,
                         "数据一致性校验失败"
-                    )
+                    ))
                 }
             } catch (e: Exception) {
-                _error.value = NetworkErrorHandler.translate(e, "数据一致性校验失败")
+                _error.emit(NetworkErrorHandler.translate(e, "数据一致性校验失败"))
             } finally {
                 _isLoading.value = false
             }
         }
-    }
-
-    /** 清除错误状态 */
-    fun clearError() {
-        _error.value = null
     }
 }

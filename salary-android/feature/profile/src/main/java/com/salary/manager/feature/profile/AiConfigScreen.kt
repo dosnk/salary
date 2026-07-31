@@ -41,9 +41,11 @@ fun AiConfigScreen(
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val isSaving by viewModel.isSaving.collectAsStateWithLifecycle()
     val isTesting by viewModel.isTesting.collectAsStateWithLifecycle()
-    val testResult by viewModel.testResult.collectAsStateWithLifecycle()
-    val error by viewModel.error.collectAsStateWithLifecycle()
-    val saveSuccess by viewModel.saveSuccess.collectAsStateWithLifecycle()
+    // 注：testResult/error/saveSuccess 已改为 SharedFlow，不再使用 collectAsStateWithLifecycle
+    // 改用下方 LaunchedEffect + collect 收集一次性事件
+    var testResult by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var saveSuccess by remember { mutableStateOf(false) }
     val editedProviders by viewModel.editedProviders.collectAsStateWithLifecycle()
     val selectedProvider by viewModel.selectedProvider.collectAsStateWithLifecycle()
 
@@ -52,11 +54,26 @@ fun AiConfigScreen(
         viewModel.loadConfig()
     }
 
-    // 保存成功提示
-    LaunchedEffect(saveSuccess) {
-        if (saveSuccess) {
+    // 收集错误消息（一次性事件，使用 SharedFlow collect 避免配置变化后重复消费）
+    LaunchedEffect(Unit) {
+        viewModel.error.collect { msg -> error = msg }
+    }
+
+    // 收集测试结果（一次性事件，使用 SharedFlow collect 避免配置变化后重复消费）
+    LaunchedEffect(Unit) {
+        viewModel.testResult.collect { msg ->
+            testResult = msg
+            error = null // 清除旧错误，避免与测试结果弹窗同时显示
+        }
+    }
+
+    // 收集保存成功事件（一次性事件，使用 SharedFlow collect 避免配置变化后重复消费）
+    LaunchedEffect(Unit) {
+        viewModel.saveSuccess.collect {
+            saveSuccess = true
+            error = null // 清除旧错误
             kotlinx.coroutines.delay(2000)
-            viewModel.clearSaveSuccess()
+            saveSuccess = false
         }
     }
 
@@ -263,7 +280,7 @@ fun AiConfigScreen(
         // API连接测试结果弹窗
         testResult?.let { result ->
             AlertDialog(
-                onDismissRequest = { viewModel.clearTestResult() },
+                onDismissRequest = { testResult = null },
                 title = {
                     Text(
                         text = if (result.contains("成功")) "连接测试成功" else "连接测试失败",
@@ -281,7 +298,7 @@ fun AiConfigScreen(
                 },
                 confirmButton = {
                     TextButton(
-                        onClick = { viewModel.clearTestResult() }
+                        onClick = { testResult = null }
                     ) {
                         Text("确认", color = AppColors.Green400, fontWeight = FontWeight.Medium)
                     }

@@ -67,6 +67,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.salary.core.common.constants.AppConstants
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.salary.core.design.theme.AppColors
 import com.salary.core.network.api.KnowledgeItemDto
@@ -91,8 +92,10 @@ fun KnowledgeScreen(
 ) {
     val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
-    val error by viewModel.error.collectAsStateWithLifecycle()
-    val success by viewModel.success.collectAsStateWithLifecycle()
+    // 注：error/success 已改为 SharedFlow，不再使用 collectAsStateWithLifecycle
+    // 改用下方 LaunchedEffect + collect 收集一次性事件
+    var error by remember { mutableStateOf<String?>(null) }
+    var success by remember { mutableStateOf<String?>(null) }
     val role by viewModel.roleFlow.collectAsStateWithLifecycle()
 
     // 材料库状态
@@ -104,7 +107,7 @@ fun KnowledgeScreen(
     val showMaterialCreateDialog by viewModel.showMaterialCreateDialog.collectAsStateWithLifecycle()
     val editingMaterial by viewModel.editingMaterial.collectAsStateWithLifecycle()
     val pendingDeleteMaterialId by viewModel.pendingDeleteMaterialId.collectAsStateWithLifecycle()
-    val isAdmin = role == "admin"
+    val isAdmin = role == AppConstants.ROLE_ADMIN
 
     // 材料表单状态
     val formCategoryId by viewModel.formCategoryId.collectAsStateWithLifecycle()
@@ -129,19 +132,21 @@ fun KnowledgeScreen(
     val inputContent by viewModel.inputContent.collectAsStateWithLifecycle()
     val pendingDeleteTitle by viewModel.pendingDeleteTitle.collectAsStateWithLifecycle()
 
-    // 成功提示自动消失
-    LaunchedEffect(success) {
-        if (success != null) {
-            kotlinx.coroutines.delay(2000)
-            viewModel.clearSuccess()
+    // 收集错误消息（一次性事件，使用 SharedFlow collect 避免配置变化后重复消费）
+    LaunchedEffect(Unit) {
+        viewModel.error.collect { msg ->
+            error = msg
+            kotlinx.coroutines.delay(3000)
+            error = null
         }
     }
 
-    // 错误提示自动消失
-    LaunchedEffect(error) {
-        if (error != null) {
-            kotlinx.coroutines.delay(3000)
-            viewModel.clearError()
+    // 收集成功消息（一次性事件，使用 SharedFlow collect 避免配置变化后重复消费）
+    LaunchedEffect(Unit) {
+        viewModel.success.collect { msg ->
+            success = msg
+            kotlinx.coroutines.delay(2000)
+            success = null
         }
     }
 

@@ -37,6 +37,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -73,7 +76,14 @@ fun MaterialLayoutScreen(
     val selectedTrimId by viewModel.selectedTrimId.collectAsStateWithLifecycle()
     val isCalculating by viewModel.isCalculating.collectAsStateWithLifecycle()
     val layoutResult by viewModel.layoutResult.collectAsStateWithLifecycle()
-    val error by viewModel.error.collectAsStateWithLifecycle()
+    // 注：error 已改为 SharedFlow，不再使用 collectAsStateWithLifecycle
+    // 改用下方 LaunchedEffect + collect 收集一次性事件
+    var error by remember { mutableStateOf<String?>(null) }
+
+    // 收集错误消息（一次性事件，使用 SharedFlow collect 避免配置变化后重复消费）
+    LaunchedEffect(Unit) {
+        viewModel.error.collect { msg -> error = msg }
+    }
 
     // 计算完成后跳转预览页
     // 使用 LaunchedEffect 确保导航副作用仅在 layoutResult 变化时执行一次，

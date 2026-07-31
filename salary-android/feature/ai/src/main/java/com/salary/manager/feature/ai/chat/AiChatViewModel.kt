@@ -6,8 +6,11 @@ import com.salary.manager.feature.ai.data.AiRepository
 import com.salary.manager.feature.ai.data.SseEvent
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -51,9 +54,9 @@ class AiChatViewModel @Inject constructor(
     private val _inputText = MutableStateFlow("")
     val inputText: StateFlow<String> = _inputText.asStateFlow()
 
-    /** 错误提示 */
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
+    /** 错误提示（一次性事件，使用 SharedFlow 避免配置变化后重复消费） */
+    private val _error = MutableSharedFlow<String>(extraBufferCapacity = 5)
+    val error: SharedFlow<String> = _error.asSharedFlow()
 
     /**
      * 当前SSE流式请求的Job，用于取消/防泄漏
@@ -98,9 +101,6 @@ class AiChatViewModel @Inject constructor(
     fun sendMessage(text: String? = null) {
         val message = (text ?: _inputText.value).trim()
         if (message.isEmpty() || _isLoading.value) return
-
-        // 清除错误
-        _error.value = null
 
         // 取消上一个进行中的SSE流，避免新旧流并行导致内容互相覆盖（泄漏防护）
         streamJob?.cancel()
@@ -169,7 +169,7 @@ class AiChatViewModel @Inject constructor(
                                 }
                             }
                             _isLoading.value = false
-                            _error.value = event.message
+                            _error.emit(event.message)
                         }
                     }
                 }
@@ -200,7 +200,7 @@ class AiChatViewModel @Inject constructor(
                     }
                 }
                 _isLoading.value = false
-                _error.value = e.message ?: "未知错误"
+                _error.emit(e.message ?: "未知错误")
             } finally {
                 streamJob = null
             }
@@ -255,7 +255,6 @@ class AiChatViewModel @Inject constructor(
                 isStreaming = false
             )
         )
-        _error.value = null
     }
 
     /**

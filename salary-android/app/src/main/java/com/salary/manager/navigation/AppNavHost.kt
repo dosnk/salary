@@ -36,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.salary.core.common.constants.AppConstants
 import com.salary.core.design.theme.AppColors
 import com.salary.core.design.component.SwipeBackLayout
 import com.salary.core.network.interceptor.HealthMonitor
@@ -212,7 +213,7 @@ fun MainScaffold(
     // 客户端角色守卫：非admin用户若因进程恢复等原因停留在管理员子页面（2字典/3用户管理/6AI配置/7数据校验），
     // 自动重置回个人中心主页，避免普通用户进入管理员页面（后端已有requireAdmin兜底，此处为双重保险）
     LaunchedEffect(currentUserRole) {
-        if (currentUserRole != "admin" && profileSubPage in setOf(2, 3, 6, 7)) {
+        if (currentUserRole != AppConstants.ROLE_ADMIN && profileSubPage in setOf(2, 3, 6, 7)) {
             profileSubPage = 0
         }
     }

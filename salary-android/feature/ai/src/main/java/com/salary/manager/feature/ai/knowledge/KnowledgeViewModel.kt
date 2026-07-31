@@ -11,8 +11,11 @@ import com.salary.core.network.api.MaterialDto
 import com.salary.core.network.api.UpdateMaterialRequest
 import com.salary.manager.feature.ai.data.AiRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -151,13 +154,13 @@ class KnowledgeViewModel @Inject constructor(
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    /** 错误提示 */
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
+    /** 错误提示（一次性事件，使用 SharedFlow 避免配置变化后重复消费） */
+    private val _error = MutableSharedFlow<String>(extraBufferCapacity = 5)
+    val error: SharedFlow<String> = _error.asSharedFlow()
 
-    /** 成功提示 */
-    private val _success = MutableStateFlow<String?>(null)
-    val success: StateFlow<String?> = _success.asStateFlow()
+    /** 成功提示（一次性事件，使用 SharedFlow 避免配置变化后重复消费） */
+    private val _success = MutableSharedFlow<String>(extraBufferCapacity = 5)
+    val success: SharedFlow<String> = _success.asSharedFlow()
 
     /** 当前用户角色 */
     val roleFlow: StateFlow<String> = userStorage.roleFlow
@@ -295,22 +298,21 @@ class KnowledgeViewModel @Inject constructor(
     /** 提交材料创建/更新 */
     fun submitMaterial() {
         val categoryId = _formCategoryId.value ?: run {
-            _error.value = "请选择材料分类"
+            _error.tryEmit("请选择材料分类")
             return
         }
         val name = _formName.value.trim()
         if (name.isEmpty()) {
-            _error.value = "请输入材料名称"
+            _error.tryEmit("请输入材料名称")
             return
         }
         val price = _formPrice.value.trim().toDoubleOrNull()
         if (price == null || price <= 0) {
-            _error.value = "请输入有效的单价"
+            _error.tryEmit("请输入有效的单价")
             return
         }
 
         _isSubmitting.value = true
-        _error.value = null
         viewModelScope.launch {
             val editing = _editingMaterial.value
             if (editing != null) {
@@ -331,12 +333,12 @@ class KnowledgeViewModel @Inject constructor(
                     .onSuccess {
                         _showMaterialCreateDialog.value = false
                         _editingMaterial.value = null
-                        _success.value = "材料更新成功"
+                        _success.emit("材料更新成功")
                         // 重新加载材料列表
                         reloadMaterials()
                     }
                     .onFailure { e ->
-                        _error.value = e.message ?: "更新材料失败"
+                        _error.emit(e.message ?: "更新材料失败")
                     }
             } else {
                 // 创建模式
@@ -356,12 +358,12 @@ class KnowledgeViewModel @Inject constructor(
                 aiRepository.createMaterial(request)
                     .onSuccess {
                         _showMaterialCreateDialog.value = false
-                        _success.value = "材料添加成功"
+                        _success.emit("材料添加成功")
                         // 重新加载材料列表
                         reloadMaterials()
                     }
                     .onFailure { e ->
-                        _error.value = e.message ?: "添加材料失败"
+                        _error.emit(e.message ?: "添加材料失败")
                     }
             }
             _isSubmitting.value = false
@@ -382,18 +384,17 @@ class KnowledgeViewModel @Inject constructor(
     fun confirmDeleteMaterial() {
         val id = _pendingDeleteMaterialId.value ?: return
         _isSubmitting.value = true
-        _error.value = null
         viewModelScope.launch {
             aiRepository.deleteMaterial(id)
                 .onSuccess {
                     _pendingDeleteMaterialId.value = null
                     _selectedMaterial.value = null
-                    _success.value = "材料删除成功"
+                    _success.emit("材料删除成功")
                     // 重新加载材料列表
                     reloadMaterials()
                 }
                 .onFailure { e ->
-                    _error.value = e.message ?: "删除材料失败"
+                    _error.emit(e.message ?: "删除材料失败")
                 }
             _isSubmitting.value = false
         }
@@ -415,7 +416,6 @@ class KnowledgeViewModel @Inject constructor(
     /** 加载知识库文档列表 */
     fun loadKnowledgeList() {
         _isLoading.value = true
-        _error.value = null
         viewModelScope.launch {
             aiRepository.listKnowledge(page = 1, pageSize = 50)
                 .onSuccess { response ->
@@ -423,7 +423,7 @@ class KnowledgeViewModel @Inject constructor(
                     updateFilteredKnowledgeList()
                 }
                 .onFailure { e ->
-                    _error.value = e.message ?: "加载知识库列表失败"
+                    _error.emit(e.message ?: "加载知识库列表失败")
                 }
             _isLoading.value = false
         }
@@ -450,14 +450,13 @@ class KnowledgeViewModel @Inject constructor(
     /** 查看知识文档详情 */
     fun viewKnowledgeDetail(title: String) {
         _isLoading.value = true
-        _error.value = null
         viewModelScope.launch {
             aiRepository.getKnowledgeDetail(title)
                 .onSuccess { detail ->
                     _selectedKnowledge.value = detail
                 }
                 .onFailure { e ->
-                    _error.value = e.message ?: "加载知识文档详情失败"
+                    _error.emit(e.message ?: "加载知识文档详情失败")
                 }
             _isLoading.value = false
         }
@@ -497,34 +496,33 @@ class KnowledgeViewModel @Inject constructor(
 
         // 客户端基础校验（与后端Joi规则一致）
         if (title.isEmpty()) {
-            _error.value = "请输入文档标题"
+            _error.tryEmit("请输入文档标题")
             return
         }
         if (title.length > 200) {
-            _error.value = "标题不能超过200个字符"
+            _error.tryEmit("标题不能超过200个字符")
             return
         }
         if (content.length < 10) {
-            _error.value = "内容至少需要10个字符"
+            _error.tryEmit("内容至少需要10个字符")
             return
         }
         if (content.length > 50000) {
-            _error.value = "内容不能超过50000个字符"
+            _error.tryEmit("内容不能超过50000个字符")
             return
         }
 
         _isSubmitting.value = true
-        _error.value = null
         viewModelScope.launch {
             aiRepository.createKnowledge(title, content)
                 .onSuccess {
                     _showCreateDialog.value = false
-                    _success.value = "知识文档添加成功"
+                    _success.emit("知识文档添加成功")
                     // 刷新列表
                     loadKnowledgeList()
                 }
                 .onFailure { e ->
-                    _error.value = e.message ?: "添加知识文档失败"
+                    _error.emit(e.message ?: "添加知识文档失败")
                 }
             _isSubmitting.value = false
         }
@@ -544,30 +542,19 @@ class KnowledgeViewModel @Inject constructor(
     fun confirmDelete() {
         val title = _pendingDeleteTitle.value ?: return
         _isSubmitting.value = true
-        _error.value = null
         viewModelScope.launch {
             aiRepository.deleteKnowledge(title)
                 .onSuccess {
                     _pendingDeleteTitle.value = null
                     _selectedKnowledge.value = null
-                    _success.value = "知识文档删除成功"
+                    _success.emit("知识文档删除成功")
                     // 刷新列表
                     loadKnowledgeList()
                 }
                 .onFailure { e ->
-                    _error.value = e.message ?: "删除知识文档失败"
+                    _error.emit(e.message ?: "删除知识文档失败")
                 }
             _isSubmitting.value = false
         }
-    }
-
-    /** 清除错误提示 */
-    fun clearError() {
-        _error.value = null
-    }
-
-    /** 清除成功提示 */
-    fun clearSuccess() {
-        _success.value = null
     }
 }

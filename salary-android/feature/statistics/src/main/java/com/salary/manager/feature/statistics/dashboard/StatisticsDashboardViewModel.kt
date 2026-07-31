@@ -28,8 +28,11 @@ import com.salary.core.ui.state.UiState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -104,13 +107,13 @@ class StatisticsDashboardViewModel @Inject constructor(
     /** 当前用户角色（用于UI层按角色控制元素显示，如资料员/管理员隐藏结算按钮和Checkbox） */
     val userRole: StateFlow<String> = userStorage.roleFlow
 
-    /** 错误消息 */
-    private val _errorMessage = MutableStateFlow<String?>(null)
-    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+    /** 错误消息（一次性事件，使用 SharedFlow 避免配置变化后重复消费） */
+    private val _errorMessage = MutableSharedFlow<String>()
+    val errorMessage: SharedFlow<String> = _errorMessage.asSharedFlow()
 
-    /** 成功消息 */
-    private val _successMessage = MutableStateFlow<String?>(null)
-    val successMessage: StateFlow<String?> = _successMessage.asStateFlow()
+    /** 成功消息（一次性事件，使用 SharedFlow 避免配置变化后重复消费） */
+    private val _successMessage = MutableSharedFlow<String>()
+    val successMessage: SharedFlow<String> = _successMessage.asSharedFlow()
 
     /** 统计卡片点击弹窗的工程列表加载状态 */
     private val _statsProjectListState = MutableStateFlow<ListUiState<ProjectDto>>(ListUiState.Loading)
@@ -210,7 +213,7 @@ class StatisticsDashboardViewModel @Inject constructor(
                             _constructionPlans.value = plansResponse.data!!
                         }
                     } catch (e: Exception) {
-                        _errorMessage.value = NetworkErrorHandler.translate(e, "加载施工方案失败")
+                        _errorMessage.emit(NetworkErrorHandler.translate(e, "加载施工方案失败"))
                     }
                 }
                 val projectsJob = launch {
@@ -223,7 +226,7 @@ class StatisticsDashboardViewModel @Inject constructor(
                             _settlementSummary.update { it.copy(finalTotal = data.finalTotal) }
                         }
                     } catch (e: Exception) {
-                        _errorMessage.value = NetworkErrorHandler.translate(e, "加载工程数据失败")
+                        _errorMessage.emit(NetworkErrorHandler.translate(e, "加载工程数据失败"))
                     }
                 }
                 // 仪表盘4个卡片数据：所有计算由后端完成
@@ -232,7 +235,7 @@ class StatisticsDashboardViewModel @Inject constructor(
                         loadDashboardStats()
                     } catch (e: Exception) {
                         AppLog.e(TAG, "加载仪表盘统计失败", e)
-                        _errorMessage.value = NetworkErrorHandler.translate(e, "加载统计数据失败")
+                        _errorMessage.emit(NetworkErrorHandler.translate(e, "加载统计数据失败"))
                     }
                 }
                 plansJob.join()
@@ -240,7 +243,7 @@ class StatisticsDashboardViewModel @Inject constructor(
                 dashboardJob.join()
             }
         } catch (e: Exception) {
-            _errorMessage.value = NetworkErrorHandler.translate(e, "加载数据失败")
+            _errorMessage.emit(NetworkErrorHandler.translate(e, "加载数据失败"))
         }
     }
 
@@ -281,7 +284,7 @@ class StatisticsDashboardViewModel @Inject constructor(
                 _settlementHistory.value = response.data!!
             }
         } catch (e: Exception) {
-            _errorMessage.value = NetworkErrorHandler.translate(e, "加载结算历史失败")
+            _errorMessage.emit(NetworkErrorHandler.translate(e, "加载结算历史失败"))
         }
     }
 
@@ -333,7 +336,7 @@ class StatisticsDashboardViewModel @Inject constructor(
                     _calculationResult.value = response.data!!
                 }
             } catch (e: Exception) {
-                _errorMessage.value = NetworkErrorHandler.translate(e, "计算结算失败")
+                _errorMessage.emit(NetworkErrorHandler.translate(e, "计算结算失败"))
             }
         }
     }
@@ -342,7 +345,7 @@ class StatisticsDashboardViewModel @Inject constructor(
     fun handleSettle(remark: String = "") {
         val selectedIds = _selectedProjectIds.value
         if (selectedIds.isEmpty()) {
-            _errorMessage.value = "请选择要结算的工程"
+            _errorMessage.tryEmit("请选择要结算的工程")
             return
         }
         viewModelScope.launch {
@@ -351,17 +354,17 @@ class StatisticsDashboardViewModel @Inject constructor(
                 val response = salarySheetApi.settle(SettleRequest(projectIds = selectedIds, remark = remark))
                 if (response.code == 200 && response.data != null) {
                     val data = response.data!!
-                    _successMessage.value = "结算成功！单号：${data.settlementNo}"
+                    _successMessage.emit("结算成功！单号：${data.settlementNo}")
                     updateSelectedProjectIds(emptyList())
                     _calculationResult.value = CalculateResultDto()
                     // 刷新数据
                     loadSalarySheetData()
                     loadSettlementHistory()
                 } else {
-                    _errorMessage.value = NetworkErrorHandler.translateServerError(response.msg, "结算失败")
+                    _errorMessage.emit(NetworkErrorHandler.translateServerError(response.msg, "结算失败"))
                 }
             } catch (e: Exception) {
-                _errorMessage.value = NetworkErrorHandler.translate(e, "结算失败")
+                _errorMessage.emit(NetworkErrorHandler.translate(e, "结算失败"))
             } finally {
                 _settling.value = false
             }
@@ -391,15 +394,7 @@ class StatisticsDashboardViewModel @Inject constructor(
         _expandedHistoryProjects.value = current
     }
 
-    /** 清除错误消息 */
-    fun clearErrorMessage() {
-        _errorMessage.value = null
-    }
-
-    /** 清除成功消息 */
-    fun clearSuccessMessage() {
-        _successMessage.value = null
-    }
+    // 注：原 clearErrorMessage/clearSuccessMessage 已移除，SharedFlow 不保留值无需清除
 
     /**
      * 加载统计卡片对应的工程列表（首次加载/重置）
@@ -509,11 +504,11 @@ class StatisticsDashboardViewModel @Inject constructor(
                     }
                 } else {
                     // 加载失败：保留已有数据，提示错误（通过 errorMessage 流，不打断列表）
-                    _errorMessage.value = NetworkErrorHandler.translateServerError(response.msg, "加载更多失败")
+                    _errorMessage.emit(NetworkErrorHandler.translateServerError(response.msg, "加载更多失败"))
                     // 失败时也保留 hasMore，允许用户再次触发重试
                 }
             } catch (e: Exception) {
-                _errorMessage.value = NetworkErrorHandler.translate(e, "加载更多失败")
+                _errorMessage.emit(NetworkErrorHandler.translate(e, "加载更多失败"))
             } finally {
                 _statsLoadingMore.value = false
             }
@@ -597,9 +592,9 @@ class StatisticsDashboardViewModel @Inject constructor(
                         }
                     }
                 }
-                _successMessage.value = "Excel已导出到下载目录：$fileName"
+                _successMessage.emit("Excel已导出到下载目录：$fileName")
             } catch (e: Exception) {
-                _errorMessage.value = "导出失败：${e.message}"
+                _errorMessage.emit("导出失败：${e.message}")
             } finally {
                 _exportingId.value = null
             }
@@ -617,7 +612,7 @@ class StatisticsDashboardViewModel @Inject constructor(
         viewModelScope.launch {
             // 防重复点击：已有导出任务进行中时拒绝新请求
             if (_exportingId.value != null) {
-                _errorMessage.value = "正在导出中，请稍后再试"
+                _errorMessage.emit("正在导出中，请稍后再试")
                 return@launch
             }
             _exportingId.value = settlement.settlementId
@@ -672,13 +667,13 @@ class StatisticsDashboardViewModel @Inject constructor(
                     savedFiles.add(fileName)
                 }
 
-                _successMessage.value = if (totalPages > 1) {
+                _successMessage.emit(if (totalPages > 1) {
                     "图片已保存到图库（共${totalPages}页）：${savedFiles.first()} 等"
                 } else {
                     "图片已保存到图库：${savedFiles.first()}"
-                }
+                })
             } catch (e: Exception) {
-                _errorMessage.value = "导出失败：${e.message}"
+                _errorMessage.emit("导出失败：${e.message}")
             } finally {
                 // 确保所有 Bitmap 在任何情况下都被回收，避免 native 内存泄漏
                 bitmaps.forEach { it.recycle() }
@@ -695,12 +690,12 @@ class StatisticsDashboardViewModel @Inject constructor(
         viewModelScope.launch {
             // 防重复点击：已有导出任务进行中时拒绝新请求
             if (_exportingId.value != null) {
-                _errorMessage.value = "正在导出中，请稍后再试"
+                _errorMessage.emit("正在导出中，请稍后再试")
                 return@launch
             }
             val selectedIds = _selectedProjectIds.value
             if (selectedIds.isEmpty()) {
-                _errorMessage.value = "请先选择要导出的工程"
+                _errorMessage.emit("请先选择要导出的工程")
                 return@launch
             }
 
@@ -774,13 +769,13 @@ class StatisticsDashboardViewModel @Inject constructor(
                     savedFiles.add(fileName)
                 }
 
-                _successMessage.value = if (totalPages > 1) {
+                _successMessage.emit(if (totalPages > 1) {
                     "图片已保存到图库（共${totalPages}页）：${savedFiles.first()} 等"
                 } else {
                     "图片已保存到图库：${savedFiles.first()}"
-                }
+                })
             } catch (e: Exception) {
-                _errorMessage.value = "导出失败：${e.message}"
+                _errorMessage.emit("导出失败：${e.message}")
             } finally {
                 // 确保所有 Bitmap 在任何情况下都被回收，避免 native 内存泄漏
                 bitmaps.forEach { it.recycle() }

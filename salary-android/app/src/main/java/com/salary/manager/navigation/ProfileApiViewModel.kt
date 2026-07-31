@@ -2,6 +2,7 @@ package com.salary.manager.navigation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.salary.core.common.constants.AppConstants
 import com.salary.core.common.util.NetworkErrorHandler
 import com.salary.core.data.local.UserStorage
 import com.salary.core.network.api.*
@@ -30,7 +31,7 @@ class ProfileApiViewModel @Inject constructor(
 
     /** 客户端防御性角色校验：非管理员直接返回错误，不发请求 */
     private fun requireAdmin(callback: (String?) -> Unit): Boolean {
-        if (userStorage.roleFlow.value != "admin") {
+        if (userStorage.roleFlow.value != AppConstants.ROLE_ADMIN) {
             callback("无操作权限，仅管理员可执行此操作")
             return false
         }

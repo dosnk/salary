@@ -95,13 +95,14 @@ fun AiChatScreen(
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val inputText by viewModel.inputText.collectAsStateWithLifecycle()
-    val error by viewModel.error.collectAsStateWithLifecycle()
+    // 注：error 已改为 SharedFlow，不再使用 collectAsStateWithLifecycle
+    // 改用下方 LaunchedEffect + collect 收集一次性事件
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // 错误提示：通过 Snackbar 展示（error 从非空变化时触发）
-    LaunchedEffect(error) {
-        error?.let { msg ->
+    // 收集错误消息（一次性事件，使用 SharedFlow collect 避免配置变化后重复消费）
+    LaunchedEffect(Unit) {
+        viewModel.error.collect { msg ->
             snackbarHostState.showSnackbar(message = msg)
         }
     }

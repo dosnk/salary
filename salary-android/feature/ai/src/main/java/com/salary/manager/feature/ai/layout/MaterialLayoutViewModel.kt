@@ -8,8 +8,11 @@ import com.salary.core.network.api.MaterialOptionsDto
 import com.salary.core.network.api.LayoutResponse
 import com.salary.manager.feature.ai.data.AiRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -65,9 +68,9 @@ class MaterialLayoutViewModel @Inject constructor(
     private val _isCalculating = MutableStateFlow(false)
     val isCalculating: StateFlow<Boolean> = _isCalculating.asStateFlow()
 
-    /** 错误信息 */
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
+    /** 错误信息（一次性事件，使用 SharedFlow 避免配置变化后重复消费） */
+    private val _error = MutableSharedFlow<String>(extraBufferCapacity = 5)
+    val error: SharedFlow<String> = _error.asSharedFlow()
 
     init {
         loadMaterials()
@@ -124,12 +127,11 @@ class MaterialLayoutViewModel @Inject constructor(
         val width = _roomWidth.value.toDoubleOrNull()
 
         if (length == null || width == null || length <= 0 || width <= 0) {
-            _error.value = "请输入有效的房间尺寸"
+            _error.tryEmit("请输入有效的房间尺寸")
             return
         }
 
         _isCalculating.value = true
-        _error.value = null
         _layoutResult.value = null
 
         // 构建材料选项，传递用户选择的材料ID到后端
@@ -146,7 +148,7 @@ class MaterialLayoutViewModel @Inject constructor(
                     _layoutResult.value = result
                 }
                 .onFailure { e ->
-                    _error.value = e.message ?: "排料计算失败"
+                    _error.emit(e.message ?: "排料计算失败")
                 }
             _isCalculating.value = false
         }

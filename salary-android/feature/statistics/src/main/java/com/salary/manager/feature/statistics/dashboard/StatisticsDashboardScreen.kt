@@ -85,6 +85,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
+import com.salary.core.common.constants.AppConstants
 import com.salary.core.design.component.GreenTopNavBar
 import com.salary.core.design.theme.AppColors
 import com.salary.core.network.api.AdvanceDataDto
@@ -134,8 +135,8 @@ fun StatisticsDashboardScreen(
     val settling by viewModel.settling.collectAsStateWithLifecycle()
     val expandedProjects by viewModel.expandedProjects.collectAsStateWithLifecycle()
     val expandedHistoryProjects by viewModel.expandedHistoryProjects.collectAsStateWithLifecycle()
-    val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
-    val successMessage by viewModel.successMessage.collectAsStateWithLifecycle()
+    // 注：errorMessage/successMessage 已改为 SharedFlow，不再使用 collectAsStateWithLifecycle
+    // 改用下方 LaunchedEffect + collect 收集一次性事件
     val statsProjectListState by viewModel.statsProjectListState.collectAsStateWithLifecycle()
     val statsPopupTitle by viewModel.statsPopupTitle.collectAsStateWithLifecycle()
     val statsLoadingMore by viewModel.statsLoadingMore.collectAsStateWithLifecycle()
@@ -145,7 +146,7 @@ fun StatisticsDashboardScreen(
     // 当前用户角色（资料员/管理员隐藏结算按钮和Checkbox，仅constructor可结算）
     val userRole by viewModel.userRole.collectAsStateWithLifecycle()
     // 是否可结算（仅施工员可操作结算）
-    val canSettle = userRole == "constructor"
+    val canSettle = userRole == AppConstants.ROLE_CONSTRUCTOR
 
     // 预支ViewModel状态
     val advanceState by advanceViewModel.state.collectAsStateWithLifecycle()
@@ -164,19 +165,17 @@ fun StatisticsDashboardScreen(
         }
     }
 
-    // 处理错误消息
-    LaunchedEffect(errorMessage) {
-        errorMessage?.let {
-            snackbarHostState.showSnackbar(it)
-            viewModel.clearErrorMessage()
+    // 处理错误消息（一次性事件，使用 SharedFlow collect 避免配置变化后重复消费）
+    LaunchedEffect(Unit) {
+        viewModel.errorMessage.collect { msg ->
+            snackbarHostState.showSnackbar(msg)
         }
     }
 
-    // 处理成功消息
-    LaunchedEffect(successMessage) {
-        successMessage?.let {
-            snackbarHostState.showSnackbar(it)
-            viewModel.clearSuccessMessage()
+    // 处理成功消息（一次性事件，使用 SharedFlow collect 避免配置变化后重复消费）
+    LaunchedEffect(Unit) {
+        viewModel.successMessage.collect { msg ->
+            snackbarHostState.showSnackbar(msg)
         }
     }
 

@@ -39,7 +39,16 @@ fun DataVerifyScreen(
 ) {
     val result by viewModel.result.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
-    val error by viewModel.error.collectAsStateWithLifecycle()
+    // 注：error 已改为 SharedFlow，不再使用 collectAsStateWithLifecycle
+    // 改用下方 LaunchedEffect + collect 收集一次性事件
+    var error by remember { mutableStateOf<String?>(null) }
+
+    // 收集错误消息（一次性事件，使用 SharedFlow collect 避免配置变化后重复消费）
+    LaunchedEffect(Unit) {
+        viewModel.error.collect { msg ->
+            error = msg
+        }
+    }
 
     // 进入页面自动触发校验
     LaunchedEffect(Unit) {
@@ -61,7 +70,7 @@ fun DataVerifyScreen(
             },
             actions = {
                 // 重新校验按钮
-                IconButton(onClick = { viewModel.verify() }, enabled = !isLoading) {
+                IconButton(onClick = { error = null; viewModel.verify() }, enabled = !isLoading) {
                     Icon(
                         Icons.Default.Refresh,
                         "重新校验",
@@ -108,7 +117,7 @@ fun DataVerifyScreen(
                             modifier = Modifier.padding(horizontal = 24.dp)
                         )
                         Button(
-                            onClick = { viewModel.verify() },
+                            onClick = { error = null; viewModel.verify() },
                             colors = ButtonDefaults.buttonColors(containerColor = AppColors.Green400)
                         ) {
                             Text("重新校验")
@@ -123,7 +132,7 @@ fun DataVerifyScreen(
                     result = result!!,
                     isLoading = isLoading,
                     error = error,
-                    onRetry = { viewModel.verify() }
+                    onRetry = { error = null; viewModel.verify() }
                 )
             }
         }

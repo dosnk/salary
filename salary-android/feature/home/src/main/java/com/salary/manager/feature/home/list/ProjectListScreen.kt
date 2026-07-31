@@ -76,6 +76,7 @@ import com.salary.core.ui.state.ListUiState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.salary.core.common.constants.AppConstants
 import com.salary.core.common.util.DateFormatter
 
 /**
@@ -98,8 +99,8 @@ fun ProjectListScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val advancedFilter by viewModel.advancedFilter.collectAsStateWithLifecycle()
-    val successMessage by viewModel.successMessage.collectAsStateWithLifecycle()
-    val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
+    // 注：successMessage/errorMessage 已改为 SharedFlow，不再使用 collectAsStateWithLifecycle
+    // 改用下方 LaunchedEffect + collect 收集一次性事件
     // 当前用户角色（资料员隐藏确认完工按钮）
     val userRole by viewModel.userRole.collectAsStateWithLifecycle()
     // 加载更多状态：提升到顶层 collect，避免在 when 分支内订阅导致生命周期不一致
@@ -123,19 +124,17 @@ fun ProjectListScreen(
     // 搜索防抖Job
     var searchDebounceJob by remember { mutableStateOf<Job?>(null) }
 
-    // 处理成功消息
-    LaunchedEffect(successMessage) {
-        successMessage?.let {
-            snackbarHostState.showSnackbar(it)
-            viewModel.clearSuccessMessage()
+    // 处理成功消息（一次性事件，使用 SharedFlow collect 避免配置变化后重复消费）
+    LaunchedEffect(Unit) {
+        viewModel.successMessage.collect { msg ->
+            snackbarHostState.showSnackbar(msg)
         }
     }
 
-    // 处理错误消息
-    LaunchedEffect(errorMessage) {
-        errorMessage?.let {
-            snackbarHostState.showSnackbar(it)
-            viewModel.clearErrorMessage()
+    // 处理错误消息（一次性事件，使用 SharedFlow collect 避免配置变化后重复消费）
+    LaunchedEffect(Unit) {
+        viewModel.errorMessage.collect { msg ->
+            snackbarHostState.showSnackbar(msg)
         }
     }
 
@@ -203,7 +202,7 @@ fun ProjectListScreen(
                         // 加载更多状态：用于UI防抖，避免加载期间重复触发 loadMore
                         isLoadingMore = isLoadingMore,
                         // 仅施工员可确认完工（admin/documenter 只读）
-                        canConfirmComplete = userRole == "constructor",
+                        canConfirmComplete = userRole == AppConstants.ROLE_CONSTRUCTOR,
                         onLoadMore = { viewModel.loadMore() },
                         onRefresh = { viewModel.refresh() },
                         onNavigateToProject = onNavigateToProject,

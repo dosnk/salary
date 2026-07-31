@@ -1,6 +1,7 @@
 package com.salary.core.network.api
 
 import com.salary.core.network.dto.ApiResponse
+import com.salary.core.common.constants.AppConstants
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import retrofit2.http.Body
@@ -75,7 +76,7 @@ data class CreateUserRequest(
     val password: String,
     val nickname: String,
     val phone: String? = null,
-    val role: String = "constructor"
+    val role: String = AppConstants.ROLE_CONSTRUCTOR
 )
 
 @Serializable

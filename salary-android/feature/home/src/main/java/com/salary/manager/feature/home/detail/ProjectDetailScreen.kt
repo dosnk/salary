@@ -81,6 +81,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.salary.core.common.constants.AppConstants
 import com.salary.core.common.util.AmountFormatter
 import com.salary.core.common.util.DateFormatter
 import com.salary.core.common.util.WorkdaysValidator
@@ -106,9 +107,8 @@ fun ProjectDetailScreen(
     viewModel: ProjectDetailViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    // 收集成功/错误消息状态，用于响应消息变化触发对应副作用
-    val successMessage by viewModel.successMessage.collectAsStateWithLifecycle()
-    val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
+    // 注：successMessage/errorMessage 已改为 SharedFlow，不再使用 collectAsStateWithLifecycle
+    // 改用下方 LaunchedEffect + collect 收集一次性事件
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(projectId) {
@@ -121,26 +121,21 @@ fun ProjectDetailScreen(
     // 避免编辑保存的成功/失败消息被外层误消费为Snackbar或onDataChanged
     var isEditingSave by remember { mutableStateOf(false) }
 
-    // 监听成功消息：保存成功时通知上层刷新列表，并清除消息避免残留
-    // 注意：编辑工程/子项目保存流程中的成功消息由对应弹窗的LaunchedEffect消费为SaveResultDialog，
-    //       此处需跳过保存流程中的消息，避免重复消费
-    LaunchedEffect(successMessage) {
-        successMessage?.let {
+    // 监听成功消息：保存成功时通知上层刷新列表（一次性事件，使用 SharedFlow collect）
+    // isEditingSave 标志位区分编辑保存消息与其他操作消息，避免重复消费
+    LaunchedEffect(Unit) {
+        viewModel.successMessage.collect {
             if (!isEditingSave) {
                 onDataChanged()
-                viewModel.clearSuccessMessage()
             }
         }
     }
 
-    // 监听错误消息：操作失败时通过Snackbar提示用户
-    // 注意：编辑工程/子项目保存流程中的错误消息由对应弹窗的LaunchedEffect消费为SaveResultDialog，
-    //       此处需跳过保存流程中的消息，避免重复消费
-    LaunchedEffect(errorMessage) {
-        errorMessage?.let {
+    // 监听错误消息：操作失败时通过Snackbar提示用户（一次性事件，使用 SharedFlow collect）
+    LaunchedEffect(Unit) {
+        viewModel.errorMessage.collect { msg ->
             if (!isEditingSave) {
-                snackbarHostState.showSnackbar(it)
-                viewModel.clearErrorMessage()
+                snackbarHostState.showSnackbar(msg)
             }
         }
     }
@@ -264,7 +259,7 @@ internal fun ProjectDetailContent(
 
     // 当前用户角色（仅施工员可编辑工程/子项目/删除附件，admin/documenter 只读）
     val userRole by viewModel.userRole.collectAsStateWithLifecycle()
-    val canEdit = userRole == "constructor"
+    val canEdit = userRole == AppConstants.ROLE_CONSTRUCTOR
     // 编辑保存状态（用于检测保存完成时机，关闭弹窗/显示结果）
     val savingProject by viewModel.savingProject.collectAsStateWithLifecycle()
     val savingSubproject by viewModel.savingSubproject.collectAsStateWithLifecycle()
@@ -377,31 +372,30 @@ internal fun ProjectDetailContent(
 
     // 子项目编辑弹窗
     editingSubproject?.let { sub ->
-        // 复用外层已收集的 savingSubproject 状态，避免重复订阅同一 StateFlow
-        // 记录上一次的saving状态，用于检测"从保存中变为非保存中"的边沿
-        var prevSaving by remember { mutableStateOf(false) }
-        LaunchedEffect(savingSubproject) {
-            // 保存完成（saving从true变false）且之前正在保存，说明本次保存已结束
-            if (prevSaving && !savingSubproject) {
-                val successMsg = viewModel.successMessage.value
-                val errorMsg = viewModel.errorMessage.value
-                if (successMsg != null) {
+        // 收集保存成功/失败消息（一次性事件，使用 SharedFlow collect）
+        // isEditingSave 标志位区分编辑保存消息与其他操作消息，避免重复消费
+        LaunchedEffect(Unit) {
+            viewModel.successMessage.collect { msg ->
+                if (isEditingSave) {
                     // 保存成功：关闭编辑弹窗，显示成功提示弹窗
-                    saveResult = SaveResult.Success(successMsg)
+                    saveResult = SaveResult.Success(msg)
                     editingSubproject = null
                     // 通知上层刷新列表（原外层LaunchedEffect的职责）
                     onDataChanged()
-                } else if (errorMsg != null) {
-                    // 保存失败：保持编辑弹窗打开（用户可修改后重试），显示失败提示弹窗
-                    saveResult = SaveResult.Failure(errorMsg)
+                    // 重置编辑保存标志位，允许后续非编辑操作的消息走外层Snackbar流程
+                    onEditingSaveChange(false)
                 }
-                // 成功/失败消息已在弹窗中展示，立即清除避免被外层LaunchedEffect重复消费为Snackbar
-                viewModel.clearSuccessMessage()
-                viewModel.clearErrorMessage()
-                // 重置编辑保存标志位，允许后续非编辑操作的消息走外层Snackbar流程
-                onEditingSaveChange(false)
             }
-            prevSaving = savingSubproject
+        }
+        LaunchedEffect(Unit) {
+            viewModel.errorMessage.collect { msg ->
+                if (isEditingSave) {
+                    // 保存失败：保持编辑弹窗打开（用户可修改后重试），显示失败提示弹窗
+                    saveResult = SaveResult.Failure(msg)
+                    // 重置编辑保存标志位，允许后续非编辑操作的消息走外层Snackbar流程
+                    onEditingSaveChange(false)
+                }
+            }
         }
 
         SubprojectEditDialog(
@@ -487,29 +481,30 @@ internal fun ProjectDetailContent(
 
     // 编辑工程弹窗
     if (showEditProjectDialog) {
-        // 复用外层已收集的 savingProject 状态，避免重复订阅同一 StateFlow
-        var prevSavingProject by remember { mutableStateOf(false) }
-        LaunchedEffect(savingProject) {
-            if (prevSavingProject && !savingProject) {
-                val successMsg = viewModel.successMessage.value
-                val errorMsg = viewModel.errorMessage.value
-                if (successMsg != null) {
+        // 收集保存成功/失败消息（一次性事件，使用 SharedFlow collect）
+        // isEditingSave 标志位区分编辑保存消息与其他操作消息，避免重复消费
+        LaunchedEffect(Unit) {
+            viewModel.successMessage.collect { msg ->
+                if (isEditingSave) {
                     // 保存成功：关闭编辑弹窗，显示成功提示弹窗
-                    saveResult = SaveResult.Success(successMsg)
+                    saveResult = SaveResult.Success(msg)
                     showEditProjectDialog = false
                     // 通知上层刷新列表（原外层LaunchedEffect的职责）
                     onDataChanged()
-                } else if (errorMsg != null) {
-                    // 保存失败：保持编辑弹窗打开（用户可修改后重试），显示失败提示弹窗
-                    saveResult = SaveResult.Failure(errorMsg)
+                    // 重置编辑保存标志位，允许后续非编辑操作的消息走外层Snackbar流程
+                    onEditingSaveChange(false)
                 }
-                // 成功/失败消息已在弹窗中展示，立即清除避免被外层LaunchedEffect重复消费为Snackbar
-                viewModel.clearSuccessMessage()
-                viewModel.clearErrorMessage()
-                // 重置编辑保存标志位，允许后续非编辑操作的消息走外层Snackbar流程
-                onEditingSaveChange(false)
             }
-            prevSavingProject = savingProject
+        }
+        LaunchedEffect(Unit) {
+            viewModel.errorMessage.collect { msg ->
+                if (isEditingSave) {
+                    // 保存失败：保持编辑弹窗打开（用户可修改后重试），显示失败提示弹窗
+                    saveResult = SaveResult.Failure(msg)
+                    // 重置编辑保存标志位，允许后续非编辑操作的消息走外层Snackbar流程
+                    onEditingSaveChange(false)
+                }
+            }
         }
 
         EditProjectDialog(
