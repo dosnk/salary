@@ -216,7 +216,16 @@ const updateSubproject = async (ctx) => {
       ctx.fail(error.code, error.message);
       return;
     }
-    logger.error('更新子项目失败:', error);
+    // 记录详细错误信息便于诊断：包含错误类型、消息、堆栈及请求参数
+    logger.error('更新子项目失败:', {
+      errorName: error.name,
+      errorMessage: error.message,
+      stack: error.stack,
+      projectId: id,
+      subprojectId,
+      userId,
+      requestBody: ctx.request.body,
+    });
     ctx.fail(5001, '更新子项目失败');
   }
 };

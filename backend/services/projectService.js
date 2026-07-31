@@ -127,7 +127,9 @@ const invalidateCache = async (userId) => {
  */
 const recalculateProjectTotal = async (projectId, client) => {
   const totalAmount = await projectRepo.getSubprojectsTotalAmount(projectId, client);
-  await projectRepo.updateProject(projectId, { total_amount: totalAmount }, client);
+  // 使用 camelCase 键名 totalAmount，与 update 函数的 fieldToColumn 映射表对齐
+  // 修复：原代码传 { total_amount }（snake_case）不在映射表中，导致工程总额不更新
+  await projectRepo.updateProject(projectId, { totalAmount }, client);
   return totalAmount;
 };
 
@@ -790,15 +792,18 @@ module.exports = {
     }
 
     // 实测数量：空字符串/null 表示清除实测值，回退到按长宽计算
+    // 注意：键名使用 snake_case（measured_quantity），与 updateSubprojectInTransaction
+    //   的 fieldToColumn 映射表保持一致，否则字段会被跳过导致实测数据无法更新
     if (updates.measuredQuantity !== undefined) {
-      updateFields.measuredQuantity = updates.measuredQuantity === '' || updates.measuredQuantity === null
+      updateFields.measured_quantity = updates.measuredQuantity === '' || updates.measuredQuantity === null
         ? null
         : updates.measuredQuantity;
     }
 
     // 实测备注：空字符串转为 null
+    // 同上，键名使用 snake_case（measured_note）与 fieldToColumn 映射表对齐
     if (updates.measuredNote !== undefined) {
-      updateFields.measuredNote = updates.measuredNote === '' ? null : updates.measuredNote;
+      updateFields.measured_note = updates.measuredNote === '' ? null : updates.measuredNote;
     }
 
     // 备注

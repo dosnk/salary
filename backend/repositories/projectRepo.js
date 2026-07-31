@@ -96,12 +96,14 @@ const update = async (id, updates, client) => {
 
   // 字段名到数据库列名的映射
   // 注意：键必须使用 camelCase，与 projectService.updateProject 传入的键名保持一致
+  // totalAmount 用于 recalculateProjectTotal 更新工程总额
   const fieldToColumn = {
     name: 'name',
     description: 'description',
     status: 'status',
     salaryDistribution: 'salary_distribution',
     totalWorkDays: 'total_work_days',
+    totalAmount: 'total_amount',
     remark: 'remark'
   };
 
