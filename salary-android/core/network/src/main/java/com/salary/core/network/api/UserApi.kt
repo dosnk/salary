@@ -65,7 +65,7 @@ data class UserDto(
     val nickname: String,
     val phone: String? = null,
     /** 角色：admin/constructor/documenter，施工人员列表API可能不返回此字段 */
-    val role: String = "constructor",
+    val role: String = AppConstants.ROLE_CONSTRUCTOR,
     @SerialName("created_at")
     val createdAt: String? = null
 )
