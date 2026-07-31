@@ -30,6 +30,10 @@ data class WorkerSelectModel(
  * 弹窗规范：使用 Dialog + usePlatformDefaultWidth=false，
  * 宽度按屏幕宽度的 92% 自适应，避免窄屏截断、宽屏过窄。
  *
+ * 当前状态：暂无调用方，预留给工程创建/编辑页选择施工人员使用
+ * （见 docs/development-roadmap.md 4.1.7 施工人员选择器）。
+ * 保留在 list 目录因与工程列表数据模型同源，后续接入工程创建流程时可直接复用。
+ *
  * @param workers 可选施工人员列表
  * @param selectedIds 已选中的用户ID集合
  * @param onConfirm 确认回调，返回选中的用户ID列表

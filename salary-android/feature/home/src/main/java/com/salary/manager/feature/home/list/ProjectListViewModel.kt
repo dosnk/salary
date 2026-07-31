@@ -90,15 +90,9 @@ class ProjectListViewModel @Inject constructor(
     )
     val state: StateFlow<com.salary.core.ui.state.ListUiState<ProjectUiModel>> = _state.asStateFlow()
 
-    private val _selectedStatus = MutableStateFlow<String?>(null)
-    val selectedStatus: StateFlow<String?> = _selectedStatus.asStateFlow()
-
     /** 高级筛选条件 */
     private val _advancedFilter = MutableStateFlow(AdvancedFilterState())
     val advancedFilter: StateFlow<AdvancedFilterState> = _advancedFilter.asStateFlow()
-
-    /** 用户昵称（从UserStorage响应式获取） */
-    val userNickname: StateFlow<String> = userStorage.nicknameFlow
 
     /** 当前用户角色（用于UI层按角色控制元素显示，如资料员隐藏确认完工按钮） */
     val userRole: StateFlow<String> = userStorage.roleFlow
@@ -155,7 +149,7 @@ class ProjectListViewModel @Inject constructor(
                     page = currentPage,
                     size = 20,
                     keyword = currentKeyword,
-                    status = filter.status ?: _selectedStatus.value,
+                    status = filter.status,
                     settlementStatus = filter.settlementStatus,
                     yearMonth = filter.month?.let { "${filter.year ?: java.time.LocalDate.now().year}-${String.format("%02d", it)}" },
                     // 日期范围筛选：将高级筛选的开始/结束日期传给后端（空白转null，避免传空字符串）
@@ -293,12 +287,6 @@ class ProjectListViewModel @Inject constructor(
         loadProjects()
     }
 
-    /** 更新状态筛选 */
-    fun updateStatus(status: String?) {
-        _selectedStatus.value = status
-        loadProjects()
-    }
-
     /** 更新高级筛选条件 */
     fun updateAdvancedFilter(filter: AdvancedFilterState) {
         _advancedFilter.value = filter
@@ -310,10 +298,7 @@ class ProjectListViewModel @Inject constructor(
         val current = _advancedFilter.value
         _advancedFilter.value = when (type) {
             "month" -> current.copy(year = null, month = null)
-            "status" -> {
-                _selectedStatus.value = null
-                current.copy(status = null)
-            }
+            "status" -> current.copy(status = null)
             "settlementStatus" -> current.copy(settlementStatus = null)
             "date" -> current.copy(startDate = null, endDate = null)
             else -> current
@@ -323,7 +308,6 @@ class ProjectListViewModel @Inject constructor(
 
     /** 清除所有筛选条件 */
     fun clearAllFilters() {
-        _selectedStatus.value = null
         _advancedFilter.value = AdvancedFilterState()
         currentKeyword = null
         loadProjects()

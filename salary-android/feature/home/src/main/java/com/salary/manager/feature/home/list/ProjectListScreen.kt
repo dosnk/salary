@@ -52,9 +52,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -100,9 +102,13 @@ fun ProjectListScreen(
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
     // 当前用户角色（资料员隐藏确认完工按钮）
     val userRole by viewModel.userRole.collectAsStateWithLifecycle()
+    // 加载更多状态：提升到顶层 collect，避免在 when 分支内订阅导致生命周期不一致
+    val isLoadingMore by viewModel.isLoadingMoreState.collectAsStateWithLifecycle()
     var searchKeyword by remember { mutableStateOf("") }
     var showAdvancedFilter by remember { mutableStateOf(false) }
-    var confirmProject by remember { mutableStateOf<ProjectUiModel?>(null) }
+    // 确认完工对话框：保存工程ID（Int原生支持rememberSaveable，配置变更后可恢复）
+    // 不直接保存 ProjectUiModel，避免引入 kotlin-parcelize 插件依赖
+    var confirmProjectId by rememberSaveable { mutableIntStateOf(-1) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -183,9 +189,10 @@ fun ProjectListScreen(
                 }
             }
             is ListUiState.Success -> {
-                val items = (state as ListUiState.Success<ProjectUiModel>).items
-                val hasMore = (state as ListUiState.Success<ProjectUiModel>).hasMore
-                val isLoadingMore = viewModel.isLoadingMoreState.collectAsStateWithLifecycle().value
+                // 单次类型转换，避免在分支内重复 cast
+                val success = state as ListUiState.Success<ProjectUiModel>
+                val items = success.items
+                val hasMore = success.hasMore
 
                 if (items.isEmpty()) {
                     EmptyProjectList()
@@ -200,7 +207,7 @@ fun ProjectListScreen(
                         onLoadMore = { viewModel.loadMore() },
                         onRefresh = { viewModel.refresh() },
                         onNavigateToProject = onNavigateToProject,
-                        onConfirmComplete = { project -> confirmProject = project },
+                        onConfirmComplete = { project -> confirmProjectId = project.id },
                         onSettlingClick = { scope.launch { snackbarHostState.showSnackbar("该工程正在统计中，请到统计页面查看统计结果") } },
                         onSettledClick = { scope.launch { snackbarHostState.showSnackbar("该工程已结算完成，如需查看详情请点击\"查看详情\"按钮") } }
                     )
@@ -241,9 +248,14 @@ fun ProjectListScreen(
     }
 
     // 确认完工对话框 - 使用 Dialog + usePlatformDefaultWidth=false 实现宽度自适应屏幕
+    // 从当前state查找工程：列表刷新后若工程已不存在（如筛选变化），对话框自动关闭
+    val confirmProject = remember(state, confirmProjectId) {
+        if (confirmProjectId <= 0) null
+        else (state as? ListUiState.Success)?.items?.find { it.id == confirmProjectId }
+    }
     confirmProject?.let { project ->
         Dialog(
-            onDismissRequest = { confirmProject = null },
+            onDismissRequest = { confirmProjectId = -1 },
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
             Card(
@@ -278,14 +290,14 @@ fun ProjectListScreen(
                         horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        TextButton(onClick = { confirmProject = null }) {
+                        TextButton(onClick = { confirmProjectId = -1 }) {
                             Text("取消", color = AppColors.TextSecondary)
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         TextButton(
                             onClick = {
                                 viewModel.confirmProjectComplete(project.id)
-                                confirmProject = null
+                                confirmProjectId = -1
                             }
                         ) {
                             Text("确认完工", color = AppColors.Green400)
@@ -307,15 +319,26 @@ fun ProjectListScreen(
 
     // 高级筛选弹窗
     if (showAdvancedFilter) {
+        // 日期范围校验错误状态：持有在调用方以跨越 Composable 重组保持
+        var dateRangeError by remember { mutableStateOf<String?>(null) }
         AdvancedFilterSheet(
             currentFilter = advancedFilter,
             onApply = { filter ->
-                viewModel.updateAdvancedFilter(filter)
+                // 客户端校验：开始日期不能晚于结束日期（仅当两者都存在时校验）
+                val start = filter.startDate
+                val end = filter.endDate
+                if (start != null && end != null && start > end) {
+                    dateRangeError = "开始日期不能晚于结束日期"
+                } else {
+                    dateRangeError = null
+                    viewModel.updateAdvancedFilter(filter)
+                }
             },
-            onReset = {
-                viewModel.clearAllFilters()
+            onDismiss = {
+                showAdvancedFilter = false
+                dateRangeError = null
             },
-            onDismiss = { showAdvancedFilter = false }
+            dateRangeError = dateRangeError
         )
     }
 }
@@ -517,15 +540,17 @@ private fun FilterTag(
  * 高级筛选弹窗 - 底部弹出
  * 包含：月份选择、工程状态选择、结算状态选择、开始/结束日期
  * 交互流程：选择条件只更新本地草稿状态，点击底部"确认筛选"按钮后才真正应用并关闭弹窗
- * 标题栏右侧"重置"按钮可一键清除全部筛选条件（仅重置草稿，需点击确认才生效）
+ * 标题栏右侧"重置"按钮仅清除弹窗内草稿，不影响已应用的筛选条件（需点击确认才生效）
+ *
+ * @param dateRangeError 日期范围校验错误文本（null 表示无错误），由调用方持有以跨越重组保持
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AdvancedFilterSheet(
     currentFilter: AdvancedFilterState,
     onApply: (AdvancedFilterState) -> Unit,
-    onReset: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    dateRangeError: String? = null
 ) {
     val sheetState = rememberModalBottomSheetState()
     var editFilter by remember(currentFilter) { mutableStateOf(currentFilter) }
@@ -573,7 +598,8 @@ private fun AdvancedFilterSheet(
                     }
                 }
                 Text("高级筛选", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                // 重置按钮：浅灰背景胶囊 + 刷新图标，点击只重置草稿不退出弹窗
+                // 重置按钮：浅灰背景胶囊 + 刷新图标
+                // 行为说明：仅清除弹窗内草稿和错误状态，不影响已应用的筛选条件
                 Surface(
                     onClick = {
                         editFilter = AdvancedFilterState()
@@ -601,6 +627,17 @@ private fun AdvancedFilterSheet(
                         )
                     }
                 }
+            }
+
+            // 日期范围校验错误提示（红色文字，无错误时不占位）
+            if (dateRangeError != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = dateRangeError,
+                    color = Color(0xFFE53935),
+                    fontSize = 12.sp,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -639,6 +676,7 @@ private fun AdvancedFilterSheet(
                 }
                 if (showStatusPicker) {
                     StatusPickerSheet(
+                        title = "请选择工程状态",
                         options = statusOptions,
                         current = editFilter.status,
                         onConfirm = {
@@ -661,6 +699,7 @@ private fun AdvancedFilterSheet(
                 }
                 if (showSettlementPicker) {
                     StatusPickerSheet(
+                        title = "请选择结算状态",
                         options = settlementStatusOptions,
                         current = editFilter.settlementStatus,
                         onConfirm = {
@@ -774,6 +813,7 @@ private fun FilterOptionRow(
 
 /**
  * 月份选择弹窗
+ * 年份范围限定为 2000-2100，避免用户无限点击导致异常年份
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -787,6 +827,10 @@ private fun MonthPickerSheet(
     // 使用currentYear/currentMonth作为key，弹窗重新打开时同步当前选中值
     var selectedYear by remember(currentYear) { mutableStateOf(currentYear) }
     var selectedMonth by remember(currentMonth) { mutableStateOf(currentMonth) }
+
+    // 年份上下限：超出范围时禁用对应按钮，避免无限点击产生异常年份
+    val minYear = 2000
+    val maxYear = 2100
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -803,9 +847,15 @@ private fun MonthPickerSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(onClick = { selectedYear-- }) { Text("<") }
+                TextButton(
+                    onClick = { selectedYear-- },
+                    enabled = selectedYear > minYear
+                ) { Text("<") }
                 Text("${selectedYear}年", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                TextButton(onClick = { selectedYear++ }) { Text(">") }
+                TextButton(
+                    onClick = { selectedYear++ },
+                    enabled = selectedYear < maxYear
+                ) { Text(">") }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -856,10 +906,12 @@ private fun MonthPickerSheet(
 /**
  * 状态选择弹窗
  * 优化：选中项显示绿色背景胶囊，提升视觉辨识度
+ * @param title 弹窗标题（如"请选择工程状态"/"请选择结算状态"），由调用方传入语义化文案
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun StatusPickerSheet(
+    title: String,
     options: List<Pair<String?, String>>,
     current: String?,
     onConfirm: (String?) -> Unit,
@@ -874,7 +926,7 @@ private fun StatusPickerSheet(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                "请选择",
+                title,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 15.sp,
                 color = AppColors.TextSecondary,
@@ -1074,22 +1126,27 @@ private fun settlementStatusText(status: String): String = when (status) {
 /** 按月分组工程列表，并按月份倒序排序（最近月份在前） */
 private fun groupProjectsByMonth(projects: List<ProjectUiModel>): Map<String, List<ProjectUiModel>> {
     // 兼容多种后端返回格式：通过 DateFormatter.parseFlexible 统一解析
-    // 先分组：displayKey（"yyyy年M月"或"未知月份"） -> 工程列表
+    // 分组：displayKey（"yyyy年M月"或"未知月份"） -> 工程列表
     val grouped = projects.groupBy { project ->
         val date = DateFormatter.parseFlexible(project.createdAt)
         date?.let { DateFormatter.formatMonth(it) } ?: "未知月份"
     }
 
-    // 按月份降序排序（最近月份在前），"未知月份"放到最后
+    // 排序规则：
+    // 1. "未知月份"显式置末（isUnknown: false=0 在前, true=1 在后）
+    // 2. 有效月份按 "yyyy-MM" 倒序（最近月份在前）
     return grouped.entries
-        .sortedByDescending { entry ->
-            if (entry.key == "未知月份") {
-                "" // 空字符串排序后自然落到最后
-            } else {
-                // 将显示键"yyyy年M月"再解析回Date，取排序键"yyyy-MM"
-                DateFormatter.parseMonthDisplay(entry.key)?.let { DateFormatter.formatYearMonth(it) } ?: ""
-            }
-        }
+        .sortedWith(
+            compareBy<Map.Entry<String, List<ProjectUiModel>>> { it.key == "未知月份" }
+                .thenByDescending { entry ->
+                    if (entry.key == "未知月份") {
+                        ""
+                    } else {
+                        // 将显示键"yyyy年M月"再解析回Date，取排序键"yyyy-MM"
+                        DateFormatter.parseMonthDisplay(entry.key)?.let { DateFormatter.formatYearMonth(it) } ?: ""
+                    }
+                }
+        )
         .associate { it.key to it.value }
 }
 
