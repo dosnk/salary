@@ -3,6 +3,7 @@ package com.salary.manager.navigation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.salary.core.common.util.NetworkErrorHandler
+import com.salary.core.data.local.UserStorage
 import com.salary.core.network.api.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,13 +16,26 @@ import javax.inject.Inject
  * 个人中心API桥接ViewModel
  *
  * 为个人中心子页面提供API调用和数据管理
+ *
+ * 安全说明：管理员写操作（创建/删除用户、重置密码、字典增删）在客户端做防御性角色校验，
+ * 作为UI层角色守卫失效时的兜底，与后端 requireAdmin 中间件形成双重保险。
  */
 @HiltViewModel
 class ProfileApiViewModel @Inject constructor(
     val userApi: UserApi,
     val dictionaryApi: DictionaryApi,
-    val messageApi: MessageApi
+    val messageApi: MessageApi,
+    private val userStorage: UserStorage
 ) : ViewModel() {
+
+    /** 客户端防御性角色校验：非管理员直接返回错误，不发请求 */
+    private fun requireAdmin(callback: (String?) -> Unit): Boolean {
+        if (userStorage.roleFlow.value != "admin") {
+            callback("无操作权限，仅管理员可执行此操作")
+            return false
+        }
+        return true
+    }
 
     // 用户列表
     private val _users = MutableStateFlow<List<UserDto>>(emptyList())
@@ -134,6 +148,7 @@ class ProfileApiViewModel @Inject constructor(
 
     /** 创建用户 */
     fun createUser(request: CreateUserRequest, callback: (String?) -> Unit) {
+        if (!requireAdmin(callback)) return
         viewModelScope.launch {
             try {
                 val response = userApi.createUser(request)
@@ -147,6 +162,7 @@ class ProfileApiViewModel @Inject constructor(
 
     /** 重置密码 */
     fun resetPassword(userId: Int, newPassword: String, callback: (String?) -> Unit) {
+        if (!requireAdmin(callback)) return
         viewModelScope.launch {
             try {
                 val response = userApi.resetPassword(userId, ResetPasswordRequest(newPassword))
@@ -160,6 +176,7 @@ class ProfileApiViewModel @Inject constructor(
 
     /** 删除用户 */
     fun deleteUser(userId: Int, callback: (String?) -> Unit) {
+        if (!requireAdmin(callback)) return
         viewModelScope.launch {
             try {
                 val response = userApi.deleteUser(userId)
@@ -173,6 +190,7 @@ class ProfileApiViewModel @Inject constructor(
 
     /** 添加空间类型 */
     fun addSpaceType(name: String, description: String?, shape: String?, callback: (String?) -> Unit) {
+        if (!requireAdmin(callback)) return
         viewModelScope.launch {
             try {
                 val response = dictionaryApi.createSpaceType(
@@ -186,6 +204,7 @@ class ProfileApiViewModel @Inject constructor(
 
     /** 删除空间类型 */
     fun deleteSpaceType(id: Int, callback: (String?) -> Unit) {
+        if (!requireAdmin(callback)) return
         viewModelScope.launch {
             try {
                 val response = dictionaryApi.deleteSpaceType(id)
@@ -197,6 +216,7 @@ class ProfileApiViewModel @Inject constructor(
 
     /** 添加施工方案（需提供名称、单位、单价） */
     fun addConstructionPlan(name: String, unit: String, price: Double, callback: (String?) -> Unit) {
+        if (!requireAdmin(callback)) return
         viewModelScope.launch {
             try {
                 val response = dictionaryApi.createConstructionPlan(
@@ -210,6 +230,7 @@ class ProfileApiViewModel @Inject constructor(
 
     /** 删除施工方案 */
     fun deleteConstructionPlan(id: Int, callback: (String?) -> Unit) {
+        if (!requireAdmin(callback)) return
         viewModelScope.launch {
             try {
                 val response = dictionaryApi.deleteConstructionPlan(id)

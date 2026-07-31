@@ -31,6 +31,10 @@ import com.salary.core.network.api.SvgRectDto
  * - 渲染板材布局（整板/裁切板不同颜色）
  * - 渲染尺寸标注
  * - 支持双指缩放和拖动手势
+ *
+ * 性能优化:
+ * - Paint 对象通过 remember 缓存，避免每帧重复创建（原实现每帧 new 2 个 Paint 对象）
+ * - Canvas 缩放/平移状态通过 remember 保持，手势变化时仅触发重绘而非重建
  */
 @Composable
 fun LayoutCanvas(
@@ -41,6 +45,24 @@ fun LayoutCanvas(
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
+
+    // 缓存 Paint 对象，避免每帧重复创建（性能优化）
+    // 房间尺寸标注画笔
+    val dimensionPaint = remember {
+        android.graphics.Paint().apply {
+            textSize = 24f
+            color = AppColors.TextSecondary.hashCode()
+            isAntiAlias = true
+        }
+    }
+    // 板材尺寸标注画笔
+    val panelPaint = remember {
+        android.graphics.Paint().apply {
+            textSize = 18f
+            color = AppColors.TextTertiary.hashCode()
+            isAntiAlias = true
+        }
+    }
 
     Canvas(
         modifier = modifier
@@ -71,8 +93,8 @@ fun LayoutCanvas(
             drawPanel(panel, svgScale, offsetX, offsetY)
         }
 
-        // 绘制尺寸标注
-        drawDimensions(layoutData, svgScale, offsetX, offsetY)
+        // 绘制尺寸标注（传入缓存的 Paint 对象）
+        drawDimensions(layoutData, svgScale, offsetX, offsetY, dimensionPaint, panelPaint)
     }
 }
 
@@ -140,18 +162,21 @@ private fun DrawScope.drawPanel(panel: SvgPanelDto, scale: Float, offsetX: Float
 
 /**
  * 绘制尺寸标注
+ *
+ * @param dimensionPaint 房间尺寸标注画笔（由 Composable 层 remember 缓存，避免每帧创建）
+ * @param panelPaint 板材尺寸标注画笔（由 Composable 层 remember 缓存，避免每帧创建）
  */
-private fun DrawScope.drawDimensions(layoutData: SvgLayoutDto, scale: Float, offsetX: Float, offsetY: Float) {
+private fun DrawScope.drawDimensions(
+    layoutData: SvgLayoutDto,
+    scale: Float,
+    offsetX: Float,
+    offsetY: Float,
+    dimensionPaint: android.graphics.Paint,
+    panelPaint: android.graphics.Paint
+) {
     val dims = layoutData.dimensions
     val room = layoutData.roomRect
     val padding = layoutData.padding.toFloat() * scale
-
-    // 使用 nativeCanvas 绘制文字
-    val paint = android.graphics.Paint().apply {
-        textSize = 24f
-        color = AppColors.TextSecondary.hashCode()
-        isAntiAlias = true
-    }
 
     // 底部标注：房间长度
     val lengthText = "${dims.roomLength.toInt()}cm"
@@ -159,9 +184,9 @@ private fun DrawScope.drawDimensions(layoutData: SvgLayoutDto, scale: Float, off
     val bottomY = (room.y.toFloat() + room.h.toFloat()) * scale + padding * 0.6f + offsetY
     drawContext.canvas.nativeCanvas.drawText(
         lengthText,
-        centerX - paint.measureText(lengthText) / 2,
+        centerX - dimensionPaint.measureText(lengthText) / 2,
         bottomY,
-        paint
+        dimensionPaint
     )
 
     // 右侧标注：房间宽度
@@ -171,16 +196,11 @@ private fun DrawScope.drawDimensions(layoutData: SvgLayoutDto, scale: Float, off
     drawContext.canvas.nativeCanvas.drawText(
         widthText,
         rightX,
-        centerY + paint.textSize / 3,
-        paint
+        centerY + dimensionPaint.textSize / 3,
+        dimensionPaint
     )
 
     // 板材尺寸标注
-    val panelPaint = android.graphics.Paint().apply {
-        textSize = 18f
-        color = AppColors.TextTertiary.hashCode()
-        isAntiAlias = true
-    }
     val panelInfo = "${dims.panelLength.toInt()}\u00D7${dims.panelWidth.toInt()}cm"
     if (layoutData.panels.isNotEmpty()) {
         val firstPanel = layoutData.panels[0]

@@ -73,12 +73,24 @@ fun AdvanceScreen(
     }
 
     // 创建预支弹窗
+    // 监听创建状态：isCreating 从 true→false 时，若无错误则关闭弹窗
+    // 修复：原实现在 onConfirm 中立即关闭弹窗，导致异步错误返回时弹窗已销毁，错误无UI承载
+    var prevIsCreating by remember { mutableStateOf(false) }
+    LaunchedEffect(isCreating) {
+        if (prevIsCreating && !isCreating && createError == null) {
+            showCreateDialog = false
+        }
+        prevIsCreating = isCreating
+    }
     if (showCreateDialog) {
         CreateAdvanceDialog(
-            onDismiss = { showCreateDialog = false },
-            onConfirm = { amount, advanceDate, remark ->
-                viewModel.createAdvance(amount, advanceDate, remark)
+            onDismiss = {
                 showCreateDialog = false
+                viewModel.clearCreateError()
+            },
+            onConfirm = { amount, advanceDate, remark ->
+                // 不立即关闭弹窗，等待 isCreating 从 true→false 后由 LaunchedEffect 关闭
+                viewModel.createAdvance(amount, advanceDate, remark)
             },
             errorMessage = createError,
             isCreating = isCreating

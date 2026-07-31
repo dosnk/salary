@@ -35,6 +35,7 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,8 +76,12 @@ fun MaterialLayoutScreen(
     val error by viewModel.error.collectAsStateWithLifecycle()
 
     // 计算完成后跳转预览页
-    if (layoutResult != null) {
-        onNavigateToPreview()
+    // 使用 LaunchedEffect 确保导航副作用仅在 layoutResult 变化时执行一次，
+    // 避免在 Composable 组合期间直接调用导航回调导致重复导航或重组循环
+    LaunchedEffect(layoutResult) {
+        if (layoutResult != null) {
+            onNavigateToPreview()
+        }
     }
 
     Scaffold(

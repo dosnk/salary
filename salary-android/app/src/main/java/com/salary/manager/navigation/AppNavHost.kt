@@ -205,6 +205,18 @@ fun MainScaffold(
     // 个人中心子页面导航: 0=主页, 1=修改密码, 2=字典管理, 3=用户管理, 4=关于, 5=消息, 6=AI配置, 7=数据一致性校验
     var profileSubPage by rememberSaveable { mutableIntStateOf(0) }
 
+    // 当前用户角色（用于客户端角色守卫：非admin不允许进入管理员子页面）
+    val userStorage = (hiltViewModel<AppViewModel>()).userStorage
+    val currentUserRole by userStorage.roleFlow.collectAsState()
+
+    // 客户端角色守卫：非admin用户若因进程恢复等原因停留在管理员子页面（2字典/3用户管理/6AI配置/7数据校验），
+    // 自动重置回个人中心主页，避免普通用户进入管理员页面（后端已有requireAdmin兜底，此处为双重保险）
+    LaunchedEffect(currentUserRole) {
+        if (currentUserRole != "admin" && profileSubPage in setOf(2, 3, 6, 7)) {
+            profileSubPage = 0
+        }
+    }
+
     // 记录点击消息图标时所在的Tab，用于消息页返回时恢复到原页面
     // -1 表示未从其他Tab跳转过来（即从"我的"Tab直接进入消息页）
     var messageOriginTab by rememberSaveable { mutableIntStateOf(-1) }
@@ -450,7 +462,11 @@ fun MainScaffold(
                             onDataVerify = { profileSubPage = 7 },
                             onAbout = { profileSubPage = 4 },
                             onMessages = { profileSubPage = 5 },
-                            onLogout = onLogout,
+                            onLogout = {
+                                // 退出登录时重置子页面状态，避免下次登录时残留管理员子页面
+                                profileSubPage = 0
+                                onLogout()
+                            },
                             userNickname = userNickname,
                             unreadCount = unreadCount,
                             onMessageClick = onMessageClick

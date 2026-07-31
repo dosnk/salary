@@ -6,7 +6,6 @@ import com.salary.core.data.local.ServerConfig
 import com.salary.core.data.local.TokenStorage
 import com.salary.core.network.api.AiApi
 import com.salary.core.network.api.AiChatRequest
-import com.salary.core.network.api.AiChatResponse
 import com.salary.core.network.api.CreateKnowledgeRequest
 import com.salary.core.network.api.CreateMaterialRequest
 import com.salary.core.network.api.DeleteKnowledgeResponse
@@ -30,6 +29,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -52,6 +52,22 @@ class AiRepository @Inject constructor(
 ) {
     companion object {
         private const val TAG = "AiRepository"
+
+        /**
+         * SSE 流式读超时：两个数据块之间的最大间隔时间。
+         *
+         * 超过该时间未收到任何数据则判定为服务端假死/网络断开，主动断开连接。
+         * AI 流式响应通常每 1-3 秒推送一次，120 秒留足余量。
+         */
+        private const val SSE_READ_TIMEOUT_SECONDS = 120L
+
+        /**
+         * SSE 调用总超时：整个流式请求的最长持续时间。
+         *
+         * 防止异常情况下流式连接无限挂起导致资源泄漏。
+         * 10 分钟覆盖绝大多数长对话场景。
+         */
+        private const val SSE_CALL_TIMEOUT_MINUTES = 10L
     }
 
     /**
@@ -61,6 +77,12 @@ class AiRepository @Inject constructor(
      * - SseEvent.Content(text) — 流式文本片段
      * - SseEvent.Done(intent) — 结束标记
      * - SseEvent.Error(message) — 错误
+     *
+     * 超时与泄漏防护：
+     * - readTimeout=120s：防止服务端假死时连接无限挂起
+     * - callTimeout=10min：防止异常流式连接长期占用资源
+     * - Response 使用 use{} 确保连接释放
+     * - 调用方取消 collect 会自动终止 flow（结构化并发），底层 readLine 会抛 IOException 退出循环
      *
      * @param message 用户消息
      * @param sessionId 会话ID
@@ -87,76 +109,73 @@ class AiRepository @Inject constructor(
             .post(requestBody.toRequestBody("application/json".toMediaType()))
             .build()
 
+        // 为SSE流式请求创建独立超时配置的Client（不影响全局OkHttpClient配置）
+        // readTimeout 控制两个数据块之间的间隔超时；callTimeout 控制整个请求总时长
+        val sseClient = okHttpClient.newBuilder()
+            .readTimeout(SSE_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .callTimeout(SSE_CALL_TIMEOUT_MINUTES, TimeUnit.MINUTES)
+            .build()
+
         try {
-            val response = okHttpClient.newCall(request).execute()
-            if (!response.isSuccessful) {
-                emit(SseEvent.Error("服务异常: ${response.code}"))
-                return@flow
-            }
+            // 使用 execute() 同步发起请求（flowOn(Dispatchers.IO) 保证在IO线程）
+            // response.use{} 确保无论正常结束还是异常，Response 都被关闭，避免连接泄漏
+            sseClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    emit(SseEvent.Error("服务异常: ${response.code}"))
+                    return@use
+                }
 
-            val reader = response.body?.byteStream()?.bufferedReader()
-            if (reader == null) {
-                emit(SseEvent.Error("响应体为空"))
-                return@flow
-            }
+                val reader = response.body?.byteStream()?.bufferedReader()
+                if (reader == null) {
+                    emit(SseEvent.Error("响应体为空"))
+                    return@use
+                }
 
-            try {
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
-                    val currentLine = line ?: continue
-                    // SSE格式: data: {json}\n\n
-                    if (!currentLine.startsWith("data: ")) continue
+                reader.use { r ->
+                    var line: String?
+                    while (r.readLine().also { line = it } != null) {
+                        val currentLine = line ?: continue
+                        // SSE格式: data: {json}\n\n
+                        if (!currentLine.startsWith("data: ")) continue
 
-                    val data = currentLine.removePrefix("data: ").trim()
-                    if (data.isEmpty()) continue
+                        val data = currentLine.removePrefix("data: ").trim()
+                        if (data.isEmpty()) continue
 
-                    try {
-                        val element = json.parseToJsonElement(data).jsonObject
-                        val type = element["type"]?.jsonPrimitive?.content ?: continue
+                        try {
+                            val element = json.parseToJsonElement(data).jsonObject
+                            val type = element["type"]?.jsonPrimitive?.content ?: continue
 
-                        when (type) {
-                            "content" -> {
-                                val text = element["text"]?.jsonPrimitive?.content ?: ""
-                                emit(SseEvent.Content(text))
+                            when (type) {
+                                "content" -> {
+                                    val text = element["text"]?.jsonPrimitive?.content ?: ""
+                                    emit(SseEvent.Content(text))
+                                }
+                                "done" -> {
+                                    val intent = element["intent"]?.jsonPrimitive?.content ?: ""
+                                    emit(SseEvent.Done(intent))
+                                }
+                                "error" -> {
+                                    val errorMsg = element["message"]?.jsonPrimitive?.content ?: "未知错误"
+                                    emit(SseEvent.Error(errorMsg))
+                                }
                             }
-                            "done" -> {
-                                val intent = element["intent"]?.jsonPrimitive?.content ?: ""
-                                emit(SseEvent.Done(intent))
-                            }
-                            "error" -> {
-                                val errorMsg = element["message"]?.jsonPrimitive?.content ?: "未知错误"
-                                emit(SseEvent.Error(errorMsg))
-                            }
+                        } catch (e: Exception) {
+                            AppLog.w(TAG, "解析SSE数据失败: $data", e)
                         }
-                    } catch (e: Exception) {
-                        AppLog.w(TAG, "解析SSE数据失败: $data", e)
                     }
                 }
-            } finally {
-                reader.close()
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 调用方取消（如用户停止生成/切换页面），不视为错误，直接传播取消语义
+            throw e
+        } catch (e: java.net.SocketTimeoutException) {
+            AppLog.w(TAG, "SSE读超时（服务端长时间无数据推送）", e)
+            emit(SseEvent.Error("响应超时，请检查网络后重试"))
         } catch (e: Exception) {
             AppLog.e(TAG, "SSE连接失败", e)
             emit(SseEvent.Error(NetworkErrorHandler.translate(e, "连接失败")))
         }
     }.flowOn(Dispatchers.IO)
-
-    /**
-     * 发送消息（普通响应，非流式）
-     */
-    suspend fun sendMessage(message: String, sessionId: String): Result<AiChatResponse> {
-        return try {
-            val response = aiApi.sendMessage(AiChatRequest(message, sessionId))
-            if (response.code == 200) {
-                val data = response.data ?: return Result.failure(Exception("响应数据为空"))
-                Result.success(data)
-            } else {
-                Result.failure(Exception(response.msg))
-            }
-        } catch (e: Exception) {
-            Result.failure(Exception(NetworkErrorHandler.translate(e, "请求失败")))
-        }
-    }
 
     /**
      * 排料计算

@@ -39,6 +39,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -50,6 +52,8 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -63,6 +67,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.salary.core.design.component.GreenTopNavBar
 import com.salary.core.design.component.TopBarActionIcon
 import com.salary.core.design.theme.AppColors
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 /**
  * AI对话页面
@@ -77,7 +83,7 @@ import com.salary.core.design.theme.AppColors
  *
  * @param onMessageClick 顶部导航栏消息图标点击回调（AI页面默认不显示消息图标，此参数预留）
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, kotlinx.coroutines.FlowPreview::class)
 @Composable
 fun AiChatScreen(
     onNavigateToLayout: () -> Unit = {},
@@ -89,13 +95,36 @@ fun AiChatScreen(
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val inputText by viewModel.inputText.collectAsStateWithLifecycle()
+    val error by viewModel.error.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
+    val snackbarHostState = remember { SnackbarHostState() }
 
-    // 新消息时自动滚动到底部
-    LaunchedEffect(messages.size, messages.lastOrNull()?.content) {
+    // 错误提示：通过 Snackbar 展示（error 从非空变化时触发）
+    LaunchedEffect(error) {
+        error?.let { msg ->
+            snackbarHostState.showSnackbar(message = msg)
+        }
+    }
+
+    // 自动滚动到底部 — 分两个维度，避免流式高频更新导致滚动卡顿：
+    // 1. 消息数量变化（新消息出现）：立即滚动
+    LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
         }
+    }
+    // 2. 流式内容更新（最后一条消息 content 变化）：防抖滚动
+    //    SSE 每秒可能推送多次 content，直接监听会导致 animateScrollToItem 高频调用产生抖动
+    //    使用 snapshotFlow + debounce(200ms) 合并高频更新，平滑滚动
+    LaunchedEffect(Unit) {
+        snapshotFlow { messages.lastOrNull()?.content }
+            .distinctUntilChanged()
+            .debounce(200)
+            .collect {
+                if (messages.isNotEmpty()) {
+                    listState.animateScrollToItem(messages.size - 1)
+                }
+            }
     }
 
     Column(
@@ -128,34 +157,40 @@ fun AiChatScreen(
             )
         }
             // 消息列表 - 响应键盘高度自动收缩（weight根据剩余空间分配）
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(top = 8.dp, bottom = 8.dp)
-            ) {
-                items(
-                    items = messages,
-                    key = { it.id }
-                ) { message ->
-                    MessageBubble(
-                        message = message,
-                        onRetry = { viewModel.retryLastMessage() }
-                    )
-                }
-
-                // 快捷提问（仅对话开始时显示）
-                if (messages.size <= 1) {
-                    item {
-                        QuickQuestionsSection(
-                            questions = viewModel.quickQuestions,
-                            onQuestionClick = { viewModel.sendMessage(it) }
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 8.dp)
+                ) {
+                    items(
+                        items = messages,
+                        key = { it.id }
+                    ) { message ->
+                        MessageBubble(
+                            message = message,
+                            onRetry = { viewModel.retryLastMessage() }
                         )
                     }
+
+                    // 快捷提问（仅对话开始时显示）
+                    if (messages.size <= 1) {
+                        item {
+                            QuickQuestionsSection(
+                                questions = viewModel.quickQuestions,
+                                onQuestionClick = { viewModel.sendMessage(it) }
+                            )
+                        }
+                    }
                 }
+                // Snackbar 浮在消息列表底部（输入栏上方），不挤压消息列表布局
+                SnackbarHost(
+                    hostState = snackbarHostState,
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
             }
 
             // 输入栏 - 仅此处应用 imePadding，随键盘上推，不影响顶部导航栏
@@ -163,7 +198,9 @@ fun AiChatScreen(
                 text = inputText,
                 onTextChange = { viewModel.updateInputText(it) },
                 onSend = { viewModel.sendMessage() },
-                isLoading = isLoading
+                isLoading = isLoading,
+                // 流式生成中提供"停止生成"入口，点击调用 stopGeneration()
+                onStop = { viewModel.stopGeneration() }
             )
         }
 }
@@ -347,7 +384,8 @@ private fun InputBar(
     text: String,
     onTextChange: (String) -> Unit,
     onSend: () -> Unit,
-    isLoading: Boolean
+    isLoading: Boolean,
+    onStop: () -> Unit = {}
 ) {
     Surface(
         shadowElevation = 2.dp,
@@ -395,8 +433,9 @@ private fun InputBar(
 
             // 发送按钮：输入第一个文字后在输入框右侧拉幕式优雅展开，清空后收起
             // 微信样式：绿色圆形背景 + 白色发送图标
+            // 流式生成中（isLoading=true）：按钮变为"停止"，点击调用 onStop() 取消SSE流
             AnimatedVisibility(
-                visible = text.isNotEmpty(),
+                visible = text.isNotEmpty() || isLoading,
                 enter = expandHorizontally(
                     expandFrom = Alignment.End,
                     animationSpec = androidx.compose.animation.core.tween(durationMillis = 250)
@@ -411,25 +450,39 @@ private fun InputBar(
                     modifier = Modifier.wrapContentHeight()
                 ) {
                     Spacer(modifier = Modifier.width(8.dp))
-                    // 发送按钮：圆角长方形 + "发送"文字
-                    val canSend = text.isNotBlank() && !isLoading
-                    Surface(
-                        onClick = { if (canSend) onSend() },
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (canSend) AppColors.Green400 else AppColors.Green100,
-                        modifier = Modifier.height(40.dp)
-                    ) {
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.padding(horizontal = 16.dp)
+                    if (isLoading) {
+                        // 流式生成中：显示"停止"按钮，点击取消当前SSE流
+                        Surface(
+                            onClick = onStop,
+                            shape = RoundedCornerShape(8.dp),
+                            color = AppColors.Error,
+                            modifier = Modifier.height(40.dp)
                         ) {
-                            if (isLoading) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    strokeWidth = 2.dp,
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            ) {
+                                Text(
+                                    "停止",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
                                     color = Color.White
                                 )
-                            } else {
+                            }
+                        }
+                    } else {
+                        // 发送按钮：圆角长方形 + "发送"文字
+                        val canSend = text.isNotBlank() && !isLoading
+                        Surface(
+                            onClick = { if (canSend) onSend() },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (canSend) AppColors.Green400 else AppColors.Green100,
+                            modifier = Modifier.height(40.dp)
+                        ) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            ) {
                                 Text(
                                     "发送",
                                     fontSize = 14.sp,

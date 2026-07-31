@@ -538,6 +538,16 @@ fun StatisticsDashboardScreen(
                                     val createAdvanceError by advanceViewModel.createErrorMessage.collectAsStateWithLifecycle()
                                     val isCreatingAdvance by advanceViewModel.isCreating.collectAsStateWithLifecycle()
 
+                                    // 监听创建状态：isCreating 从 true→false 时，若无错误则关闭弹窗
+                                    // 修复：原实现在 onConfirm 中立即关闭弹窗，导致异步错误返回时弹窗已销毁，错误无UI承载
+                                    var prevIsCreating by remember { mutableStateOf(false) }
+                                    LaunchedEffect(isCreatingAdvance) {
+                                        if (prevIsCreating && !isCreatingAdvance && createAdvanceError == null) {
+                                            showCreateAdvanceDialog = false
+                                        }
+                                        prevIsCreating = isCreatingAdvance
+                                    }
+
                                     // 仅施工员可创建预支，其他角色不显示FAB按钮（对齐后端权限规则）
                                     if (advanceViewModel.canCreateAdvance()) {
                                         FloatingActionButton(
@@ -556,10 +566,14 @@ fun StatisticsDashboardScreen(
                                     }
                                     if (showCreateAdvanceDialog) {
                                         CreateAdvanceDialog(
-                                            onDismiss = { showCreateAdvanceDialog = false },
-                                            onConfirm = { amount, advanceDate, remark ->
-                                                advanceViewModel.createAdvance(amount, advanceDate, remark)
+                                            onDismiss = {
                                                 showCreateAdvanceDialog = false
+                                                advanceViewModel.clearCreateError()
+                                            },
+                                            onConfirm = { amount, advanceDate, remark ->
+                                                // 不立即关闭弹窗，等待 isCreating 从 true→false 后由 LaunchedEffect 关闭
+                                                // 确保异步错误返回时弹窗仍存在，错误信息有 UI 承载
+                                                advanceViewModel.createAdvance(amount, advanceDate, remark)
                                             },
                                             errorMessage = createAdvanceError,
                                             isCreating = isCreatingAdvance

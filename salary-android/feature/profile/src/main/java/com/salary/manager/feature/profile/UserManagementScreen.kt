@@ -26,6 +26,16 @@ import com.salary.core.network.api.CreateUserRequest
 import com.salary.core.network.api.UserDto
 
 /**
+ * 默认重置密码常量（与后端 init-db.js 的 DEFAULT_PASSWORD 保持一致）
+ *
+ * 安全说明：
+ * - 该常量仅用于调用 resetPassword API 传参，不在任何 UI 文案/Snackbar/弹窗中明文展示
+ * - 后端 resetPassword 接口要求 new_password 必填且 6-20 位，无法传空让后端自动使用默认密码
+ * - 若运维修改了后端 DEFAULT_PASSWORD env 变量，需同步修改此常量
+ */
+private const val DEFAULT_RESET_PASSWORD = "990066"
+
+/**
  * 用户管理页面（仅admin）
  *
  * 用户列表 + 创建/删除/重置密码
@@ -137,18 +147,18 @@ fun UserManagementScreen(
             user = target,
             onDismiss = { resetTarget = null; errorMessage = null },
             onConfirm = {
-                // 与后端 init-db.js 中的 DEFAULT_PASSWORD 保持一致
-                val defaultPassword = "990066"
-                onResetPassword(target.id, defaultPassword) { error ->
+                // 默认密码常量：与后端 init-db.js 中的 DEFAULT_PASSWORD 保持一致
+                // 放在调用处局部变量中，避免在 UI 文案中明文展示
+                onResetPassword(target.id, DEFAULT_RESET_PASSWORD) { error ->
                     if (error != null) {
                         errorMessage = error
                     } else {
                         resetTarget = null
                         errorMessage = null
-                        // 成功后展示新密码，方便管理员告知用户
+                        // 成功后不在 Snackbar 明文展示密码，避免肩窥泄露
                         scope.launch {
                             snackbarHostState.showSnackbar(
-                                message = "已将 ${target.nickname} 的密码重置为默认密码 $defaultPassword"
+                                message = "已将 ${target.nickname} 的密码重置为默认密码，请提醒该用户登录后尽快修改"
                             )
                         }
                     }
@@ -485,7 +495,7 @@ private fun ResetPasswordDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "确认将 ${user.nickname} 的密码重置为初始默认密码 990066？",
+                    "确认将 ${user.nickname} 的密码重置为初始默认密码？",
                     fontSize = 14.sp,
                     color = AppColors.TextSecondary
                 )

@@ -149,10 +149,14 @@ class ProjectDetailViewModel @Inject constructor(
 
     /**
      * 加载工程详情
+     * @param silent 静默模式：不显示Loading状态，用于保存成功后的刷新，避免页面闪烁
      */
-    fun loadProject(projectId: Int) {
+    fun loadProject(projectId: Int, silent: Boolean = false) {
         viewModelScope.launch {
-            _state.value = UiState.Loading
+            // 静默模式不覆盖已有Success状态，仅后台刷新数据，避免保存后页面闪烁
+            if (!silent) {
+                _state.value = UiState.Loading
+            }
             try {
                 val response = projectApi.getProjectDetail(projectId)
                 if (response.code == 200) {
@@ -288,8 +292,8 @@ class ProjectDetailViewModel @Inject constructor(
                 )
                 if (response.code == 200) {
                     _successMessage.value = "子项目保存成功"
-                    // 保存成功后重新加载工程详情，刷新数据
-                    loadProject(projectId)
+                    // 保存成功后静默刷新工程详情，避免页面闪烁（保留当前显示，仅更新数据）
+                    loadProject(projectId, silent = true)
                 } else {
                     _errorMessage.value = NetworkErrorHandler.translateServerError(response.msg, "保存子项目失败")
                 }
@@ -396,8 +400,8 @@ class ProjectDetailViewModel @Inject constructor(
                 val response = projectApi.updateProject(projectId, request)
                 if (response.code == 200) {
                     _successMessage.value = "工程信息已保存"
-                    // 重新加载工程详情刷新数据
-                    loadProject(projectId)
+                    // 保存成功后静默刷新工程详情，避免页面闪烁（保留当前显示，仅更新数据）
+                    loadProject(projectId, silent = true)
                 } else {
                     _errorMessage.value = NetworkErrorHandler.translateServerError(response.msg, "保存工程失败")
                 }
