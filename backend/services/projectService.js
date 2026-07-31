@@ -13,6 +13,8 @@ const projectRepo = require('../repositories/projectRepo');
 const calculation = require('./calculation');
 const cache = require('./cacheService');
 const logger = require('../config/logger');
+// 数据库连接池：用于事务管理（BEGIN/COMMIT/ROLLBACK 需要独立 client）
+const pool = require('../config/database');
 // V2.0: 权限辅助判断函数（用于 uploadFile / deleteFile 业务校验）
 const { isAdmin, isConstructor } = require('../middleware/rbac');
 
