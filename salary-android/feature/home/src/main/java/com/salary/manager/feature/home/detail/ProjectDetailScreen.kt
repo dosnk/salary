@@ -65,6 +65,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -123,9 +124,12 @@ fun ProjectDetailScreen(
 
     // 监听成功消息：保存成功时通知上层刷新列表（一次性事件，使用 SharedFlow collect）
     // isEditingSave 标志位区分编辑保存消息与其他操作消息，避免重复消费
+    // 注意：必须用 rememberUpdatedState 捕获最新值，否则 LaunchedEffect(Unit) 的 collect lambda
+    // 会捕获首次启动时的旧值（false），导致标志位更新后不生效
+    val currentIsEditingSave by rememberUpdatedState(isEditingSave)
     LaunchedEffect(Unit) {
         viewModel.successMessage.collect {
-            if (!isEditingSave) {
+            if (!currentIsEditingSave) {
                 onDataChanged()
             }
         }
@@ -134,7 +138,7 @@ fun ProjectDetailScreen(
     // 监听错误消息：操作失败时通过Snackbar提示用户（一次性事件，使用 SharedFlow collect）
     LaunchedEffect(Unit) {
         viewModel.errorMessage.collect { msg ->
-            if (!isEditingSave) {
+            if (!currentIsEditingSave) {
                 snackbarHostState.showSnackbar(msg)
             }
         }
@@ -374,9 +378,12 @@ internal fun ProjectDetailContent(
     editingSubproject?.let { sub ->
         // 收集保存成功/失败消息（一次性事件，使用 SharedFlow collect）
         // isEditingSave 标志位区分编辑保存消息与其他操作消息，避免重复消费
+        // 注意：必须用 rememberUpdatedState 捕获最新值，否则 LaunchedEffect(Unit) 的 collect lambda
+        // 会捕获首次启动时的旧值（false），导致保存后标志位为 true 时仍判定为 false 不处理
+        val currentIsEditingSave by rememberUpdatedState(isEditingSave)
         LaunchedEffect(Unit) {
             viewModel.successMessage.collect { msg ->
-                if (isEditingSave) {
+                if (currentIsEditingSave) {
                     // 保存成功：关闭编辑弹窗，显示成功提示弹窗
                     saveResult = SaveResult.Success(msg)
                     editingSubproject = null
@@ -389,7 +396,7 @@ internal fun ProjectDetailContent(
         }
         LaunchedEffect(Unit) {
             viewModel.errorMessage.collect { msg ->
-                if (isEditingSave) {
+                if (currentIsEditingSave) {
                     // 保存失败：保持编辑弹窗打开（用户可修改后重试），显示失败提示弹窗
                     saveResult = SaveResult.Failure(msg)
                     // 重置编辑保存标志位，允许后续非编辑操作的消息走外层Snackbar流程
@@ -483,9 +490,12 @@ internal fun ProjectDetailContent(
     if (showEditProjectDialog) {
         // 收集保存成功/失败消息（一次性事件，使用 SharedFlow collect）
         // isEditingSave 标志位区分编辑保存消息与其他操作消息，避免重复消费
+        // 注意：必须用 rememberUpdatedState 捕获最新值，否则 LaunchedEffect(Unit) 的 collect lambda
+        // 会捕获首次启动时的旧值（false），导致保存后标志位为 true 时仍判定为 false 不处理
+        val currentIsEditingSave by rememberUpdatedState(isEditingSave)
         LaunchedEffect(Unit) {
             viewModel.successMessage.collect { msg ->
-                if (isEditingSave) {
+                if (currentIsEditingSave) {
                     // 保存成功：关闭编辑弹窗，显示成功提示弹窗
                     saveResult = SaveResult.Success(msg)
                     showEditProjectDialog = false
@@ -498,7 +508,7 @@ internal fun ProjectDetailContent(
         }
         LaunchedEffect(Unit) {
             viewModel.errorMessage.collect { msg ->
-                if (isEditingSave) {
+                if (currentIsEditingSave) {
                     // 保存失败：保持编辑弹窗打开（用户可修改后重试），显示失败提示弹窗
                     saveResult = SaveResult.Failure(msg)
                     // 重置编辑保存标志位，允许后续非编辑操作的消息走外层Snackbar流程
