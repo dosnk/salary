@@ -1628,12 +1628,12 @@ internal fun EditProjectDialog(
         Card(
             modifier = Modifier
                 .fillMaxWidth(0.98f)
-                .fillMaxHeight(0.85f),
+                .heightIn(max = 680.dp),
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = Color.White),
             elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
         ) {
-            Column(modifier = Modifier.fillMaxHeight().padding(16.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 // ===== 标题 =====
                 Text(
                     "编辑工程",
@@ -1643,11 +1643,11 @@ internal fun EditProjectDialog(
                 )
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // 滚动表单区：占满除标题和按钮区外的剩余高度（弹窗高度85%）
+                // 滚动表单区：内容少时随弹窗收缩，内容多时限制最大高度并滚动
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f)
+                        .heightIn(max = 560.dp)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
