@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -1623,12 +1624,14 @@ internal fun EditProjectDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Card(
-            modifier = Modifier.fillMaxWidth(0.92f),
+            modifier = Modifier
+                .fillMaxWidth(0.98f)
+                .fillMaxHeight(0.85f),
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = Color.White),
             elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.fillMaxHeight().padding(16.dp)) {
                 // ===== 标题 =====
                 Text(
                     "编辑工程",
@@ -1638,11 +1641,11 @@ internal fun EditProjectDialog(
                 )
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // 滚动表单区
+                // 滚动表单区：占满除标题和按钮区外的剩余高度（弹窗高度85%）
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 420.dp)
+                        .weight(1f)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
@@ -1765,12 +1768,12 @@ internal fun EditProjectDialog(
                                 color = AppColors.TextSecondary
                             )
                             Spacer(modifier = Modifier.height(4.dp))
-                            // 总工日输入框：独立一行，占满容器宽度（位于工日设置上方）
+                            // 总工日输入框：固定宽度紧凑样式，与施工人员工日输入框风格统一
                             // 为空时不校验；有值时校验各施工人员工日之和是否等于此值
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Text(
                                     text = "总工日",
@@ -1787,7 +1790,7 @@ internal fun EditProjectDialog(
                                     },
                                     placeholder = {
                                         Text(
-                                            "输入总工数进行校验（可选）",
+                                            "总数",
                                             fontSize = 12.sp,
                                             color = AppColors.TextTertiary
                                         )
@@ -1796,12 +1799,13 @@ internal fun EditProjectDialog(
                                     keyboardOptions = KeyboardOptions(
                                         keyboardType = KeyboardType.Decimal
                                     ),
+                                    // 固定宽度80dp + 紧凑高度，避免输入框过大
                                     modifier = Modifier
-                                        .weight(1f)
-                                        .heightIn(min = 48.dp),
+                                        .width(80.dp)
+                                        .heightIn(min = 40.dp),
                                     textStyle = androidx.compose.ui.text.TextStyle(
                                         fontSize = 14.sp,
-                                        textAlign = TextAlign.End
+                                        textAlign = TextAlign.Center
                                     ),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedBorderColor = AppColors.Green400,
@@ -1883,7 +1887,7 @@ internal fun EditProjectDialog(
                                                 Row(
                                                     verticalAlignment = Alignment.CenterVertically
                                                 ) {
-                                                    // 工日输入框：仅允许数字和小数点
+                                                    // 工日输入框：固定宽度56dp + 紧凑内边距，与总工日输入框风格统一
                                                     val workdayValue = workerWorkdays[worker.id] ?: ""
                                                     OutlinedTextField(
                                                         value = workdayValue,
@@ -1904,9 +1908,10 @@ internal fun EditProjectDialog(
                                                         keyboardOptions = KeyboardOptions(
                                                             keyboardType = KeyboardType.Decimal
                                                         ),
+                                                        // 固定宽度56dp（项目规则）+ 紧凑高度，避免输入框过大
                                                         modifier = Modifier
-                                                            .weight(1f)
-                                                            .heightIn(min = 48.dp),
+                                                            .width(56.dp)
+                                                            .heightIn(min = 40.dp),
                                                         textStyle = androidx.compose.ui.text.TextStyle(
                                                             fontSize = 14.sp,
                                                             textAlign = TextAlign.Center
