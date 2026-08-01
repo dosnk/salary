@@ -1727,8 +1727,8 @@ internal fun EditProjectDialog(
                         } else {
                             // 紧凑布局：减小间距和内边距，使一行可容纳7个标签
                             FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
                             ) {
                                 constructors.forEach { worker ->
                                     val selected = worker.id in selectedConstructorIds
