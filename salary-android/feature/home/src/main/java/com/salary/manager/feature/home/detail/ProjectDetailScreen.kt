@@ -1853,13 +1853,14 @@ internal fun EditProjectDialog(
                                 )
                             }
                             Spacer(modifier = Modifier.height(6.dp))
-                            // 按每行3个分组，使用Row+weight实现等宽占满容器
+                            // 按每行3个分组，使用Column+spacedBy控制行间距，Row+weight实现等宽占满容器
                             // 布局与主页一致：姓名 + 工日输入框 + "天" 同行水平排列
-                            selectedWorkers.chunked(3).forEach { rowWorkers ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                selectedWorkers.chunked(3).forEach { rowWorkers ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
                                     rowWorkers.forEach { worker ->
                                         // 每个施工人员一个等宽卡片：姓名 + 工日输入框 + "天"（同行）
                                         Surface(
@@ -1934,6 +1935,7 @@ internal fun EditProjectDialog(
                                     // 不足3个时用空占位填充，保持每行等宽对齐
                                     repeat(3 - rowWorkers.size) {
                                         Spacer(modifier = Modifier.weight(1f))
+                                    }
                                     }
                                 }
                             }
