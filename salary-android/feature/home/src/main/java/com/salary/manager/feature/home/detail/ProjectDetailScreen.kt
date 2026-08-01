@@ -89,6 +89,8 @@ import com.salary.core.common.util.DateFormatter
 import com.salary.core.common.util.WorkdaysValidator
 import com.salary.core.design.component.ProjectStatusTag
 import com.salary.core.design.component.SalaryTag
+import com.salary.core.design.component.SalaryTextFieldShapeSmall
+import com.salary.core.design.component.salaryTextFieldColors
 import com.salary.core.design.theme.AppColors
 import com.salary.core.ui.state.UiState
 import com.salary.manager.feature.home.dashboard.MediaViewerDialog
@@ -1768,12 +1770,12 @@ internal fun EditProjectDialog(
                                 color = AppColors.TextSecondary
                             )
                             Spacer(modifier = Modifier.height(4.dp))
-                            // 总工日输入框：固定宽度紧凑样式，与施工人员工日输入框风格统一
+                            // 总工日输入框：与主页样式一致（weight占满 + 36dp高度 + salaryTextFieldColors）
                             // 为空时不校验；有值时校验各施工人员工日之和是否等于此值
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Text(
                                     text = "总工日",
@@ -1790,7 +1792,7 @@ internal fun EditProjectDialog(
                                     },
                                     placeholder = {
                                         Text(
-                                            "总数",
+                                            "输入总工数进行校验（可选）",
                                             fontSize = 12.sp,
                                             color = AppColors.TextTertiary
                                         )
@@ -1799,19 +1801,18 @@ internal fun EditProjectDialog(
                                     keyboardOptions = KeyboardOptions(
                                         keyboardType = KeyboardType.Decimal
                                     ),
-                                    // 固定宽度80dp + 紧凑高度，避免输入框过大
+                                    // 与主页一致：weight(1f) 占满 + height(36dp) 紧凑高度
                                     modifier = Modifier
-                                        .width(80.dp)
-                                        .heightIn(min = 40.dp),
+                                        .weight(1f)
+                                        .height(36.dp),
                                     textStyle = androidx.compose.ui.text.TextStyle(
                                         fontSize = 14.sp,
-                                        textAlign = TextAlign.Center
+                                        textAlign = TextAlign.End
                                     ),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = AppColors.Green400,
+                                    colors = salaryTextFieldColors(
                                         unfocusedBorderColor = AppColors.Outline
                                     ),
-                                    shape = RoundedCornerShape(6.dp)
+                                    shape = SalaryTextFieldShapeSmall
                                 )
                                 Text(
                                     text = "天",
@@ -1851,14 +1852,14 @@ internal fun EditProjectDialog(
                             }
                             Spacer(modifier = Modifier.height(6.dp))
                             // 按每行2个分组（窄屏适配），使用Row+weight实现等宽占满容器
-                            // 改为2列+纵向布局（姓名在上、输入框在下），避免320dp窄屏下3列布局挤压姓名
+                            // 布局与主页一致：姓名 + 工日输入框 + "天" 同行水平排列
                             selectedWorkers.chunked(2).forEach { rowWorkers ->
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     rowWorkers.forEach { worker ->
-                                        // 每个施工人员一个等宽卡片：姓名（上）+ 工日输入框（下）
+                                        // 每个施工人员一个等宽卡片：姓名 + 工日输入框 + "天"（同行）
                                         Surface(
                                             shape = RoundedCornerShape(8.dp),
                                             color = AppColors.Green50,
@@ -1868,13 +1869,13 @@ internal fun EditProjectDialog(
                                             ),
                                             modifier = Modifier.weight(1f)
                                         ) {
-                                            Column(
+                                            Row(
                                                 modifier = Modifier.padding(
-                                                    horizontal = 8.dp,
+                                                    horizontal = 6.dp,
                                                     vertical = 6.dp
-                                                )
+                                                ),
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                // 第一行：姓名（单行省略）
                                                 Text(
                                                     text = worker.nickname,
                                                     fontSize = 12.sp,
@@ -1882,55 +1883,49 @@ internal fun EditProjectDialog(
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                // 第二行：工日输入框 + "天"（水平排列）
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    // 工日输入框：固定宽度56dp + 紧凑内边距，与总工日输入框风格统一
-                                                    val workdayValue = workerWorkdays[worker.id] ?: ""
-                                                    OutlinedTextField(
-                                                        value = workdayValue,
-                                                        onValueChange = { value ->
-                                                            // 仅允许数字和小数点
-                                                            val filtered = value.filter { it.isDigit() || it == '.' }
-                                                            workerWorkdays = workerWorkdays + (worker.id to filtered)
-                                                            validateWorkdays()
-                                                        },
-                                                        placeholder = {
-                                                            Text(
-                                                                "1",
-                                                                fontSize = 12.sp,
-                                                                color = AppColors.TextTertiary
-                                                            )
-                                                        },
-                                                        singleLine = true,
-                                                        keyboardOptions = KeyboardOptions(
-                                                            keyboardType = KeyboardType.Decimal
-                                                        ),
-                                                        // 固定宽度56dp（项目规则）+ 紧凑高度，避免输入框过大
-                                                        modifier = Modifier
-                                                            .width(56.dp)
-                                                            .heightIn(min = 40.dp),
-                                                        textStyle = androidx.compose.ui.text.TextStyle(
-                                                            fontSize = 14.sp,
-                                                            textAlign = TextAlign.Center
-                                                        ),
-                                                        colors = OutlinedTextFieldDefaults.colors(
-                                                            focusedContainerColor = Color.White,
-                                                            unfocusedContainerColor = Color.White,
-                                                            focusedBorderColor = AppColors.Green400,
-                                                            unfocusedBorderColor = AppColors.Green200
-                                                        ),
-                                                        shape = RoundedCornerShape(6.dp)
-                                                    )
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text(
-                                                        text = "天",
-                                                        fontSize = 11.sp,
-                                                        color = AppColors.TextTertiary
-                                                    )
-                                                }
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                // 工日输入框：与主页样式一致（56dp宽度 + 36dp高度 + salaryTextFieldColors）
+                                                val workdayValue = workerWorkdays[worker.id] ?: ""
+                                                OutlinedTextField(
+                                                    value = workdayValue,
+                                                    onValueChange = { value ->
+                                                        // 仅允许数字和小数点
+                                                        val filtered = value.filter { it.isDigit() || it == '.' }
+                                                        workerWorkdays = workerWorkdays + (worker.id to filtered)
+                                                        validateWorkdays()
+                                                    },
+                                                    placeholder = {
+                                                        Text(
+                                                            "1",
+                                                            fontSize = 12.sp,
+                                                            color = AppColors.TextTertiary
+                                                        )
+                                                    },
+                                                    singleLine = true,
+                                                    keyboardOptions = KeyboardOptions(
+                                                        keyboardType = KeyboardType.Decimal
+                                                    ),
+                                                    // 与主页一致：固定宽度56dp + height(36dp) 紧凑高度
+                                                    modifier = Modifier
+                                                        .width(56.dp)
+                                                        .height(36.dp),
+                                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                                        fontSize = 14.sp,
+                                                        textAlign = TextAlign.Center
+                                                    ),
+                                                    colors = salaryTextFieldColors(
+                                                        focusedContainerColor = Color.White,
+                                                        unfocusedContainerColor = Color.White,
+                                                        unfocusedBorderColor = AppColors.Green200
+                                                    ),
+                                                    shape = SalaryTextFieldShapeSmall
+                                                )
+                                                Spacer(modifier = Modifier.width(2.dp))
+                                                Text(
+                                                    text = "天",
+                                                    fontSize = 11.sp,
+                                                    color = AppColors.TextTertiary
+                                                )
                                             }
                                         }
                                     }
