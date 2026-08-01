@@ -700,10 +700,10 @@ fun DashboardScreen(
                                     keyboardOptions = KeyboardOptions(
                                         keyboardType = KeyboardType.Decimal
                                     ),
-                                    // 移除固定height，使用默认高度避免Material3内部padding裁切文字
+                                    // 紧凑高度：比文字高度略高，保持视觉整齐
                                     modifier = Modifier
                                         .weight(1f)
-                                        .heightIn(min = 48.dp),
+                                        .height(36.dp),
                                     textStyle = androidx.compose.ui.text.TextStyle(
                                         fontSize = 14.sp,
                                         textAlign = TextAlign.End
@@ -779,9 +779,10 @@ fun DashboardScreen(
                                                     keyboardOptions = KeyboardOptions(
                                                         keyboardType = KeyboardType.Decimal
                                                     ),
+                                                    // 紧凑高度：与总工日输入框一致（36dp），比文字略高
                                                     modifier = Modifier
                                                         .width(56.dp)
-                                                        .heightIn(min = 48.dp),
+                                                        .height(36.dp),
                                                     textStyle = androidx.compose.ui.text.TextStyle(
                                                         fontSize = 14.sp,
                                                         textAlign = TextAlign.Center
