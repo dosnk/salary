@@ -1714,7 +1714,7 @@ internal fun EditProjectDialog(
                         }
                     }
 
-                    // ===== 施工人员多选 =====
+                    // ===== 施工人员多选（紧凑样式：一行可排列7位施工人员）=====
                     Column {
                         Text("施工人员", fontSize = 13.sp, color = AppColors.TextSecondary)
                         Spacer(modifier = Modifier.height(4.dp))
@@ -1725,8 +1725,9 @@ internal fun EditProjectDialog(
                                 color = AppColors.TextTertiary
                             )
                         } else {
+                            // 紧凑布局：减小间距和内边距，使一行可容纳7个标签
                             FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 constructors.forEach { worker ->
@@ -1749,9 +1750,10 @@ internal fun EditProjectDialog(
                                     ) {
                                         Text(
                                             text = worker.nickname,
-                                            fontSize = 13.sp,
+                                            fontSize = 12.sp,
                                             color = if (selected) Color.White else AppColors.Green400,
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                            maxLines = 1,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
                                         )
                                     }
                                 }
@@ -1851,12 +1853,12 @@ internal fun EditProjectDialog(
                                 )
                             }
                             Spacer(modifier = Modifier.height(6.dp))
-                            // 按每行2个分组（窄屏适配），使用Row+weight实现等宽占满容器
+                            // 按每行3个分组，使用Row+weight实现等宽占满容器
                             // 布局与主页一致：姓名 + 工日输入框 + "天" 同行水平排列
-                            selectedWorkers.chunked(2).forEach { rowWorkers ->
+                            selectedWorkers.chunked(3).forEach { rowWorkers ->
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
                                     rowWorkers.forEach { worker ->
                                         // 每个施工人员一个等宽卡片：姓名 + 工日输入框 + "天"（同行）
@@ -1871,19 +1873,19 @@ internal fun EditProjectDialog(
                                         ) {
                                             Row(
                                                 modifier = Modifier.padding(
-                                                    horizontal = 6.dp,
+                                                    horizontal = 4.dp,
                                                     vertical = 6.dp
                                                 ),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 Text(
                                                     text = worker.nickname,
-                                                    fontSize = 12.sp,
+                                                    fontSize = 11.sp,
                                                     color = AppColors.Green700,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
-                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Spacer(modifier = Modifier.width(2.dp))
                                                 // 工日输入框：与主页样式一致（56dp宽度 + 36dp高度 + salaryTextFieldColors）
                                                 val workdayValue = workerWorkdays[worker.id] ?: ""
                                                 OutlinedTextField(
@@ -1907,7 +1909,7 @@ internal fun EditProjectDialog(
                                                     ),
                                                     // 与主页一致：固定宽度56dp + height(36dp) 紧凑高度
                                                     modifier = Modifier
-                                                        .width(56.dp)
+                                                        .width(48.dp)
                                                         .height(36.dp),
                                                     textStyle = androidx.compose.ui.text.TextStyle(
                                                         fontSize = 14.sp,
@@ -1929,8 +1931,8 @@ internal fun EditProjectDialog(
                                             }
                                         }
                                     }
-                                    // 不足2个时用空占位填充，保持每行等宽对齐
-                                    repeat(2 - rowWorkers.size) {
+                                    // 不足3个时用空占位填充，保持每行等宽对齐
+                                    repeat(3 - rowWorkers.size) {
                                         Spacer(modifier = Modifier.weight(1f))
                                     }
                                 }
