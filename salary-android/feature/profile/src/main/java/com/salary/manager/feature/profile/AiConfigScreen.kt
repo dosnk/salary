@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -337,10 +338,13 @@ private fun ProviderConfigCard(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+        // DisableSelection: 禁用外层 SelectionContainer 的文本选择，
+        // 避免与 OutlinedTextField 自身的选择机制冲突导致长按闪退
+        DisableSelection {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
             // 提供商标题
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -462,6 +466,7 @@ private fun ProviderConfigCard(
                     maxLines = 1
                 )
             }
+        }
         }
     }
 }
