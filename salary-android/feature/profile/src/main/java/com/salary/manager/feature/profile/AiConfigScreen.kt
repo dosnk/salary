@@ -354,12 +354,14 @@ private fun ProviderConfigCard(
             }
 
             // API Key输入
+            // 注：不使用 singleLine，避免超长 Key 被截断无法完整查看。
+            // 显示模式下允许最多3行换行展示完整内容；密码模式因圆点显示不会过长。
             OutlinedTextField(
                 value = editedApiKey,
                 onValueChange = onApiKeyChange,
                 label = { Text("API Key") },
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
+                maxLines = 3,
                 visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = {
                     Text(
@@ -377,13 +379,14 @@ private fun ProviderConfigCard(
             )
 
             // 文心一言额外需要Secret Key
+            // 注：不使用 singleLine，避免超长 Key 被截断无法完整查看。
             if (providerKey == "wenxin") {
                 OutlinedTextField(
                     value = editedSecretKey,
                     onValueChange = onSecretKeyChange,
                     label = { Text("Secret Key") },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
+                    maxLines = 3,
                     visualTransformation = if (showSecretKey) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
                         Text(
