@@ -17,19 +17,19 @@ const INTENT_PATTERNS = {
     description: '排料计算',
   },
   query_project: {
-    keywords: ['工程列表', '查看工程', '我的工程', '工程状态', '工程进度'],
+    keywords: ['工程列表', '查看工程', '我的工程', '工程状态', '工程进度', '工程情况', '有哪些工程', '工程多少', '最近工程', '工程详情'],
     description: '工程查询',
   },
   query_statistics: {
-    keywords: ['统计', '收入', '月度', '总额', '工程数', '完工数'],
+    keywords: ['统计', '收入', '月度', '总额', '工程数', '完工数', '赚了多少', '赚多少', '多少钱', '完工金额', '总金额', '总收入', '本月收入', '这个月收入', '未结算金额', '已结算金额'],
     description: '统计查询',
   },
   query_settlement: {
-    keywords: ['结算', '工资', '结算单', '待结算'],
+    keywords: ['结算', '工资', '结算单', '待结算', '实付', '应发', '结算记录', '工资单', '发工资', '结算历史'],
     description: '结算查询',
   },
   query_advance: {
-    keywords: ['预支', '借款', '借支'],
+    keywords: ['预支', '借款', '借支', '预支多少', '预支记录', '借了多少钱', '借了多少'],
     description: '预支查询',
   },
   knowledge: {
@@ -92,6 +92,15 @@ const getToolsForIntent = (intent) => {
   // 排料意图同时提供查询工具
   if (intent === 'layout') {
     return [...(allTools.layout || []), ...(allTools.query_project || [])];
+  }
+
+  // 查询类意图同时提供工程查询工具，便于 LLM 联合查询工程明细
+  if (['query_statistics', 'query_settlement', 'query_advance', 'query_project'].includes(intent)) {
+    const tools = [...(allTools[intent] || [])];
+    if (!tools.includes('query_projects')) {
+      tools.push('query_projects');
+    }
+    return tools;
   }
 
   return allTools[intent] || [];

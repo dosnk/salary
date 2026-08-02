@@ -1,6 +1,8 @@
 /**
- * FunctionCall工具 - 结算查询
+ * FunctionCall工具 - 结算查询（只读工具）
  * 带权限过滤
+ *
+ * 【硬性规定·只读】本工具只执行 SELECT 查询，禁止任何写操作。
  *
  * 修复说明：
  * 1. 原SQL错误引用了不存在的表名 `settlements` 和 `settlement_projects`，
@@ -8,10 +10,26 @@
  * 2. 状态字段不存在，实际由 `confirmed`(boolean) + `paid`(boolean) 表示。
  * 3. 新增 month 参数支持，让AI可按月份过滤（用户问"这个月工资"时需要）。
  * 4. 添加详细日志便于诊断问题。
+ * 5. 2026-08 修复月份过滤：用日期范围比较替代 TO_CHAR 字符串比较，
+ *    解决跨年时字符串比较错误（如 "2025-12" > "2026-01" 的问题）。
  */
 
 const pool = require('../../config/database');
 const logger = require('../../config/logger');
+
+/**
+ * 将 YYYY-MM 月份字符串转换为日期范围参数 [月初, 下月初)
+ * @param {string} month - 月份字符串，如 '2026-07'
+ * @returns {[string, string]} [月初, 下月初)
+ */
+const monthToDateRange = (month) => {
+  const [year, m] = month.split('-').map(Number);
+  const monthStart = `${year}-${String(m).padStart(2, '0')}-01`;
+  const nextMonth = m === 12 ? 1 : m + 1;
+  const nextYear = m === 12 ? year + 1 : year;
+  const nextMonthStart = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+  return [monthStart, nextMonthStart];
+};
 
 const execute = async (args, user) => {
   const { status, month } = args || {};
@@ -68,18 +86,18 @@ const execute = async (args, user) => {
     }
 
     // 月份过滤（支持 "2026-07" 或 "2026-7" 格式）
-    // 同时匹配 start_month 和 end_month 的范围（结算覆盖的月份）
+    // 使用日期范围比较：start_month <= 月末 AND end_month >= 月初
+    // 修复跨年字符串比较错误：原 TO_CHAR 比较在 "2025-12" vs "2026-01" 时会判定 12>01 导致漏数据
     if (month) {
       // 标准化月份格式为 "YYYY-MM"
       const normalizedMonth = String(month).replace(/(\d{4})-(\d{1,2})/, (m, y, mo) =>
         `${y}-${mo.padStart(2, '0')}`
       );
-      query += ` AND TO_CHAR(ws.start_month, 'YYYY-MM') <= $${paramIndex}`;
-      params.push(normalizedMonth);
-      paramIndex++;
-      query += ` AND TO_CHAR(ws.end_month, 'YYYY-MM') >= $${paramIndex}`;
-      params.push(normalizedMonth);
-      paramIndex++;
+      const [monthStart, nextMonthStart] = monthToDateRange(normalizedMonth);
+      // start_month < 下月初 AND end_month >= 月初（结算区间与查询月份有交集）
+      query += ` AND ws.start_month < $${paramIndex} AND ws.end_month >= $${paramIndex + 1}`;
+      params.push(nextMonthStart, monthStart);
+      paramIndex += 2;
     }
 
     query += ` ORDER BY ws.settled_at DESC NULLS LAST LIMIT 10`;

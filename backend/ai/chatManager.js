@@ -6,6 +6,18 @@
  * - 调用意图路由
  * - 执行FunctionCall
  * - 流式响应SSE
+ *
+ * ============================================================
+ *  【硬性规定】AI 只读约束（不可违反）
+ * ============================================================
+ *  1. AI 模块的所有工具（ai/tools/*.js）只能执行 SELECT 查询
+ *  2. 严禁执行 INSERT / UPDATE / DELETE / TRUNCATE / DROP 等写操作
+ *  3. 严禁调用任何 Service 层的写方法（createXxx / updateXxx / deleteXxx / confirmXxx 等）
+ *  4. 工具执行器只接收 pool.query 的只读查询结果，不传递任何写连接
+ *  5. 新增工具时必须在此处 toolRoleWhitelist 注册，并在工具文件头部
+ *     声明 "只读工具" 注释，经代码审查确认无写操作后方可上线
+ *  6. 违反此约束将导致数据被篡改/删除，属严重事故
+ * ============================================================
  */
 
 const pool = require('../config/database');
@@ -21,6 +33,7 @@ const toolExecutors = {};
 
 // 工具角色白名单（V2.0 重新界定：constructor和documenter可用AI除设置外）
 // 三角色均可使用所有查询工具（documenter 可查看统计）
+// 【只读约束】此处注册的所有工具必须为只读 SELECT 查询，禁止任何写操作
 const toolRoleWhitelist = {
   calculate_layout: ['admin', 'constructor', 'documenter'],
   query_projects: ['admin', 'constructor', 'documenter'],
@@ -382,11 +395,11 @@ const toolDefinitions = {
   },
   query_statistics: {
     name: 'query_statistics',
-    description: '查询用户的统计数据（收入、工程数等）',
+    description: '查询统计数据，包括工程数、子项目数、总金额（已完工子项目金额之和）、已结算金额、未结算金额、预支记录数、预支总金额。用户询问收入、统计、赚了多少、多少钱、完工金额时使用此工具。',
     parameters: {
       type: 'object',
       properties: {
-        month: { type: 'string', description: '月份(YYYY-MM)' },
+        month: { type: 'string', description: '月份筛选，格式YYYY-MM（如2026-07）。用户问"这个月""7月"时传入对应月份，不传则查全部。' },
       },
     },
   },
@@ -403,10 +416,12 @@ const toolDefinitions = {
   },
   query_advances: {
     name: 'query_advances',
-    description: '查询用户的预支记录，包含预支金额、预支日期、是否已结算等信息。用户询问预支、借款时使用此工具。',
+    description: '查询用户的预支记录，包含预支金额、预支日期、是否已结算等信息。用户询问预支、借款、借支时使用此工具。',
     parameters: {
       type: 'object',
-      properties: {},
+      properties: {
+        month: { type: 'string', description: '月份筛选，格式YYYY-MM（如2026-07）。用户问"这个月预支"时传入当前月份，不传则查全部。' },
+      },
     },
   },
 };
