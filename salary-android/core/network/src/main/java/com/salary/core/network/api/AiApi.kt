@@ -308,6 +308,7 @@ data class AiProviderConfigDto(
     @SerialName("maxTokens") val maxTokens: Int = 4096,
     @SerialName("temperature") val temperature: Double = 0.7,
     @SerialName("baseUrl") val baseUrl: String = "",
+    @SerialName("defaultBaseUrl") val defaultBaseUrl: String = "",
     @SerialName("hasApiKey") val hasApiKey: Boolean = false,
     @SerialName("hasSecretKey") val hasSecretKey: Boolean = false
 )
@@ -324,7 +325,8 @@ data class AiConfigUpdateRequest(
 data class AiProviderConfigUpdate(
     @SerialName("apiKey") val apiKey: String? = null,
     @SerialName("secretKey") val secretKey: String? = null,
-    @SerialName("model") val model: String? = null
+    @SerialName("model") val model: String? = null,
+    @SerialName("baseUrl") val baseUrl: String? = null
 )
 
 /** AI配置更新响应 */

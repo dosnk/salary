@@ -218,9 +218,11 @@ fun AiConfigScreen(
                         editedApiKey = edited?.apiKey ?: "",
                         editedSecretKey = edited?.secretKey ?: "",
                         editedModel = edited?.model ?: "",
+                        editedBaseUrl = edited?.baseUrl ?: "",
                         onApiKeyChange = { viewModel.updateApiKey(selectedProvider, it) },
                         onSecretKeyChange = { viewModel.updateSecretKey(selectedProvider, it) },
                         onModelChange = { viewModel.updateModel(selectedProvider, it) },
+                        onBaseUrlChange = { viewModel.updateBaseUrl(selectedProvider, it) },
                     )
                 }
 
@@ -321,9 +323,11 @@ private fun ProviderConfigCard(
     editedApiKey: String,
     editedSecretKey: String,
     editedModel: String,
+    editedBaseUrl: String,
     onApiKeyChange: (String) -> Unit,
     onSecretKeyChange: (String) -> Unit,
     onModelChange: (String) -> Unit,
+    onBaseUrlChange: (String) -> Unit,
 ) {
     var showApiKey by remember { mutableStateOf(false) }
     var showSecretKey by remember { mutableStateOf(false) }
@@ -418,13 +422,26 @@ private fun ProviderConfigCard(
                 )
             )
 
-            // 服务地址（只读，长URL省略号显示）
+            // 服务地址（可编辑，支持自定义服务地址）
+            // placeholder 显示默认地址，留空表示使用默认地址
+            OutlinedTextField(
+                value = editedBaseUrl,
+                onValueChange = onBaseUrlChange,
+                label = { Text("服务地址") },
+                placeholder = { Text(config.defaultBaseUrl, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(8.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = AppColors.Green400,
+                    unfocusedBorderColor = AppColors.SurfaceVariant
+                )
+            )
+            // 提示文字：留空使用默认地址
             Text(
-                text = "服务地址: ${config.baseUrl}",
-                fontSize = 12.sp,
-                color = AppColors.TextTertiary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                text = "留空使用默认地址",
+                fontSize = 11.sp,
+                color = AppColors.TextTertiary
             )
 
             // 参数信息（只读，使用FlowRow避免窄屏挤压）

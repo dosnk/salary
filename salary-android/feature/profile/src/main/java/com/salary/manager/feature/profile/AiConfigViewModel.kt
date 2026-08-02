@@ -76,7 +76,8 @@ class AiConfigViewModel @Inject constructor(
                         edited[key] = EditedProvider(
                             apiKey = dto.apiKey,
                             secretKey = dto.secretKey,
-                            model = dto.model
+                            model = dto.model,
+                            baseUrl = dto.baseUrl
                         )
                     }
                     _editedProviders.value = edited
@@ -112,6 +113,13 @@ class AiConfigViewModel @Inject constructor(
         _editedProviders.value = current
     }
 
+    /** 更新提供商的自定义服务地址 */
+    fun updateBaseUrl(provider: String, baseUrl: String) {
+        val current = _editedProviders.value.toMutableMap()
+        current[provider] = current[provider]?.copy(baseUrl = baseUrl) ?: EditedProvider(baseUrl = baseUrl)
+        _editedProviders.value = current
+    }
+
     /** 选择默认提供商 */
     fun selectProvider(provider: String) {
         _selectedProvider.value = provider
@@ -129,6 +137,7 @@ class AiConfigViewModel @Inject constructor(
                         apiKey = if (edited.apiKey != original?.apiKey) edited.apiKey else null,
                         secretKey = if (edited.secretKey != original?.secretKey) edited.secretKey else null,
                         model = if (edited.model != original?.model) edited.model else null,
+                        baseUrl = if (edited.baseUrl != original?.baseUrl) edited.baseUrl else null,
                     )
                 }
 
@@ -179,5 +188,6 @@ class AiConfigViewModel @Inject constructor(
 data class EditedProvider(
     val apiKey: String = "",
     val secretKey: String = "",
-    val model: String = ""
+    val model: String = "",
+    val baseUrl: String = ""
 )

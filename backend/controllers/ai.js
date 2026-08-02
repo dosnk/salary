@@ -172,6 +172,7 @@ async function getConfig(ctx) {
       maxTokens: provider.maxTokens,
       temperature: provider.temperature,
       baseUrl: provider.baseUrl,
+      defaultBaseUrl: provider.defaultBaseUrl,
       hasApiKey: !!provider.apiKey,
       hasSecretKey: !!provider.secretKey,
     };
@@ -184,14 +185,54 @@ async function getConfig(ctx) {
 
 /**
  * 更新AI配置（写入.env文件并刷新内存）
+ *
+ * 重要容错机制：
+ * - process.env 更新始终成功（内存级操作），确保配置立即生效
+ * - .env 文件写入可能因Docker容器权限失败（node用户无权写root归属的.env文件）
+ *   此时配置在当前进程内仍然生效，仅无法持久化到文件
+ * - 返回信息中会标注是否持久化成功，便于用户知晓
  */
 async function updateConfig(ctx) {
   const { defaultProvider, providerConfigs } = ctx.request.body;
+
+  // 记录请求参数（脱敏后），便于排查配置失败问题
+  logger.info('更新AI配置请求: defaultProvider=%s, providerConfigs=%j',
+    defaultProvider,
+    providerConfigs ? Object.keys(providerConfigs) : '无');
 
   if (defaultProvider && !['tongyi', 'wenxin', 'deepseek', 'glm', 'doubao'].includes(defaultProvider)) {
     ctx.fail(1001, '不支持的AI提供商');
     return;
   }
+
+  // 环境变量键映射（增加 baseUrl 自定义服务地址）
+  const keyMapping = {
+    tongyi: { apiKey: 'TONGYI_API_KEY', model: 'TONGYI_MODEL', baseUrl: 'TONGYI_BASE_URL' },
+    wenxin: { apiKey: 'WENXIN_API_KEY', secretKey: 'WENXIN_SECRET_KEY', model: 'WENXIN_MODEL', baseUrl: 'WENXIN_BASE_URL' },
+    deepseek: { apiKey: 'DEEPSEEK_API_KEY', model: 'DEEPSEEK_MODEL', baseUrl: 'DEEPSEEK_BASE_URL' },
+    glm: { apiKey: 'GLM_API_KEY', model: 'GLM_MODEL', baseUrl: 'GLM_BASE_URL' },
+    doubao: { apiKey: 'DOUBAO_API_KEY', model: 'DOUBAO_MODEL', baseUrl: 'DOUBAO_BASE_URL' },
+  };
+
+  /**
+   * 更新单个环境变量到 envContent 字符串和 process.env
+   * @param {string} envContent - 当前.env文件内容
+   * @param {string} envKey - 环境变量名
+   * @param {string} value - 环境变量值
+   * @returns {string} 更新后的envContent
+   */
+  function updateEnvVar(envContent, envKey, value) {
+    const regex = new RegExp(`^${envKey}=.*$`, 'm');
+    if (regex.test(envContent)) {
+      return envContent.replace(regex, `${envKey}=${value}`);
+    } else {
+      return envContent + `\n${envKey}=${value}`;
+    }
+  }
+
+  let envContent = '';
+  let fileWriteSuccess = true;
+  let fileWriteError = null;
 
   try {
     const fs = require('fs');
@@ -199,81 +240,70 @@ async function updateConfig(ctx) {
     const envPath = path.join(__dirname, '..', '.env');
 
     // 读取现有.env文件
-    let envContent = '';
     if (fs.existsSync(envPath)) {
       envContent = fs.readFileSync(envPath, 'utf-8');
     }
 
     // 更新默认提供商
     if (defaultProvider) {
-      const regex = /^AI_PROVIDER=.*$/m;
-      if (regex.test(envContent)) {
-        envContent = envContent.replace(regex, `AI_PROVIDER=${defaultProvider}`);
-      } else {
-        envContent += `\nAI_PROVIDER=${defaultProvider}`;
-      }
+      envContent = updateEnvVar(envContent, 'AI_PROVIDER', defaultProvider);
       process.env.AI_PROVIDER = defaultProvider;
     }
 
     // 更新各提供商配置
     if (providerConfigs) {
-      const keyMapping = {
-        tongyi: { apiKey: 'TONGYI_API_KEY', model: 'TONGYI_MODEL' },
-        wenxin: { apiKey: 'WENXIN_API_KEY', secretKey: 'WENXIN_SECRET_KEY', model: 'WENXIN_MODEL' },
-        deepseek: { apiKey: 'DEEPSEEK_API_KEY', model: 'DEEPSEEK_MODEL' },
-        glm: { apiKey: 'GLM_API_KEY', model: 'GLM_MODEL' },
-        doubao: { apiKey: 'DOUBAO_API_KEY', model: 'DOUBAO_MODEL' },
-      };
-
       for (const [provider, config] of Object.entries(providerConfigs)) {
         const mapping = keyMapping[provider];
         if (!mapping) continue;
 
-        // 更新API Key（非脱敏值才更新）
-        if (config.apiKey && !config.apiKey.endsWith('***')) {
-          const envKey = mapping.apiKey;
-          const regex = new RegExp(`^${envKey}=.*$`, 'm');
-          if (regex.test(envContent)) {
-            envContent = envContent.replace(regex, `${envKey}=${config.apiKey}`);
-          } else {
-            envContent += `\n${envKey}=${config.apiKey}`;
-          }
-          process.env[envKey] = config.apiKey;
+        // 更新API Key（非脱敏值才更新，避免用掩码值覆盖真实Key）
+        if (config.apiKey !== undefined && config.apiKey !== null && !config.apiKey.endsWith('***')) {
+          envContent = updateEnvVar(envContent, mapping.apiKey, config.apiKey);
+          process.env[mapping.apiKey] = config.apiKey;
         }
 
-        // 更新Secret Key（文心一言）
-        if (config.secretKey && !config.secretKey.endsWith('***')) {
-          const envKey = mapping.secretKey;
-          const regex = new RegExp(`^${envKey}=.*$`, 'm');
-          if (regex.test(envContent)) {
-            envContent = envContent.replace(regex, `${envKey}=${config.secretKey}`);
-          } else {
-            envContent += `\n${envKey}=${config.secretKey}`;
-          }
-          process.env[envKey] = config.secretKey;
+        // 更新Secret Key（文心一言，非脱敏值才更新）
+        if (config.secretKey !== undefined && config.secretKey !== null && !config.secretKey.endsWith('***')) {
+          envContent = updateEnvVar(envContent, mapping.secretKey, config.secretKey);
+          process.env[mapping.secretKey] = config.secretKey;
         }
 
         // 更新模型
-        if (config.model) {
-          const envKey = mapping.model;
-          const regex = new RegExp(`^${envKey}=.*$`, 'm');
-          if (regex.test(envContent)) {
-            envContent = envContent.replace(regex, `${envKey}=${config.model}`);
-          } else {
-            envContent += `\n${envKey}=${config.model}`;
-          }
-          process.env[envKey] = config.model;
+        if (config.model !== undefined && config.model !== null && config.model !== '') {
+          envContent = updateEnvVar(envContent, mapping.model, config.model);
+          process.env[mapping.model] = config.model;
+        }
+
+        // 更新自定义服务地址 baseUrl
+        // 空字符串表示恢复默认地址：设置环境变量为空，getter会回退到静态默认值
+        if (config.baseUrl !== undefined && config.baseUrl !== null) {
+          envContent = updateEnvVar(envContent, mapping.baseUrl, config.baseUrl);
+          process.env[mapping.baseUrl] = config.baseUrl;
         }
       }
     }
 
-    // 写回.env文件
-    fs.writeFileSync(envPath, envContent, 'utf-8');
+    // 写回.env文件（可能因Docker权限失败，不阻塞内存配置生效）
+    try {
+      fs.writeFileSync(envPath, envContent, 'utf-8');
+    } catch (writeErr) {
+      fileWriteSuccess = false;
+      fileWriteError = writeErr;
+      logger.warn('写入.env文件失败（配置已在内存中生效，重启后需重新配置）: %s', writeErr.message);
+    }
 
-    // aiConfig 已改为 getter 动态读取 process.env，更新 process.env 后立即生效，无需清除 require 缓存
-    ctx.success({ message: 'AI配置已更新，已立即生效' });
+    // aiConfig 使用 getter 动态读取 process.env，更新 process.env 后立即生效
+    if (fileWriteSuccess) {
+      ctx.success({ message: 'AI配置已更新，已立即生效' });
+    } else {
+      // 文件写入失败但内存配置已生效，返回警告而非失败
+      ctx.success({
+        message: `AI配置已在内存中生效（当前会话有效）。持久化到.env文件失败：${fileWriteError.message}。容器重启后需重新配置，或检查.env文件权限。`
+      });
+    }
   } catch (error) {
-    logger.error('更新AI配置失败:', error);
+    logger.error('更新AI配置失败: 类型=%s, 消息=%s, 堆栈=%s',
+      error.constructor.name, error.message, error.stack);
     ctx.fail(5001, `更新AI配置失败: ${error.message}`);
   }
 }

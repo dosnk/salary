@@ -50,12 +50,13 @@ const providerStaticConfig = {
 };
 
 // 各提供商环境变量映射
+// baseUrl: 自定义服务地址环境变量，未设置时回退到 providerStaticConfig 中的默认值
 const providerEnvKeys = {
-  tongyi: { apiKey: 'TONGYI_API_KEY', model: 'TONGYI_MODEL', defaultModel: 'qwen-plus' },
-  wenxin: { apiKey: 'WENXIN_API_KEY', secretKey: 'WENXIN_SECRET_KEY', model: 'WENXIN_MODEL', defaultModel: 'ernie-4.0-8k' },
-  deepseek: { apiKey: 'DEEPSEEK_API_KEY', model: 'DEEPSEEK_MODEL', defaultModel: 'deepseek-chat' },
-  glm: { apiKey: 'GLM_API_KEY', model: 'GLM_MODEL', defaultModel: 'glm-4' },
-  doubao: { apiKey: 'DOUBAO_API_KEY', model: 'DOUBAO_MODEL', defaultModel: 'doubao-pro-4k' },
+  tongyi: { apiKey: 'TONGYI_API_KEY', model: 'TONGYI_MODEL', baseUrl: 'TONGYI_BASE_URL', defaultModel: 'qwen-plus' },
+  wenxin: { apiKey: 'WENXIN_API_KEY', secretKey: 'WENXIN_SECRET_KEY', model: 'WENXIN_MODEL', baseUrl: 'WENXIN_BASE_URL', defaultModel: 'ernie-4.0-8k' },
+  deepseek: { apiKey: 'DEEPSEEK_API_KEY', model: 'DEEPSEEK_MODEL', baseUrl: 'DEEPSEEK_BASE_URL', defaultModel: 'deepseek-chat' },
+  glm: { apiKey: 'GLM_API_KEY', model: 'GLM_MODEL', baseUrl: 'GLM_BASE_URL', defaultModel: 'glm-4' },
+  doubao: { apiKey: 'DOUBAO_API_KEY', model: 'DOUBAO_MODEL', baseUrl: 'DOUBAO_BASE_URL', defaultModel: 'doubao-pro-4k' },
 };
 
 /**
@@ -70,6 +71,8 @@ const aiConfig = {
   },
 
   // 各提供商配置（动态读取环境变量，合并静态配置）
+  // baseUrl: 优先读取环境变量中的自定义地址，未设置时回退到静态默认值
+  // defaultBaseUrl: 始终返回静态默认地址，供前端显示占位提示
   get providers() {
     const result = {};
     for (const [key, staticCfg] of Object.entries(providerStaticConfig)) {
@@ -78,6 +81,10 @@ const aiConfig = {
         ...staticCfg,
         apiKey: process.env[envKeys.apiKey] || '',
         model: process.env[envKeys.model] || envKeys.defaultModel,
+        // 自定义服务地址：环境变量有值则用自定义，否则回退到静态默认
+        baseUrl: process.env[envKeys.baseUrl] || staticCfg.baseUrl,
+        // 默认服务地址：始终为静态配置值，前端用于显示占位提示
+        defaultBaseUrl: staticCfg.baseUrl,
       };
       // 文心一言额外有 secretKey
       if (envKeys.secretKey) {

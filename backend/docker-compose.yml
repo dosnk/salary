@@ -119,6 +119,7 @@ services:
     # 3. 通过su-exec降权到node用户运行 node index.js（生产环境不使用nodemon，避免文件监控开销）
     command: >-
       sh -c "chown -R node:node /app/logs /app/temp /app/upload /app/node_modules 2>/dev/null || true;
+      chown node:node /app/.env /app/.env.docker 2>/dev/null || true;
       if [ ! -d /app/node_modules/dotenv ]; then
         echo 'node_modules不完整，从种子副本恢复...';
         rm -rf /app/node_modules;
