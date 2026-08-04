@@ -1175,6 +1175,14 @@ module.exports = {
       }
     }
 
+    // 清除工程相关缓存：详情缓存（projects:detail:{projectId}）+ 所有用户列表缓存
+    // 修复：原实现遗漏缓存清除，导致上传成功后前端命中旧缓存，附件延迟可见
+    try {
+      await cache.invalidateProjectCache(userId);
+    } catch (cacheErr) {
+      logger.warn('清除工程缓存失败（不影响上传结果）', { error: cacheErr.message });
+    }
+
     return uploadedFiles;
   },
 
@@ -1237,6 +1245,14 @@ module.exports = {
       }
     } catch (fileErr) {
       logger.warn(`删除附件物理文件失败（不影响数据库记录）: ${fileErr.message}`);
+    }
+
+    // 清除工程相关缓存：详情缓存 + 所有用户列表缓存
+    // 修复：原实现遗漏缓存清除，导致删除成功后前端命中旧缓存，附件延迟消失
+    try {
+      await cache.invalidateProjectCache(userId);
+    } catch (cacheErr) {
+      logger.warn('清除工程缓存失败（不影响删除结果）', { error: cacheErr.message });
     }
 
     logger.info('删除附件成功', { projectId, fileId, userId });

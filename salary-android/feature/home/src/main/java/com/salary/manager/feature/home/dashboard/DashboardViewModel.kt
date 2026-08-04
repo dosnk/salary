@@ -1650,6 +1650,12 @@ class DashboardViewModel @Inject constructor(
             // 有任一文件上传成功则刷新工程历史以更新附件数量
             if (result.successCount > 0) {
                 loadProjects()
+                // 如果附件弹窗正在显示且正是当前上传的工程，立即刷新附件列表
+                // 修复：原实现只刷新工程列表，附件弹窗内列表不更新，需关闭重开才能看到新附件
+                val viewingProjectId = _uiState.value.viewingFilesProjectId
+                if (viewingProjectId == projectId) {
+                    loadProjectFiles(projectId)
+                }
             }
         }
     }
