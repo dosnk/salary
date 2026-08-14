@@ -1,12 +1,20 @@
 package com.salary.manager.feature.profile
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
@@ -26,10 +34,8 @@ import com.salary.core.network.api.DataVerifyResultDto
 /**
  * 数据一致性校验页面
  *
- * 仅 admin 角色可访问，展示后端8项数据一致性校验结果，
- * 包括金额、统计、结算三个口径的一致性检查。
- *
- * 进入页面自动触发校验，支持下拉重新校验。
+ * 仅 admin 角色可访问，展示后端13项数据一致性校验结果。
+ * 按业务类别分组展示，低风险错误自动折叠，用户可手动展开查看。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -39,24 +45,17 @@ fun DataVerifyScreen(
 ) {
     val result by viewModel.result.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
-    // 注：error 已改为 SharedFlow，不再使用 collectAsStateWithLifecycle
-    // 改用下方 LaunchedEffect + collect 收集一次性事件
     var error by remember { mutableStateOf<String?>(null) }
 
-    // 收集错误消息（一次性事件，使用 SharedFlow collect 避免配置变化后重复消费）
     LaunchedEffect(Unit) {
-        viewModel.error.collect { msg ->
-            error = msg
-        }
+        viewModel.error.collect { msg -> error = msg }
     }
 
-    // 进入页面自动触发校验
     LaunchedEffect(Unit) {
         viewModel.verify()
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // 顶部导航栏（白色背景 + 返回按钮，与同模块 AiConfigScreen 风格一致）
         TopAppBar(
             title = { Text("数据一致性校验", fontWeight = FontWeight.SemiBold) },
             navigationIcon = {
@@ -69,7 +68,6 @@ fun DataVerifyScreen(
                 }
             },
             actions = {
-                // 重新校验按钮
                 IconButton(onClick = { error = null; viewModel.verify() }, enabled = !isLoading) {
                     Icon(
                         Icons.Default.Refresh,
@@ -82,7 +80,6 @@ fun DataVerifyScreen(
         )
 
         when {
-            // 加载中
             isLoading && result == null -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -97,7 +94,6 @@ fun DataVerifyScreen(
                 }
             }
 
-            // 错误状态
             error != null && result == null -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(
@@ -126,7 +122,6 @@ fun DataVerifyScreen(
                 }
             }
 
-            // 校验结果展示
             result != null -> {
                 VerifyResultContent(
                     result = result!!,
@@ -139,8 +134,66 @@ fun DataVerifyScreen(
     }
 }
 
+// ===================== 业务类别分组定义 =====================
+
 /**
- * 校验结果内容区
+ * 校验项业务类别
+ */
+enum class VerifyCategory(val title: String) {
+    AMOUNT("金额一致性"),
+    SETTLEMENT_STATUS("结算状态一致性"),
+    STATISTICS("统计展示一致性"),
+    DATA_INTEGRITY("数据完整性"),
+    SYSTEM("系统状态")
+}
+
+/**
+ * 判断校验项所属的业务类别（通过 name 关键字匹配）
+ */
+private fun categorize(detailName: String): VerifyCategory {
+    return when {
+        detailName.contains("工程总额") ||
+        detailName.contains("结算单总额") ||
+        detailName.contains("结算快照总额") ||
+        detailName.contains("预支扣款") ||
+        detailName.contains("结算实付") -> VerifyCategory.AMOUNT
+
+        detailName.contains("待结算") ||
+        detailName.contains("视图结算状态") ||
+        detailName.contains("孤儿") -> VerifyCategory.SETTLEMENT_STATUS
+
+        detailName.contains("月均收入") ||
+        detailName.contains("卡片2/3") ||
+        detailName.contains("Dashboard") -> VerifyCategory.STATISTICS
+
+        detailName.contains("工日") ||
+        detailName.contains("权限") -> VerifyCategory.DATA_INTEGRITY
+
+        detailName.contains("物化视图") -> VerifyCategory.SYSTEM
+
+        else -> VerifyCategory.AMOUNT
+    }
+}
+
+/**
+ * 判断校验项是否为低风险（失败时也自动折叠）
+ *
+ * 低风险项：冗余字段误差、历史快照误差、统计展示误差、刷新延迟等
+ * 这些问题不影响核心财务数据和当前业务计算
+ */
+private fun isLowRisk(detailName: String): Boolean {
+    return detailName.contains("工程总额") ||       // 冗余字段误差，统计不依赖此字段
+           detailName.contains("结算快照总额") ||    // 历史快照精度误差，不影响当前业务
+           detailName.contains("月均收入") ||        // 统计展示计算误差
+           detailName.contains("卡片2/3") ||         // Dashboard 展示误差
+           detailName.contains("Dashboard") ||
+           detailName.contains("物化视图")           // 刷新延迟，非数据错误
+}
+
+// ===================== 结果展示 =====================
+
+/**
+ * 校验结果内容区（按业务类别分组 + 折叠）
  */
 @Composable
 private fun VerifyResultContent(
@@ -149,14 +202,19 @@ private fun VerifyResultContent(
     error: String?,
     onRetry: () -> Unit
 ) {
+    // 将校验项按业务类别分组
+    val groupedDetails = remember(result) {
+        result.details.groupBy { categorize(it.name) }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 顶部错误提示（非首次加载的错误，如重试失败）
+        // 顶部错误提示
         error?.let { msg ->
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEBEE)),
@@ -174,9 +232,15 @@ private fun VerifyResultContent(
         // 汇总卡片
         SummaryCard(result = result, isLoading = isLoading, onRetry = onRetry)
 
-        // 校验明细列表
-        result.details.forEach { detail ->
-            VerifyDetailItem(detail = detail)
+        // 按业务类别分组展示
+        VerifyCategory.values().forEach { category ->
+            val items = groupedDetails[category]
+            if (!items.isNullOrEmpty()) {
+                CategorySection(
+                    category = category,
+                    details = items
+                )
+            }
         }
     }
 }
@@ -218,7 +282,6 @@ private fun SummaryCard(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // 统计数据三列
             Row(modifier = Modifier.fillMaxWidth()) {
                 StatItem(
                     label = "通过",
@@ -242,14 +305,12 @@ private fun SummaryCard(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // 耗时信息
             Text(
                 text = "校验耗时: ${result.elapsed}s",
                 color = AppColors.TextSecondary,
                 fontSize = 12.sp
             )
 
-            // 重新校验按钮
             if (!isLoading) {
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedButton(
@@ -302,43 +363,224 @@ private fun StatItem(
 }
 
 /**
- * 单项校验结果
+ * 业务类别分组区块（可折叠）
+ *
+ * 折叠规则：
+ * - 分组内全部通过 → 默认折叠，标题显示绿色通过数
+ * - 分组内有失败项 → 默认展开，标题显示红色失败数
+ * - 用户可手动点击标题行切换展开/折叠状态
  */
 @Composable
-private fun VerifyDetailItem(detail: DataVerifyDetailDto) {
-    val backgroundColor = if (detail.passed) Color(0xFFF1F8E9) else Color(0xFFFFEBEE)
-    val iconTint = if (detail.passed) Color(0xFF4CAF50) else Color(0xFFE57373)
-    val titleColor = if (detail.passed) Color(0xFF2E7D32) else Color(0xFFC62828)
+private fun CategorySection(
+    category: VerifyCategory,
+    details: List<DataVerifyDetailDto>
+) {
+    val passedCount = details.count { it.passed }
+    val failedCount = details.count { !it.passed }
+    val allPassedInGroup = failedCount == 0
+
+    // 分组默认展开状态：有失败项时展开，全通过时折叠
+    var expanded by remember(category, allPassedInGroup) {
+        mutableStateOf(!allPassedInGroup)
+    }
+
+    val headerColor = if (allPassedInGroup) Color(0xFFF1F8E9) else Color(0xFFFFF3E0)
+    val titleColor = if (allPassedInGroup) Color(0xFF2E7D32) else Color(0xFFE65100)
 
     Card(
-        colors = CardDefaults.cardColors(containerColor = backgroundColor),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        // 分组标题行（可点击切换展开/折叠）
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 展开/折叠箭头
+            Icon(
+                imageVector = if (expanded) Icons.Default.KeyboardArrowDown
+                              else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = if (expanded) "折叠" else "展开",
+                tint = AppColors.TextSecondary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // 分组标题
+            Text(
+                text = category.title,
+                color = AppColors.TextPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+
+            // 通过/失败数标签
+            Surface(
+                color = headerColor,
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (allPassedInGroup) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = titleColor,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "${passedCount}项通过",
+                            color = titleColor,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    } else {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = titleColor,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "${failedCount}项失败/${details.size}项",
+                            color = titleColor,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+
+        // 分组内容（展开时显示）
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                details.forEach { detail ->
+                    VerifyDetailItem(detail = detail)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 单项校验结果（可折叠）
+ *
+ * 折叠规则：
+ * - 通过的项 → 折叠，只显示标题行（图标+名称）
+ * - 低风险失败的项 → 折叠，显示标题行+警告标记，用户可展开查看详情
+ * - 高风险失败的项 → 默认展开，直接显示详情
+ */
+@Composable
+private fun VerifyDetailItem(detail: DataVerifyDetailDto) {
+    val lowRisk = isLowRisk(detail.name)
+
+    // 单项默认展开状态：
+    // - 通过 → 折叠（无详情可看）
+    // - 失败+低风险 → 折叠（问题不大，用户可手动展开）
+    // - 失败+高风险 → 展开（需要用户关注）
+    var expanded by remember(detail.name, detail.passed, lowRisk) {
+        mutableStateOf(!detail.passed && !lowRisk)
+    }
+
+    val backgroundColor = when {
+        detail.passed -> Color(0xFFFAFDF6)       // 浅绿
+        lowRisk -> Color(0xFFFFFBF0)              // 浅黄（低风险）
+        else -> Color(0xFFFFF5F5)                 // 浅红（高风险）
+    }
+    val iconTint = if (detail.passed) Color(0xFF4CAF50) else if (lowRisk) Color(0xFFFF9800) else Color(0xFFE57373)
+    val titleColor = if (detail.passed) Color(0xFF2E7D32) else if (lowRisk) Color(0xFFE65100) else Color(0xFFC62828)
+
+    // 是否可折叠（有详情且未通过时允许展开/折叠）
+    val canExpand = detail.detail.isNotEmpty() && !detail.passed
+
+    Surface(
+        color = backgroundColor,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (canExpand) Modifier.clickable { expanded = !expanded } else Modifier)
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = if (detail.passed) Icons.Default.CheckCircle else Icons.Default.Warning,
                     contentDescription = null,
                     tint = iconTint,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = detail.name,
                     color = titleColor,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.weight(1f)
                 )
+                // 低风险失败标记
+                if (!detail.passed && lowRisk) {
+                    Surface(
+                        color = Color(0xFFFFF3E0),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text(
+                            text = "低风险",
+                            color = Color(0xFFE65100),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                }
+                // 展开/折叠箭头（仅有详情的失败项显示）
+                if (canExpand) {
+                    Icon(
+                        imageVector = if (expanded) Icons.Default.KeyboardArrowDown
+                                      else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = if (expanded) "折叠" else "展开",
+                        tint = AppColors.TextSecondary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
             }
-            if (detail.detail.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = detail.detail,
-                    color = AppColors.TextSecondary,
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp
-                )
+
+            // 详情内容（展开时显示）
+            AnimatedVisibility(
+                visible = expanded && detail.detail.isNotEmpty(),
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    HorizontalDivider(color = Color(0xFFE0E0E0), thickness = 0.5.dp)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = detail.detail,
+                        color = AppColors.TextSecondary,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp
+                    )
+                }
             }
         }
     }
