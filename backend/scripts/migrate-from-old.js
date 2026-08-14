@@ -812,6 +812,19 @@ async function migrate() {
     log.info('');
     log.info('[步骤 6] 数据校验...');
 
+    // 7.1 失败记录完整输出（如有）
+    if (failedCount > 0) {
+      log.warn('');
+      log.warn(`========== 导入失败记录（共 ${failedCount} 条）==========`);
+      failedStatements.forEach((fail, idx) => {
+        log.warn(`  [${idx + 1}] 表: ${fail.table} | 错误: ${fail.error}`);
+        log.warn(`      预览: ${fail.preview}`);
+      });
+      log.warn('');
+      log.warn('⚠️  存在导入失败记录，请检查上方日志确认是否影响财务数据');
+    }
+
+    // 7.2 数据量统计
     const tablesToVerify = [
       'users', 'projects', 'subprojects', 'project_workers',
       'wage_settlements', 'wage_distributions', 'wage_advances',
@@ -822,17 +835,25 @@ async function migrate() {
     log.info('');
     log.info('========== 数据量统计 ==========');
     let totalRecords = 0;
+    let hasCountAnomaly = false;
     for (const table of tablesToVerify) {
       const countResult = await client.query(`SELECT COUNT(*) AS count FROM ${table}`);
       const count = parseInt(countResult.rows[0].count, 10);
       totalRecords += count;
-      console.log(`  ${table.padEnd(30)} ${count} 条`);
+      // 对比导入时的统计：如果导入统计中有该表但行数不一致，标记异常
+      const imported = importedTableCount[table] || 0;
+      const marker = (imported > 0 && count !== imported) ? ' ⚠️异常' : '';
+      if (marker) hasCountAnomaly = true;
+      console.log(`  ${table.padEnd(30)} ${count} 条${marker}`);
     }
     log.info(`  ${'总计'.padEnd(30)} ${totalRecords} 条`);
+    if (hasCountAnomaly) {
+      log.warn('⚠️  检测到行数异常：导入成功数与新库实际行数不一致，可能存在数据丢失');
+    }
 
-    // 金额校验
+    // 7.3 金额汇总校验
     log.info('');
-    log.info('========== 金额校验 ==========');
+    log.info('========== 金额汇总校验 ==========');
     const amountChecks = [
       { name: '工程总额合计', query: 'SELECT COALESCE(SUM(total_amount), 0) AS total FROM projects' },
       { name: '子项目金额合计', query: 'SELECT COALESCE(SUM(amount), 0) AS total FROM subprojects' },
@@ -846,6 +867,157 @@ async function migrate() {
       console.log(`  ${check.name.padEnd(20)} ¥${total}`);
     }
 
+    // 7.4 交叉金额校验（财务数据一致性）
+    // 修复：原实现仅汇总金额，无法发现明细与汇总不一致的问题
+    log.info('');
+    log.info('========== 交叉金额校验（财务一致性）==========');
+
+    // 校验1：工程总额 vs 子项目金额之和
+    // 若不一致，说明 projects.total_amount 与 subprojects.amount 脱节（旧库冗余字段未及时更新）
+    log.info('');
+    log.info('校验1: 工程总额 vs 子项目金额之和（按工程维度）');
+    const projectAmountCheck = await client.query(`
+      SELECT p.id, p.name, p.total_amount,
+             COALESCE(SUM(sp.amount), 0) AS subproject_total,
+             p.total_amount - COALESCE(SUM(sp.amount), 0) AS diff
+      FROM projects p
+      LEFT JOIN subprojects sp ON sp.project_id = p.id
+      GROUP BY p.id, p.name, p.total_amount
+      HAVING p.total_amount != COALESCE(SUM(sp.amount), 0)
+         AND p.total_amount IS NOT NULL
+      ORDER BY ABS(p.total_amount - COALESCE(SUM(sp.amount), 0)) DESC
+      LIMIT 20
+    `);
+    if (projectAmountCheck.rows.length === 0) {
+      log.success('  ✅ 所有工程总额与子项目金额之和一致');
+    } else {
+      log.warn(`  ⚠️  发现 ${projectAmountCheck.rows.length} 个工程总额与子项目金额不一致（最多显示20条）:`);
+      console.log(`  ${'工程ID'.padEnd(8)} ${'工程名'.padEnd(30)} ${'工程总额'.padEnd(15)} ${'子项目之和'.padEnd(15)} ${'差额'.padEnd(15)}`);
+      projectAmountCheck.rows.forEach(row => {
+        console.log(`  ${String(row.id).padEnd(8)} ${String(row.name).substring(0, 28).padEnd(30)} ¥${parseFloat(row.total_amount).toFixed(2).padEnd(13)} ¥${parseFloat(row.subproject_total).toFixed(2).padEnd(13)} ¥${parseFloat(row.diff).toFixed(2)}`);
+      });
+      log.warn('  说明：旧库 projects.total_amount 为冗余字段，可能未及时更新。新系统统计以 subprojects.amount 为准，不影响实际计算');
+    }
+
+    // 校验2：结算单总额 vs 工费分配明细之和
+    // 若不一致，说明 wage_distributions 有记录丢失或金额错误，直接影响财务数据
+    log.info('');
+    log.info('校验2: 结算单总额 vs 工费分配明细之和（按结算单维度）');
+    const settlementAmountCheck = await client.query(`
+      SELECT ws.id, ws.settlement_no, ws.total_amount,
+             COALESCE(SUM(wd.amount), 0) AS distribution_total,
+             ws.total_amount - COALESCE(SUM(wd.amount), 0) AS diff
+      FROM wage_settlements ws
+      LEFT JOIN wage_distributions wd ON wd.settlement_id = ws.id
+      GROUP BY ws.id, ws.settlement_no, ws.total_amount
+      HAVING ws.total_amount != COALESCE(SUM(wd.amount), 0)
+      ORDER BY ABS(ws.total_amount - COALESCE(SUM(wd.amount), 0)) DESC
+      LIMIT 20
+    `);
+    if (settlementAmountCheck.rows.length === 0) {
+      log.success('  ✅ 所有结算单总额与工费分配明细之和一致');
+    } else {
+      log.warn(`  ⚠️  发现 ${settlementAmountCheck.rows.length} 个结算单总额与工费分配明细不一致（最多显示20条）:`);
+      console.log(`  ${'结算单ID'.padEnd(10)} ${'结算单号'.padEnd(25)} ${'结算单总额'.padEnd(15)} ${'分配明细之和'.padEnd(15)} ${'差额'.padEnd(15)}`);
+      settlementAmountCheck.rows.forEach(row => {
+        console.log(`  ${String(row.id).padEnd(10)} ${String(row.settlement_no).substring(0, 23).padEnd(25)} ¥${parseFloat(row.total_amount).toFixed(2).padEnd(13)} ¥${parseFloat(row.distribution_total).toFixed(2).padEnd(13)} ¥${parseFloat(row.diff).toFixed(2)}`);
+      });
+      log.warn('  ⚠️  此异常表示工费分配记录丢失或金额错误，需人工核查原始数据');
+    }
+
+    // 校验3：结算单预支金额 vs 预支明细之和
+    // 若不一致，说明 wage_advances 有记录丢失，影响结算单的实付金额
+    log.info('');
+    log.info('校验3: 结算单预支金额 vs 预支明细之和（按结算单维度）');
+    const advanceAmountCheck = await client.query(`
+      SELECT ws.id, ws.settlement_no, ws.advance_amount,
+             COALESCE(SUM(wa.advance_amount), 0) AS advance_total,
+             ws.advance_amount - COALESCE(SUM(wa.advance_amount), 0) AS diff
+      FROM wage_settlements ws
+      LEFT JOIN wage_advances wa ON wa.settlement_id = ws.id
+      GROUP BY ws.id, ws.settlement_no, ws.advance_amount
+      HAVING ws.advance_amount != COALESCE(SUM(wa.advance_amount), 0)
+      ORDER BY ABS(ws.advance_amount - COALESCE(SUM(wa.advance_amount), 0)) DESC
+      LIMIT 20
+    `);
+    if (advanceAmountCheck.rows.length === 0) {
+      log.success('  ✅ 所有结算单预支金额与预支明细之和一致');
+    } else {
+      log.warn(`  ⚠️  发现 ${advanceAmountCheck.rows.length} 个结算单预支金额与预支明细不一致（最多显示20条）:`);
+      console.log(`  ${'结算单ID'.padEnd(10)} ${'结算单号'.padEnd(25)} ${'结算单预支'.padEnd(15)} ${'预支明细之和'.padEnd(15)} ${'差额'.padEnd(15)}`);
+      advanceAmountCheck.rows.forEach(row => {
+        console.log(`  ${String(row.id).padEnd(10)} ${String(row.settlement_no).substring(0, 23).padEnd(25)} ¥${parseFloat(row.advance_amount).toFixed(2).padEnd(13)} ¥${parseFloat(row.advance_total).toFixed(2).padEnd(13)} ¥${parseFloat(row.diff).toFixed(2)}`);
+      });
+      log.warn('  ⚠️  此异常表示预支记录丢失或金额错误，需人工核查原始数据');
+    }
+
+    // 校验4：已结算工程状态一致性
+    // 检查已结算工程（有结算单）的 project_user_status 是否正确标记为 settled
+    log.info('');
+    log.info('校验4: 已结算工程状态一致性');
+    const statusCheck = await client.query(`
+      SELECT COUNT(*) AS inconsistent_count
+      FROM wage_settlements ws
+      JOIN project_user_status pus ON pus.user_id = ws.user_id
+      WHERE pus.settlement_id = ws.id
+        AND pus.settlement_status != 'settled'
+    `);
+    const inconsistentCount = parseInt(statusCheck.rows[0].inconsistent_count, 10);
+    if (inconsistentCount === 0) {
+      log.success('  ✅ 所有已结算工程的状态标记一致');
+    } else {
+      log.warn(`  ⚠️  发现 ${inconsistentCount} 条结算状态不一致记录（project_user_status 未正确标记为 settled）`);
+      log.warn('  可执行: UPDATE project_user_status SET settlement_status = \'settled\' WHERE settlement_id IS NOT NULL AND settlement_status != \'settled\'');
+    }
+
+    // 校验5：子项目单位长度合理性（避免迁移时单位换算错误）
+    // 新库 length/width 单位为厘米，正常范围 1-10000（0.01m - 100m）
+    // 若出现 >10000 或 <1 的值，可能是单位换算异常
+    log.info('');
+    log.info('校验5: 子项目尺寸单位合理性（厘米）');
+    const dimensionCheck = await client.query(`
+      SELECT id, project_id, length, width
+      FROM subprojects
+      WHERE (length IS NOT NULL AND (length > 10000 OR length < 1))
+         OR (width IS NOT NULL AND (width > 10000 OR width < 1))
+      LIMIT 20
+    `);
+    if (dimensionCheck.rows.length === 0) {
+      log.success('  ✅ 所有子项目尺寸值在合理范围内（1-10000厘米）');
+    } else {
+      log.warn(`  ⚠️  发现 ${dimensionCheck.rows.length} 条子项目尺寸异常（最多显示20条）:`);
+      console.log(`  ${'子项目ID'.padEnd(10)} ${'工程ID'.padEnd(10)} ${'长度(cm)'.padEnd(15)} ${'宽度(cm)'.padEnd(15)}`);
+      dimensionCheck.rows.forEach(row => {
+        console.log(`  ${String(row.id).padEnd(10)} ${String(row.project_id).padEnd(10)} ${String(row.length).padEnd(15)} ${String(row.width).padEnd(15)}`);
+      });
+      log.warn('  说明：正常范围 1-10000 厘米（0.01m-100m）。异常值可能是迁移时单位换算错误');
+    }
+
+    // 7.5 校验结果汇总
+    log.info('');
+    log.info('========== 校验结果汇总 ==========');
+    const hasFailedImports = failedCount > 0;
+    const hasProjectAmountIssue = projectAmountCheck.rows.length > 0;
+    const hasSettlementAmountIssue = settlementAmountCheck.rows.length > 0;
+    const hasAdvanceAmountIssue = advanceAmountCheck.rows.length > 0;
+    const hasStatusIssue = inconsistentCount > 0;
+    const hasDimensionIssue = dimensionCheck.rows.length > 0;
+
+    if (!hasFailedImports && !hasCountAnomaly && !hasProjectAmountIssue &&
+        !hasSettlementAmountIssue && !hasAdvanceAmountIssue &&
+        !hasStatusIssue && !hasDimensionIssue) {
+      log.success('  ✅ 所有校验通过，财务数据一致性正常');
+    } else {
+      log.warn('  ⚠️  存在异常项，请逐项检查上方日志：');
+      if (hasFailedImports) log.warn(`     - ${failedCount} 条导入失败记录`);
+      if (hasCountAnomaly) log.warn('     - 行数统计异常');
+      if (hasProjectAmountIssue) log.warn(`     - ${projectAmountCheck.rows.length} 个工程总额与子项目金额不一致`);
+      if (hasSettlementAmountIssue) log.warn(`     - ${settlementAmountCheck.rows.length} 个结算单总额与分配明细不一致`);
+      if (hasAdvanceAmountIssue) log.warn(`     - ${advanceAmountCheck.rows.length} 个结算单预支与预支明细不一致`);
+      if (hasStatusIssue) log.warn(`     - ${inconsistentCount} 条结算状态不一致`);
+      if (hasDimensionIssue) log.warn(`     - ${dimensionCheck.rows.length} 条子项目尺寸异常`);
+    }
+
     // ========== 完成 ==========
     log.info('');
     log.info('==========================================');
@@ -857,6 +1029,9 @@ async function migrate() {
     log.info('  2. 重启后端服务');
     log.info('  3. 用旧库用户账号登录验证（账号密码请向管理员索取，请勿在源码中留存）');
     log.info('  4. 检查工程列表、结算记录、附件显示是否正常');
+    if (hasFailedImports || hasSettlementAmountIssue || hasAdvanceAmountIssue || hasStatusIssue) {
+      log.info('  5. ⚠️  存在财务数据异常，请按校验结果人工核查并修复后再投入使用');
+    }
 
   } catch (err) {
     log.error(`迁移失败: ${err.message}`);
