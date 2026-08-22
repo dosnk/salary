@@ -1017,28 +1017,81 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
-            buildConfigField("String", "BASE_URL", "\"http://192.168.1.100:3000\"")
+            buildConfigField("String", "BASE_URL", "\"http://10.0.2.2:3000\"")
         }
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(...)
+            isMinifyEnabled = false          // R8混淆保持关闭，proguard规则已就绪后续可启用
+            isShrinkResources = false
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             buildConfigField("String", "BASE_URL", "\"https://api.salary.com\"")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }
 ```
+
+> 说明：`BASE_URL` buildConfigField 目前实际未使用，服务器地址由 `ServerConfig`（DataStore）在首次启动时由用户配置。
 
 ### 7.2 发布配置
 
 | 项目 | 配置 |
 |------|------|
 | applicationId | com.salary.manager |
-| versionCode | 1 (自增) |
-| versionName | 1.0.0 |
-| 签名 | release.keystore |
+| versionCode | MAJOR×1000000 + MINOR×10000 + PATCH×100 + BUILD_NUMBER（自动递增） |
+| versionName | MAJOR.MINOR.PATCH（见 version.properties） |
 | Target SDK | 35 |
 | Min SDK | 26 |
+
+### 7.3 Release 签名凭据
+
+签名文件与凭据均不入库（`.gitignore` 已排除），**丢失后无法补发更新**，请务必备份。
+
+| 项目 | 值 |
+|------|------|
+| Keystore 文件 | `salary-android/keystore/salary-release.jks` |
+| 凭据配置文件 | `salary-android/keystore.properties`（不入库） |
+| Key alias | `salary` |
+| Store 密码 | `Salary@2026#Release!Ks` |
+| Key 密码 | `Salary@2026#Release!Ks` |
+| 签名算法 | RSA 2048（SHA384withRSA 自签名证书） |
+| 证书 DN | CN=Salary Manager, OU=Development, O=SanRenXing, L=Maoming, ST=Guangdong, C=CN |
+| 有效期 | 30 年（至 2056 年） |
+| 签名方案 | APK Signature Scheme v2（覆盖 Android 7.0+，minSdk 26 适用） |
+
+`keystore.properties` 文件内容（如丢失可据此重建）：
+
+```properties
+STORE_FILE=keystore/salary-release.jks
+STORE_PASSWORD=Salary@2026#Release!Ks
+KEY_ALIAS=salary
+KEY_PASSWORD=Salary@2026#Release!Ks
+```
+
+### 7.4 构建命令
+
+```powershell
+# Debug 构建（日常开发）
+cd salary-android
+.\gradlew.bat :app:assembleDebug
+# 产物: app\build\outputs\apk\debug\salary-V{版本}-b{构建号}-debug.apk
+
+# Release 构建（正式签名）
+.\gradlew.bat :app:assembleRelease
+# 产物: app\build\outputs\apk\release\salary-V{版本}-b{构建号}-release.apk
+```
+
+- 版本号与构建号由 `version.properties` 管理，`assembleDebug`/`assembleRelease` 构建后自动递增 `BUILD_NUMBER`
+- 凭据文件（`keystore.properties`）或 keystore 缺失时，release 构建产出**未签名 APK** 并输出警告，不会失败
+- 首个正式签名产物：`salary-V2.0.0-b231-release.apk`（16.34MB）
+
+### 7.5 验证签名
+
+```powershell
+# 使用 Android SDK build-tools 中的 apksigner
+& "$env:LOCALAPPDATA\Android\Sdk\build-tools\{版本}\apksigner.bat" verify -v `
+    "app\build\outputs\apk\release\salary-V{版本}-b{构建号}-release.apk"
+# 期望输出: Verified using v2 scheme (APK Signature Scheme v2): true
+```
 
 ---
 
