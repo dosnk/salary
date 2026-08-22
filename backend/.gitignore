@@ -53,3 +53,5 @@ upload/
 check-*.js
 debug-*.js
 diagnose-*.js
+# 例外：scripts/ 下的正式运维工具需纳入版本管理
+!scripts/check-*.js
