@@ -128,7 +128,7 @@ async function fix() {
 
     // 优先：已完工且未结算的子项目
     const unsettledCompleted = await client.query(`
-      SELECT sp.id, sp.space_type, sp.status, sp.amount
+      SELECT sp.id, sp.space_type_id, sp.construction_plan_id, sp.status, sp.amount
       FROM subprojects sp
       WHERE sp.project_id = $1
         AND sp.status = 'completed'
@@ -139,7 +139,7 @@ async function fix() {
 
     // 次选：该工程任意子项目
     const anySub = await client.query(`
-      SELECT sp.id, sp.space_type, sp.status, sp.amount
+      SELECT sp.id, sp.space_type_id, sp.construction_plan_id, sp.status, sp.amount
       FROM subprojects sp
       WHERE sp.project_id = $1
       ORDER BY sp.id
@@ -159,7 +159,7 @@ async function fix() {
       process.exit(1);
     }
 
-    log.info(`  挂靠子项目: #${anchorSub.id} (${anchorSub.space_type}, 状态=${anchorSub.status}, 金额=${anchorSub.amount})`);
+    log.info(`  挂靠子项目: #${anchorSub.id} (空间类型ID=${anchorSub.space_type_id}, 状态=${anchorSub.status}, 金额=${anchorSub.amount})`);
     log.info(`  选择策略: ${anchorMode}`);
 
     // ========== 步骤3：执行补录 ==========
