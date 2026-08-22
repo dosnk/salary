@@ -77,6 +77,9 @@ desktop.ini
 gradle-home/
 # 本地配置（含 SDK 路径）
 local.properties
+# Release 签名凭据（keystore与密码，严禁入库，丢失无法补发更新）
+salary-android/keystore/
+salary-android/keystore.properties
 # APK 构建输出
 *.apk
 *.aab

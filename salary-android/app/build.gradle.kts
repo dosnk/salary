@@ -29,6 +29,16 @@ val minorVersion = (versionProps.getProperty("MINOR") ?: "0").toInt()
 val patchVersion = (versionProps.getProperty("PATCH") ?: "0").toInt()
 val buildNumber = (versionProps.getProperty("BUILD_NUMBER") ?: "1").toInt()
 
+// ========== Release 签名配置 ==========
+// 凭据从 keystore.properties 读取（该文件不纳入版本管理，防泄露）
+// 凭据文件或 keystore 缺失时跳过签名配置，release 构建会产出未签名 APK 而非失败
+val keystorePropsFile = rootProject.file("keystore.properties")
+val keystoreProps = Properties().apply {
+    if (keystorePropsFile.exists()) {
+        keystorePropsFile.inputStream().use { load(it) }
+    }
+}
+
 // 语义化版本名：MAJOR.MINOR.PATCH
 val appVersionName = "$majorVersion.$minorVersion.$patchVersion"
 // 版本代码：MAJOR * 1000000 + MINOR * 10000 + PATCH * 100 + BUILD_NUMBER
@@ -49,6 +59,26 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        // 正式签名：keystore.properties 存在且 keystore 文件有效时启用
+        create("release") {
+            if (keystorePropsFile.exists()) {
+                val storeFilePath = keystoreProps.getProperty("STORE_FILE")
+                val storeFileObj = storeFilePath?.let { rootProject.file(it) }
+                if (storeFileObj != null && storeFileObj.exists()) {
+                    storeFile = storeFileObj
+                    storePassword = keystoreProps.getProperty("STORE_PASSWORD")
+                    keyAlias = keystoreProps.getProperty("KEY_ALIAS")
+                    keyPassword = keystoreProps.getProperty("KEY_PASSWORD")
+                } else {
+                    println("警告: keystore 文件不存在($storeFilePath)，release 构建将产出未签名 APK")
+                }
+            } else {
+                println("警告: keystore.properties 不存在，release 构建将产出未签名 APK")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
@@ -59,6 +89,8 @@ android {
             isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             buildConfigField("String", "BASE_URL", "\"https://api.salary.com\"")
+            // 使用正式签名；凭据缺失时 signingConfig 未赋值有效文件，产出未签名 APK
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
