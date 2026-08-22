@@ -117,7 +117,7 @@ async function fix() {
     const user = userResult.rows[0];
     log.info(`  归属用户: #${user.id} ${user.nickname} (${user.role})`);
 
-    // ========== 步骤2：选择挂靠子项目 ==========
+    // ========== 步骤2：选择/创建挂靠子项目 ==========
     log.info('');
     log.info('[步骤 2] 选择挂靠子项目...');
     const projectId = settle.project_id;
@@ -125,6 +125,18 @@ async function fix() {
       log.error('结算单未关联工程(project_id为空)，无法选择挂靠子项目，需人工处理');
       process.exit(1);
     }
+
+    // 查询工程当前状态（供人工确认）
+    const projResult = await client.query(`
+      SELECT p.id, p.name, p.status, p.total_amount
+      FROM projects p WHERE p.id = $1
+    `, [projectId]);
+    if (projResult.rows.length === 0) {
+      log.error(`工程${projectId}不存在，退出`);
+      process.exit(1);
+    }
+    const proj = projResult.rows[0];
+    log.info(`  关联工程: #${proj.id} ${proj.name} (状态=${proj.status}, 总额=${proj.total_amount})`);
 
     // 优先：已完工且未结算的子项目
     const unsettledCompleted = await client.query(`
@@ -148,6 +160,8 @@ async function fix() {
 
     let anchorSub;
     let anchorMode;
+    let needCreateAnchor = false;
+
     if (unsettledCompleted.rows.length > 0) {
       anchorSub = unsettledCompleted.rows[0];
       anchorMode = '已完工且未结算（补录后该子项目视为已结算）';
@@ -155,22 +169,54 @@ async function fix() {
       anchorSub = anySub.rows[0];
       anchorMode = '工程下首个子项目（仅作外键锚点）';
     } else {
-      log.error(`工程${projectId}下无任何子项目，无法补录（需人工创建子项目后重试）`);
-      process.exit(1);
+      // 工程下无任何子项目（旧库中该工程的子项目已被删除，但结算单仍在）
+      // wage_distributions.subproject_id 为 NOT NULL 外键，必须创建补录锚点子项目
+      needCreateAnchor = true;
+      anchorMode = '工程下无子项目，需创建补录锚点子项目';
+      log.warn(`  工程${projectId}下无任何子项目（旧库子项目已被删除，但结算单仍在）`);
+      log.warn('  将创建补录锚点子项目：status=completed（防重复结算），amount=1396.80，并同步工程总额');
     }
 
-    log.info(`  挂靠子项目: #${anchorSub.id} (空间类型ID=${anchorSub.space_type_id}, 状态=${anchorSub.status}, 金额=${anchorSub.amount})`);
-    log.info(`  选择策略: ${anchorMode}`);
+    if (!needCreateAnchor) {
+      log.info(`  挂靠子项目: #${anchorSub.id} (空间类型ID=${anchorSub.space_type_id}, 状态=${anchorSub.status}, 金额=${anchorSub.amount})`);
+      log.info(`  选择策略: ${anchorMode}`);
+    }
 
     // ========== 步骤3：执行补录 ==========
     // created_at 对齐结算时间，月度统计口径正确；结算时间为空时用当前时间兜底
     const createdAt = settle.settled_at || new Date();
 
+    // 锚点子项目创建参数（仅 needCreateAnchor 时使用）
+    let anchorCreateInfo = null;
+    if (needCreateAnchor) {
+      // 查询有效字典（取ID最小的作为占位，remark 标记补录来源）
+      const stResult = await client.query('SELECT id, name FROM space_types ORDER BY id LIMIT 1');
+      const planResult = await client.query('SELECT id, name, unit FROM construction_plans ORDER BY id LIMIT 1');
+      if (stResult.rows.length === 0 || planResult.rows.length === 0) {
+        log.error('字典数据缺失（space_types/construction_plans 为空），无法创建锚点子项目，退出');
+        process.exit(1);
+      }
+      anchorCreateInfo = {
+        spaceTypeId: stResult.rows[0].id,
+        spaceTypeName: stResult.rows[0].name,
+        planId: planResult.rows[0].id,
+        planName: planResult.rows[0].name,
+        remark: `旧库结算明细缺失补录锚点（结算单${settle.settlement_no}），原始子项目已在旧库删除`
+      };
+      log.info(`  锚点字典: 空间类型=${anchorCreateInfo.spaceTypeName}(#${anchorCreateInfo.spaceTypeId}), 施工方案=${anchorCreateInfo.planName}(#${anchorCreateInfo.planId})`);
+    }
+
     log.info('');
     if (DRY_RUN) {
-      log.info('[Dry Run] 预览待执行的INSERT：');
-      log.info(`  INSERT INTO wage_distributions (subproject_id, user_id, workdays, quantity, amount, settlement_id, created_at)`);
-      log.info(`  VALUES (${anchorSub.id}, ${TARGET_USER_ID}, 1, 0, ${AMOUNT}, ${SETTLEMENT_ID}, '${createdAt.toISOString()}')`);
+      log.info('[Dry Run] 预览待执行的操作：');
+      if (needCreateAnchor) {
+        log.info(`  1. INSERT INTO subprojects (工程${projectId}, quantity=1, amount=${AMOUNT}, status='completed', remark='旧库结算明细缺失补录锚点...')`);
+        log.info(`  2. UPDATE projects SET total_amount = total_amount + ${AMOUNT} (工程${projectId}总额同步)`);
+        log.info(`  3. INSERT INTO wage_distributions (新锚点子项目ID, 用户${TARGET_USER_ID}, 工日=1, 数量=0, 金额=${AMOUNT}, 结算单${SETTLEMENT_ID})`);
+      } else {
+        log.info(`  1. INSERT INTO wage_distributions (子项目${anchorSub.id}, 用户${TARGET_USER_ID}, 工日=1, 数量=0, 金额=${AMOUNT}, 结算单${SETTLEMENT_ID}, created_at='${createdAt.toISOString()}')`);
+      }
+      log.info('  4. REFRESH MATERIALIZED VIEW mv_project_user_settlement_status');
       log.info('[Dry Run] 未执行更新。去掉 --dry-run 参数执行补录。');
       return;
     }
@@ -178,11 +224,38 @@ async function fix() {
     log.info('[步骤 3] 事务内执行补录...');
     await client.query('BEGIN');
     try {
+      let anchorSubId;
+      if (needCreateAnchor) {
+        // 创建补录锚点子项目：
+        // - status='completed'：防止出现在可结算子项目列表被重复结算
+        // - quantity=1：占位（旧库明细丢失，无从得知真实数量）
+        // - amount=1396.80：还原历史业务量，工程总额同步更新
+        // - created_at 对齐结算时间，保证月度统计口径
+        const insertSub = await client.query(`
+          INSERT INTO subprojects (project_id, space_type_id, construction_plan_id, length, width, quantity, amount, status, remark, created_at, updated_at)
+          VALUES ($1, $2, $3, NULL, NULL, 1, $4, 'completed', $5, $6, $6)
+          RETURNING id
+        `, [projectId, anchorCreateInfo.spaceTypeId, anchorCreateInfo.planId, AMOUNT, anchorCreateInfo.remark, createdAt]);
+        anchorSubId = insertSub.rows[0].id;
+        log.success(`补录锚点子项目已创建: #${anchorSubId}`);
+
+        // 同步工程总额（保持"工程总额=子项目之和"校验通过）
+        await client.query(`
+          UPDATE projects
+          SET total_amount = (SELECT COALESCE(SUM(amount), 0) FROM subprojects WHERE project_id = $1),
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1
+        `, [projectId]);
+        log.success(`工程${projectId}总额已同步`);
+      } else {
+        anchorSubId = anchorSub.id;
+      }
+
       await client.query(`
         INSERT INTO wage_distributions (subproject_id, user_id, workdays, quantity, amount, settlement_id, created_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
       `, [
-        anchorSub.id,
+        anchorSubId,
         TARGET_USER_ID,
         1,                          // 工日默认1（旧明细丢失，无从得知真实工日）
         0,                          // 数量0（无从得知真实数量）
@@ -226,10 +299,28 @@ async function fix() {
     log.info(`  结算单总额: ${v.total_amount}`);
     log.info(`  分配明细之和: ${v.distribution_total}`);
     if (Math.abs(parseFloat(v.diff)) <= 0.005) {
-      log.success(`✅ 复核通过：结算单${SETTLEMENT_ID}总额与分配明细之和一致（差异=${v.diff}）`);
+      log.success(`✅ 复核1通过：结算单${SETTLEMENT_ID}总额与分配明细之和一致（差异=${v.diff}）`);
     } else {
-      log.error(`⚠️ 复核失败：差异=${v.diff}，请人工检查`);
+      log.error(`⚠️ 复核1失败：差异=${v.diff}，请人工检查`);
       process.exit(1);
+    }
+
+    // 复核2：若创建了锚点子项目，验证工程总额=子项目之和（校验1不被破坏）
+    if (needCreateAnchor) {
+      const projVerify = await client.query(`
+        SELECT p.total_amount,
+               COALESCE((SELECT SUM(sp.amount) FROM subprojects sp WHERE sp.project_id = p.id), 0) AS sub_total
+        FROM projects p
+        WHERE p.id = $1
+      `, [projectId]);
+      const pv = projVerify.rows[0];
+      log.info(`  工程${projectId}总额: ${pv.total_amount} | 子项目之和: ${pv.sub_total}`);
+      if (Math.abs(parseFloat(pv.total_amount) - parseFloat(pv.sub_total)) <= 0.005) {
+        log.success(`✅ 复核2通过：工程${projectId}总额与子项目之和一致`);
+      } else {
+        log.error(`⚠️ 复核2失败：工程总额与子项目之和差异=${parseFloat(pv.total_amount) - parseFloat(pv.sub_total)}，请人工检查`);
+        process.exit(1);
+      }
     }
 
     log.info('');
@@ -238,7 +329,10 @@ async function fix() {
     log.info('==========================================');
     log.info('后续影响：');
     log.info(`  1. 用户${TARGET_USER_ID}(${user.nickname})的已结算收入统计增加 ${AMOUNT} 元（2026年3月口径）`);
-    log.info('  2. 数据一致性校验的"校验2：结算单总额一致性"将转为通过');
+    if (needCreateAnchor) {
+      log.info(`  2. 工程${projectId}(${proj.name})新增一条补录锚点子项目（金额${AMOUNT}，工程总额同步更新，App工程详情可见备注说明）`);
+    }
+    log.info('  3. 数据一致性校验的"校验2：结算单总额一致性"将转为通过');
 
   } catch (err) {
     log.error(`补录失败: ${err.message}`);
