@@ -309,6 +309,18 @@ class DashboardViewModel @Inject constructor(
     /** 防抖保存表单的Job */
     private var saveFormJob: kotlinx.coroutines.Job? = null
 
+    /**
+     * 表单是否有未落盘的用户修改
+     *
+     * true  = 用户修改了表单但800ms防抖保存尚未完成
+     * false = 无未落盘修改（刚恢复缓存 / 防抖已落盘 / 保存工程成功已重置）
+     *
+     * 用途：onCleared 兜底保存仅在 formDirty=true 时执行，
+     * 防止"启动后表单尚未恢复就退出"时空表单覆盖磁盘上的有效缓存
+     */
+    @Volatile
+    private var formDirty = false
+
     /** 工程列表分页：当前页码 */
     private var projectsCurrentPage = 1
     /** 工程列表分页：每页数量 */
@@ -328,6 +340,13 @@ class DashboardViewModel @Inject constructor(
     private fun loadInitialData() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true)
+
+            // ========== 表单缓存优先恢复（必须在网络请求之前） ==========
+            // 若放在网络加载之后，冷启动时表单会先显示为空（网络请求耗时数秒），
+            // 用户若在恢复完成前退出App，onCleared兜底保存的空表单会覆盖磁盘上的
+            // 有效缓存，导致"上次输入的内容下次启动丢失"。
+            // DataStore本地读取毫秒级完成，提前执行不影响加载速度。
+            restoreFormCache()
 
             // ========== 施工人员缓存优先注入 ==========
             // 施工人员数据变更频率极低，先用内存/磁盘缓存立即渲染，避免冷启动等待网络。
@@ -366,9 +385,6 @@ class DashboardViewModel @Inject constructor(
                     putAll(dashboardCache.loadAddressMap())
                 }
 
-                // 从缓存恢复表单数据
-                restoreFormCache()
-
                 _uiState.value = _uiState.value.copy(
                     isLoading = false
                 )
@@ -383,6 +399,10 @@ class DashboardViewModel @Inject constructor(
 
     /**
      * 从缓存恢复表单数据
+     *
+     * 在网络请求之前执行（DataStore本地读取，毫秒级），确保冷启动首帧即显示
+     * 上次未保存的输入内容。施工方案的单价依赖方案列表（网络加载），
+     * 由 [loadConstructionPlans] 完成后调用 [applySchemePricing] 补齐。
      */
     private suspend fun restoreFormCache() {
         try {
@@ -403,21 +423,33 @@ class DashboardViewModel @Inject constructor(
                 // 已填写实测数据时默认展开，否则折叠（实测字段平时少用）
                 isMeasuredSectionExpanded = cache.measuredQuantity.isNotBlank() || cache.measuredNote.isNotBlank()
             )
-            // 恢复施工方案对应的单价
-            if (cache.selectedScheme.isNotBlank()) {
-                val scheme = _uiState.value.constructionPlans.find { it.name == cache.selectedScheme }
-                if (scheme != null) {
-                    _uiState.value = _uiState.value.copy(unitPrice = scheme.price)
-                }
-            }
+            // 恢复的内容已与磁盘缓存一致，不算"未落盘的修改"
+            formDirty = false
             // 无论是否恢复方案，只要长度/宽度/高度/实测数量非空就重算预览
             // 避免：用户上次仅修改了长度/宽度而未选方案，恢复后预览公式为空的不一致问题
+            // （此时方案列表可能尚未加载，单价由 applySchemePricing 在方案就绪后补齐）
             if (cache.lengthCm.isNotBlank() || cache.widthCm.isNotBlank() || cache.heightCm.isNotBlank() || cache.measuredQuantity.isNotBlank()) {
                 recalculate()
             }
         } catch (_: Exception) {
             // 静默处理
         }
+    }
+
+    /**
+     * 施工方案列表加载完成后，为已恢复的表单补充方案单价并重算预览
+     *
+     * restoreFormCache 在网络请求之前执行，此时方案列表尚未从服务端加载，
+     * 无法查到已恢复方案名对应的单价。本函数在 loadConstructionPlans 成功后调用，
+     * 保证恢复表单后单价和金额预览正确。
+     */
+    private fun applySchemePricing() {
+        val state = _uiState.value
+        if (state.selectedScheme.isBlank()) return
+        val scheme = state.constructionPlans.find { it.name == state.selectedScheme } ?: return
+        _uiState.value = state.copy(unitPrice = scheme.price)
+        // 单价就绪后重算预览，覆盖恢复时单价为0的计算结果
+        recalculate()
     }
 
     /**
@@ -455,9 +487,12 @@ class DashboardViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     constructionPlans = schemeInfos
                 )
+                // 方案列表就绪后，为恢复的表单补充单价并重算预览
+                // （restoreFormCache 在网络请求前执行，当时查不到方案单价）
+                applySchemePricing()
             }
         } catch (_: Exception) {
-            // 静默处理
+            // 静默处理，不影响其他数据加载
         }
     }
 
@@ -1474,6 +1509,9 @@ class DashboardViewModel @Inject constructor(
 
                     // 清除表单缓存（保留地址映射）
                     viewModelScope.launch { dashboardCache.clearFormCache() }
+                    // 保存成功后表单已重置并清除了缓存，无未落盘修改；
+                    // 否则onCleared兜底保存会用重置后的状态覆盖clearFormCache的结果
+                    formDirty = false
 
                     // 刷新工程历史
                     loadProjects()
@@ -1779,6 +1817,8 @@ class DashboardViewModel @Inject constructor(
      * 参考Vue前端的 saveFormDataDebounced（800ms防抖）
      */
     private fun saveFormDebounced() {
+        // 用户有新修改，标记为未落盘状态（onCleared 据此决定是否兜底保存）
+        formDirty = true
         saveFormJob?.cancel()
         saveFormJob = viewModelScope.launch {
             kotlinx.coroutines.delay(800)
@@ -1801,6 +1841,12 @@ class DashboardViewModel @Inject constructor(
                     )
                 )
             }
+            // 落盘完成，清除未保存标记。
+            // 仅当自己仍是最新调度的防抖Job时才清除：保存期间用户若又输入，
+            // saveFormJob已被替换为新Job，此时不清除（否则新输入的未落盘标记被误删）
+            if (saveFormJob === coroutineContext[kotlinx.coroutines.Job]) {
+                formDirty = false
+            }
         }
     }
 
@@ -1808,6 +1854,10 @@ class DashboardViewModel @Inject constructor(
      * ViewModel销毁时兜底保存
      *
      * 场景：用户修改表单后800ms内退出App，防抖Job未执行就被取消，导致最后一次修改丢失。
+     *
+     * 覆盖保护：仅当 formDirty=true（存在未落盘的用户修改）时才兜底保存表单。
+     * 若启动后表单尚未从缓存恢复（或恢复后用户未做任何修改）就退出，
+     * 保存空表单/旧快照会覆盖磁盘上的有效缓存，导致"输入内容下次启动丢失"。
      *
      * 实现说明：
      * - 使用 viewModelScope + NonCancellable 异步保存，避免在主线程执行IO操作
@@ -1818,30 +1868,40 @@ class DashboardViewModel @Inject constructor(
      */
     override fun onCleared() {
         super.onCleared()
+        // 捕获快照（非volatile读取在主线程，onCleared也在主线程调用，无竞态）
+        val hasUnsavedChanges = formDirty
         // 取消未执行的防抖Job（避免重复保存）
         saveFormJob?.cancel()
-        // 异步兜底保存表单快照（防抖未完成时强制落盘）
-        // 使用 NonCancellable 确保保存操作不被取消
+        // 异步兜底保存表单快照（仅在有未落盘修改时，防抖未完成时强制落盘）
+        if (hasUnsavedChanges) {
+            // 使用 NonCancellable 确保保存操作不被取消
+            viewModelScope.launch(kotlinx.coroutines.NonCancellable) {
+                try {
+                    val state = _uiState.value
+                    dashboardCache.saveFormCache(
+                        DashboardCache.FormCache(
+                            customerAddress = state.customerAddress,
+                            selectedSpaceType = state.selectedSpaceType,
+                            selectedScheme = state.selectedScheme,
+                            lengthCm = state.lengthCm,
+                            widthCm = state.widthCm,
+                            salaryDistribution = state.salaryDistribution,
+                            selectedConstructorIds = state.selectedConstructorIds.toList(),
+                            workerWorkdays = state.workerWorkdays,
+                            remark = state.remark,
+                            measuredQuantity = state.measuredQuantity,
+                            measuredNote = state.measuredNote,
+                            heightCm = state.heightCm
+                        )
+                    )
+                } catch (_: Exception) {
+                    // 静默处理，销毁阶段无法向用户报错
+                }
+            }
+        }
+        // 地址映射兜底落盘（无覆盖风险：内存Map是最新状态，始终落盘）
         viewModelScope.launch(kotlinx.coroutines.NonCancellable) {
             try {
-                val state = _uiState.value
-                dashboardCache.saveFormCache(
-                    DashboardCache.FormCache(
-                        customerAddress = state.customerAddress,
-                        selectedSpaceType = state.selectedSpaceType,
-                        selectedScheme = state.selectedScheme,
-                        lengthCm = state.lengthCm,
-                        widthCm = state.widthCm,
-                        salaryDistribution = state.salaryDistribution,
-                        selectedConstructorIds = state.selectedConstructorIds.toList(),
-                        workerWorkdays = state.workerWorkdays,
-                        remark = state.remark,
-                        measuredQuantity = state.measuredQuantity,
-                        measuredNote = state.measuredNote,
-                        heightCm = state.heightCm
-                    )
-                )
-                // 地址映射兜底落盘
                 dashboardCache.saveAddressMap(addressConstructorMap.toMap())
             } catch (_: Exception) {
                 // 静默处理，销毁阶段无法向用户报错
