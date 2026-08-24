@@ -74,7 +74,12 @@ class DashboardCache @Inject constructor(
         /** 实测备注 */
         val measuredNote: String = "",
         /** 高度（厘米字符串，仅梯形等需要三维参数的形状使用，空字符串表示未输入） */
-        val heightCm: String = ""
+        val heightCm: String = "",
+        /**
+         * 总工日校验值（按工日分配时使用，空字符串表示不校验）
+         * 默认空字符串保证旧版本缓存JSON（无此字段）反序列化兼容
+         */
+        val totalWorkdaysInput: String = ""
     )
 
     /**

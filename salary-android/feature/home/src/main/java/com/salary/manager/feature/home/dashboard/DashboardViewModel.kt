@@ -39,7 +39,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.text.DecimalFormat
@@ -268,6 +270,12 @@ class DashboardViewModel @Inject constructor(
     private companion object {
         const val TAG = "DashboardViewModel"
 
+        /** onStop同步落盘超时（毫秒）：超时后放弃写入，防止磁盘异常阻塞主线程 */
+        const val FORM_CACHE_FLUSH_TIMEOUT_MS = 1500L
+
+        /** 启动时缓存恢复读取超时（毫秒）：防止DataStore读取悬挂禁用整会话的后台落盘 */
+        const val FORM_CACHE_RESTORE_TIMEOUT_MS = 3000L
+
         /**
          * 施工人员列表进程内单例缓存
          *
@@ -354,7 +362,13 @@ class DashboardViewModel @Inject constructor(
      * 覆盖场景：
      * - 用户输入后800ms防抖未到期就按Home键/切其他App → 上滑杀进程
      * - 此时进程被直接杀死，onCleared不会执行，防抖Job也随进程消失
-     * - 唯一保障是后台瞬间同步落盘当前表单快照
+     * - 唯一保障是后台瞬间落盘当前表单快照
+     *
+     * 同步阻塞写（runBlocking + 超时保护）：
+     * ON_STOP返回后进程随时可能被系统杀死，异步协程内的DataStore写入
+     * 可能来不及完成导致落盘丢失，必须阻塞到写入完成才返回。
+     * 表单JSON仅数百字节，正常毫秒级完成；超时保护防止磁盘异常时
+     * 主线程长时间阻塞。
      *
      * 无论 formDirty 状态如何都保存：内存中的表单状态即最新事实，
      * 空表单（保存工程成功后已重置）落盘同样是正确状态
@@ -362,42 +376,43 @@ class DashboardViewModel @Inject constructor(
     override fun onStop(owner: LifecycleOwner) {
         // 缓存恢复完成前禁止落盘（防止恢复进行中切后台时空表单覆盖有效缓存）
         if (!formCacheRestored) return
-        flushFormCache()
-    }
-
-    /**
-     * 立即落盘表单缓存（取消pending防抖Job，同步保存当前快照）
-     */
-    private fun flushFormCache() {
         // 取消未到期的防抖Job，避免重复保存
         saveFormJob?.cancel()
         saveFormJob = null
-        viewModelScope.launch {
-            withContext(NonCancellable) {
+        runBlocking {
+            withTimeoutOrNull(FORM_CACHE_FLUSH_TIMEOUT_MS) {
                 try {
-                    val state = _uiState.value
-                    dashboardCache.saveFormCache(
-                        DashboardCache.FormCache(
-                            customerAddress = state.customerAddress,
-                            selectedSpaceType = state.selectedSpaceType,
-                            selectedScheme = state.selectedScheme,
-                            lengthCm = state.lengthCm,
-                            widthCm = state.widthCm,
-                            salaryDistribution = state.salaryDistribution,
-                            selectedConstructorIds = state.selectedConstructorIds.toList(),
-                            workerWorkdays = state.workerWorkdays,
-                            remark = state.remark,
-                            measuredQuantity = state.measuredQuantity,
-                            measuredNote = state.measuredNote,
-                            heightCm = state.heightCm
-                        )
-                    )
+                    dashboardCache.saveFormCache(buildFormCache(_uiState.value))
                     formDirty = false
                 } catch (_: Exception) {
-                    // 静默处理：后台落盘失败时保留formDirty，onCleared仍会兜底
+                    // 静默处理：落盘失败时保留formDirty，onCleared仍会兜底
                 }
             }
         }
+    }
+
+    /**
+     * 从当前UI状态构建表单缓存快照
+     *
+     * 统一构造入口：防抖保存/onStop落盘/onCleared兜底全部经由本函数，
+     * 防止多处手工构造时遗漏字段（历史上totalWorkdaysInput即因此遗漏）
+     */
+    private fun buildFormCache(state: DashboardUiState): DashboardCache.FormCache {
+        return DashboardCache.FormCache(
+            customerAddress = state.customerAddress,
+            selectedSpaceType = state.selectedSpaceType,
+            selectedScheme = state.selectedScheme,
+            lengthCm = state.lengthCm,
+            widthCm = state.widthCm,
+            salaryDistribution = state.salaryDistribution,
+            selectedConstructorIds = state.selectedConstructorIds.toList(),
+            workerWorkdays = state.workerWorkdays,
+            remark = state.remark,
+            measuredQuantity = state.measuredQuantity,
+            measuredNote = state.measuredNote,
+            heightCm = state.heightCm,
+            totalWorkdaysInput = state.totalWorkdaysInput
+        )
     }
 
     /**
@@ -476,9 +491,13 @@ class DashboardViewModel @Inject constructor(
      */
     private suspend fun restoreFormCache() {
         try {
-            val cache = dashboardCache.loadFormCache()
+            // 读取加超时保护：DataStore读取悬挂时若不设超时，formCacheRestored
+            // 永远为false，本会话所有后台落盘将被禁用（数据丢失风险放大）
+            val cache = withTimeoutOrNull(FORM_CACHE_RESTORE_TIMEOUT_MS) {
+                dashboardCache.loadFormCache()
+            }
             if (cache == null) {
-                // 无缓存（首次使用或保存工程成功后已清除）：
+                // 无缓存（首次使用/保存工程成功后已清除）或读取超时：
                 // 恢复流程已结束，必须置位标志，否则onStop后台落盘被永久禁用
                 formCacheRestored = true
                 return
@@ -496,6 +515,7 @@ class DashboardViewModel @Inject constructor(
                 remark = cache.remark,
                 measuredQuantity = cache.measuredQuantity,
                 measuredNote = cache.measuredNote,
+                totalWorkdaysInput = cache.totalWorkdaysInput,
                 // 已填写实测数据时默认展开，否则折叠（实测字段平时少用）
                 isMeasuredSectionExpanded = cache.measuredQuantity.isNotBlank() || cache.measuredNote.isNotBlank()
             )
@@ -503,6 +523,8 @@ class DashboardViewModel @Inject constructor(
             formDirty = false
             // 恢复完成，允许onStop后台落盘（不置位会导致后台落盘被永久禁用）
             formCacheRestored = true
+            // 恢复总工日输入后重算校验提示，保持UI提示与恢复数据一致
+            validateWorkdays()
             // 无论是否恢复方案，只要长度/宽度/高度/实测数量非空就重算预览
             // 避免：用户上次仅修改了长度/宽度而未选方案，恢复后预览公式为空的不一致问题
             // （此时方案列表可能尚未加载，单价由 applySchemePricing 在方案就绪后补齐）
@@ -1584,9 +1606,16 @@ class DashboardViewModel @Inject constructor(
                         quantity = 0.0,
                         totalAmount = 0.0,
                         calculationFormula = "",
-                        workerWorkdays = emptyMap()
+                        workerWorkdays = emptyMap(),
+                        // 与workerWorkdays同批清空：工日映射已重置，总工日校验值不应残留
+                        totalWorkdaysInput = "",
+                        workdaysValidationHint = ""
                     )
 
+                    // 取消未触发的防抖Job：防止其在clearFormCache之后触发，
+                    // 用重置后的表单状态重新写缓存，抵消清空意图
+                    saveFormJob?.cancel()
+                    saveFormJob = null
                     // 清除表单缓存（保留地址映射）
                     viewModelScope.launch { dashboardCache.clearFormCache() }
                     // 保存成功后表单已重置并清除了缓存，无未落盘修改；
@@ -1902,24 +1931,8 @@ class DashboardViewModel @Inject constructor(
         saveFormJob?.cancel()
         saveFormJob = viewModelScope.launch {
             kotlinx.coroutines.delay(800)
-            val state = _uiState.value
             withContext(NonCancellable) {
-                dashboardCache.saveFormCache(
-                    DashboardCache.FormCache(
-                        customerAddress = state.customerAddress,
-                        selectedSpaceType = state.selectedSpaceType,
-                        selectedScheme = state.selectedScheme,
-                        lengthCm = state.lengthCm,
-                        widthCm = state.widthCm,
-                        salaryDistribution = state.salaryDistribution,
-                        selectedConstructorIds = state.selectedConstructorIds.toList(),
-                        workerWorkdays = state.workerWorkdays,
-                        remark = state.remark,
-                        measuredQuantity = state.measuredQuantity,
-                        measuredNote = state.measuredNote,
-                        heightCm = state.heightCm
-                    )
-                )
+                dashboardCache.saveFormCache(buildFormCache(_uiState.value))
             }
             // 落盘完成，清除未保存标记。
             // 仅当自己仍是最新调度的防抖Job时才清除：保存期间用户若又输入，
@@ -1957,23 +1970,7 @@ class DashboardViewModel @Inject constructor(
             // 使用 NonCancellable 确保保存操作不被取消
             viewModelScope.launch(kotlinx.coroutines.NonCancellable) {
                 try {
-                    val state = _uiState.value
-                    dashboardCache.saveFormCache(
-                        DashboardCache.FormCache(
-                            customerAddress = state.customerAddress,
-                            selectedSpaceType = state.selectedSpaceType,
-                            selectedScheme = state.selectedScheme,
-                            lengthCm = state.lengthCm,
-                            widthCm = state.widthCm,
-                            salaryDistribution = state.salaryDistribution,
-                            selectedConstructorIds = state.selectedConstructorIds.toList(),
-                            workerWorkdays = state.workerWorkdays,
-                            remark = state.remark,
-                            measuredQuantity = state.measuredQuantity,
-                            measuredNote = state.measuredNote,
-                            heightCm = state.heightCm
-                        )
-                    )
+                    dashboardCache.saveFormCache(buildFormCache(_uiState.value))
                 } catch (_: Exception) {
                     // 静默处理，销毁阶段无法向用户报错
                 }
