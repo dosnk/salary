@@ -1,5 +1,8 @@
 package com.salary.manager.feature.home.dashboard
 
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.compose.runtime.Immutable
@@ -254,7 +257,7 @@ class DashboardViewModel @Inject constructor(
     private val dashboardCache: DashboardCache,
     private val serverConfig: ServerConfig,
     @ApplicationContext private val context: Context
-) : ViewModel() {
+) : ViewModel(), DefaultLifecycleObserver {
 
     private val _uiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
@@ -321,6 +324,17 @@ class DashboardViewModel @Inject constructor(
     @Volatile
     private var formDirty = false
 
+    /**
+     * 表单缓存是否已完成恢复（启动时restoreFormCache执行完毕）
+     *
+     * 防护场景：用户启动App后立即切后台，此时restoreFormCache可能尚未完成
+     * （DataStore异步读取中），若此时落盘会把空表单写入缓存，
+     * 覆盖磁盘上待恢复的有效数据。
+     * 恢复完成前禁止任何落盘操作。
+     */
+    @Volatile
+    private var formCacheRestored = false
+
     /** 工程列表分页：当前页码 */
     private var projectsCurrentPage = 1
     /** 工程列表分页：每页数量 */
@@ -328,6 +342,62 @@ class DashboardViewModel @Inject constructor(
 
     init {
         loadInitialData()
+        // 注册App前后台生命周期监听：App进入后台时立即落盘表单缓存。
+        // 覆盖"输入后800ms内按Home键退出→上滑杀进程"场景（进程被杀时
+        // onCleared不会被调用，800ms防抖窗口内的输入会丢失）
+        ProcessLifecycleOwner.get().lifecycle.addObserver(this)
+    }
+
+    /**
+     * App进入后台时立即落盘表单缓存（ProcessLifecycleOwner ON_STOP回调）
+     *
+     * 覆盖场景：
+     * - 用户输入后800ms防抖未到期就按Home键/切其他App → 上滑杀进程
+     * - 此时进程被直接杀死，onCleared不会执行，防抖Job也随进程消失
+     * - 唯一保障是后台瞬间同步落盘当前表单快照
+     *
+     * 无论 formDirty 状态如何都保存：内存中的表单状态即最新事实，
+     * 空表单（保存工程成功后已重置）落盘同样是正确状态
+     */
+    override fun onStop(owner: LifecycleOwner) {
+        // 缓存恢复完成前禁止落盘（防止恢复进行中切后台时空表单覆盖有效缓存）
+        if (!formCacheRestored) return
+        flushFormCache()
+    }
+
+    /**
+     * 立即落盘表单缓存（取消pending防抖Job，同步保存当前快照）
+     */
+    private fun flushFormCache() {
+        // 取消未到期的防抖Job，避免重复保存
+        saveFormJob?.cancel()
+        saveFormJob = null
+        viewModelScope.launch {
+            withContext(NonCancellable) {
+                try {
+                    val state = _uiState.value
+                    dashboardCache.saveFormCache(
+                        DashboardCache.FormCache(
+                            customerAddress = state.customerAddress,
+                            selectedSpaceType = state.selectedSpaceType,
+                            selectedScheme = state.selectedScheme,
+                            lengthCm = state.lengthCm,
+                            widthCm = state.widthCm,
+                            salaryDistribution = state.salaryDistribution,
+                            selectedConstructorIds = state.selectedConstructorIds.toList(),
+                            workerWorkdays = state.workerWorkdays,
+                            remark = state.remark,
+                            measuredQuantity = state.measuredQuantity,
+                            measuredNote = state.measuredNote,
+                            heightCm = state.heightCm
+                        )
+                    )
+                    formDirty = false
+                } catch (_: Exception) {
+                    // 静默处理：后台落盘失败时保留formDirty，onCleared仍会兜底
+                }
+            }
+        }
     }
 
     /**
@@ -406,7 +476,13 @@ class DashboardViewModel @Inject constructor(
      */
     private suspend fun restoreFormCache() {
         try {
-            val cache = dashboardCache.loadFormCache() ?: return
+            val cache = dashboardCache.loadFormCache()
+            if (cache == null) {
+                // 无缓存（首次使用或保存工程成功后已清除）：
+                // 恢复流程已结束，必须置位标志，否则onStop后台落盘被永久禁用
+                formCacheRestored = true
+                return
+            }
             _uiState.value = _uiState.value.copy(
                 customerAddress = cache.customerAddress,
                 selectedSpaceType = cache.selectedSpaceType,
@@ -425,6 +501,8 @@ class DashboardViewModel @Inject constructor(
             )
             // 恢复的内容已与磁盘缓存一致，不算"未落盘的修改"
             formDirty = false
+            // 恢复完成，允许onStop后台落盘（不置位会导致后台落盘被永久禁用）
+            formCacheRestored = true
             // 无论是否恢复方案，只要长度/宽度/高度/实测数量非空就重算预览
             // 避免：用户上次仅修改了长度/宽度而未选方案，恢复后预览公式为空的不一致问题
             // （此时方案列表可能尚未加载，单价由 applySchemePricing 在方案就绪后补齐）
@@ -432,7 +510,9 @@ class DashboardViewModel @Inject constructor(
                 recalculate()
             }
         } catch (_: Exception) {
-            // 静默处理
+            // 读取异常也必须置位：否则本会话内onStop落盘全部失效，
+            // 用户后续输入的内容在杀进程时会全部丢失（内存状态是最新事实）
+            formCacheRestored = true
         }
     }
 

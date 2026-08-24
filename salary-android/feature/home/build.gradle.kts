@@ -35,6 +35,8 @@ dependencies {
 
     implementation(libs.lifecycle.viewmodel)
     implementation(libs.lifecycle.runtime)
+    // ProcessLifecycleOwner：监听App进入后台事件，立即落盘表单缓存（防抖窗口数据丢失）
+    implementation(libs.lifecycle.process)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
