@@ -470,9 +470,19 @@ class DashboardViewModel @Inject constructor(
                     putAll(dashboardCache.loadAddressMap())
                 }
 
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false
-                )
+                // 断网兜底提示：关键字典数据全部为空且工程列表也为空时，
+                // 说明网络请求全部失败且无缓存可用，需提示用户而非静默白屏
+                val state = _uiState.value
+                if (state.spaceTypes.isEmpty() && state.constructionPlans.isEmpty() &&
+                    state.constructors.isEmpty() && state.projects.isEmpty()
+                ) {
+                    _uiState.value = state.copy(
+                        isLoading = false,
+                        errorMessage = "无法连接服务器加载数据，请检查网络后下拉刷新"
+                    )
+                } else {
+                    _uiState.value = _uiState.value.copy(isLoading = false)
+                }
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -812,8 +822,11 @@ class DashboardViewModel @Inject constructor(
                 } else {
                     _uiState.value = _uiState.value.copy(isLoadingMoreProjects = false)
                 }
-            } catch (_: Exception) {
-                _uiState.value = _uiState.value.copy(isLoadingMoreProjects = false)
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    isLoadingMoreProjects = false,
+                    errorMessage = NetworkErrorHandler.translate(e, "加载更多失败，请检查网络后重试")
+                )
             }
         }
     }

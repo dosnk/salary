@@ -7,6 +7,7 @@ import com.salary.core.network.api.MaterialDto
 import com.salary.core.network.api.MaterialOptionsDto
 import com.salary.core.network.api.LayoutResponse
 import com.salary.manager.feature.ai.data.AiRepository
+import com.salary.core.common.util.NetworkErrorHandler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -81,6 +82,9 @@ class MaterialLayoutViewModel @Inject constructor(
         viewModelScope.launch {
             aiRepository.getMaterialCategories()
                 .onSuccess { _categories.value = it }
+                .onFailure { e ->
+                    _error.emit(NetworkErrorHandler.translate(e, "加载材料分类失败"))
+                }
 
             aiRepository.getAllMaterials()
                 .onSuccess { materials ->
@@ -99,6 +103,9 @@ class MaterialLayoutViewModel @Inject constructor(
                         val trims = materials.filter { it.categoryName == "收边条" }
                         if (trims.isNotEmpty()) _selectedTrimId.value = trims[0].id
                     }
+                }
+                .onFailure { e ->
+                    _error.emit(NetworkErrorHandler.translate(e, "加载材料列表失败"))
                 }
         }
     }
