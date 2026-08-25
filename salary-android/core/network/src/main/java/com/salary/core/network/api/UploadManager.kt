@@ -14,7 +14,6 @@ import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.buffer
 import okio.source
-import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -91,6 +90,9 @@ class UploadManager @Inject constructor(
     /**
      * 上传单个附件（带进度回调）
      *
+     * 流式上传：直接从 ContentResolver 打开 InputStream 边读边写，
+     * 不再将整个文件读入内存，避免上传大视频(500MB)时 OOM 崩溃。
+     *
      * @param onProgress 进度回调，参数为当前文件百分比（0-100）。在UploadManager内部线程调用，
      *                   调用方需自行切换到主线程更新UI。可为null。
      */
@@ -100,21 +102,21 @@ class UploadManager @Inject constructor(
         projectName: String,
         onProgress: ((Int) -> Unit)?
     ): UploadOutcome {
-        // 1. 读取文件字节
-        val bytes = readUriBytes(uri)
-            ?: return UploadOutcome.Error("无法读取所选文件，请重试")
-
-        // 记录文件信息，供第二步使用
+        // 1. 查询文件信息（不读入内存）
         val originalFileName = queryFileName(uri) ?: "attachment_${System.currentTimeMillis()}"
-        val fileSize = bytes.size.toLong()
+        val fileSize = queryFileSize(uri)
         val fileType = context.contentResolver.getType(uri) ?: "application/octet-stream"
 
         return try {
-            // 2. 构造可监听进度的RequestBody
+            // 2. 构造流式可监听进度的 RequestBody（不在内存中持有整个文件）
             val mediaType = fileType.toMediaTypeOrNull()
-            val progressBody = ProgressRequestBody(bytes, mediaType, fileSize) { percent ->
-                onProgress?.invoke(percent)
-            }
+            val progressBody = StreamProgressRequestBody(
+                contentResolver = context.contentResolver,
+                uri = uri,
+                mediaType = mediaType,
+                totalSize = fileSize,
+                onProgress = { percent -> onProgress?.invoke(percent) }
+            )
             val filePart = MultipartBody.Part.createFormData("file", originalFileName, progressBody)
 
             // 3. 构造工程名表单字段
@@ -282,20 +284,6 @@ class UploadManager @Inject constructor(
     data class FailedFileDetail(val fileName: String, val error: String)
 
     /**
-     * 读取Uri对应的字节数组
-     */
-    private fun readUriBytes(uri: Uri): ByteArray? {
-        return try {
-            val contentResolver = context.contentResolver
-            val inputStream = contentResolver.openInputStream(uri) ?: return null
-            inputStream.use { it.readBytes() }
-        } catch (e: Exception) {
-            AppLog.w(TAG, "读取文件字节失败: ${e.message}")
-            null
-        }
-    }
-
-    /**
      * 查询文件大小（字节）
      */
     private fun queryFileSize(uri: Uri): Long {
@@ -306,23 +294,6 @@ class UploadManager @Inject constructor(
             } ?: 0L
         } catch (_: Exception) {
             0L
-        }
-    }
-
-    /**
-     * 将 Uri 转换为 MultipartBody.Part（无进度监听，兼容保留）
-     * 失败时返回 null（如 Uri 无效、文件不可读等）
-     */
-    private fun uriToMultipartPart(uri: Uri): MultipartBody.Part? {
-        return try {
-            val bytes = readUriBytes(uri) ?: return null
-            val fileName = queryFileName(uri) ?: "attachment_${System.currentTimeMillis()}"
-            val mediaType = (context.contentResolver.getType(uri) ?: "application/octet-stream").toMediaTypeOrNull()
-            val requestBody = bytes.toRequestBody(mediaType)
-            MultipartBody.Part.createFormData("file", fileName, requestBody)
-        } catch (e: Exception) {
-            AppLog.w(TAG, "Uri 转 Multipart 失败: ${e.message}")
-            null
         }
     }
 
@@ -342,18 +313,21 @@ class UploadManager @Inject constructor(
 }
 
 /**
- * 带进度回调的RequestBody
+ * 流式带进度回调的RequestBody
  *
- * 包装字节数组RequestBody，在 writeTo 时统计已写入字节数，
- * 按阈值（4KB）触发进度回调，避免每个字节都回调导致UI过度刷新。
+ * 直接从 ContentResolver 打开 InputStream 流式读取文件内容，
+ * 在 writeTo 时边读边写，内存占用恒定为单个 buffer 大小（8KB），
+ * 不再将整个文件读入内存，避免上传大视频(500MB)时 OOM 崩溃。
  *
- * @param bytes 文件字节数据
+ * @param contentResolver ContentResolver，用于打开文件输入流
+ * @param uri 文件 Uri（来自系统文件选择器）
  * @param mediaType 文件MIME类型
- * @param totalSize 文件总大小（字节）
+ * @param totalSize 文件总大小（字节），用于计算进度百分比
  * @param onProgress 进度回调，参数为百分比（0-100）
  */
-private class ProgressRequestBody(
-    private val bytes: ByteArray,
+private class StreamProgressRequestBody(
+    private val contentResolver: android.content.ContentResolver,
+    private val uri: android.net.Uri,
     private val mediaType: okhttp3.MediaType?,
     private val totalSize: Long,
     private val onProgress: (Int) -> Unit
@@ -367,31 +341,39 @@ private class ProgressRequestBody(
     override fun contentLength(): Long = totalSize
 
     override fun writeTo(sink: okio.BufferedSink) {
-        // 使用okio扩展函数，避免Okio.buffer/Okio.source弃用警告
-        val source = bytes.inputStream().source().buffer()
+        val inputStream = try {
+            contentResolver.openInputStream(uri) ?: return
+        } catch (e: Exception) {
+            AppLog.w("StreamProgressRequestBody", "打开文件输入流失败: ${e.message}")
+            return
+        }
+
+        // 使用 okio 从 InputStream 流式读取，避免 readBytes() 将整个文件加载到内存
+        val source = inputStream.source().buffer()
         val buffer = okio.Buffer()
-        // 已写入字节数（线程安全，供可能的多线程场景使用）
-        val written = AtomicLong(0L)
-        // 上次回调时已写入字节数，用于节流
+        var written = 0L
         var lastNotifiedBytes = 0L
 
         try {
             var read: Long
-            // 每次写入 8KB
+            // 每次最多读取 8KB，边读边写
             while (source.read(buffer, 8192L).also { read = it } != -1L) {
                 sink.write(buffer, read)
-                val current = written.addAndGet(read)
+                written += read
                 // 超过节流间隔才回调一次
-                if (current - lastNotifiedBytes >= progressNotifyIntervalBytes || current == totalSize) {
-                    val percent = (current * 100 / totalSize).toInt().coerceIn(0, 100)
+                if (written - lastNotifiedBytes >= progressNotifyIntervalBytes || written == totalSize) {
+                    val percent = if (totalSize > 0) {
+                        (written * 100 / totalSize).toInt().coerceIn(0, 100)
+                    } else 100
                     onProgress(percent)
-                    lastNotifiedBytes = current
+                    lastNotifiedBytes = written
                 }
             }
             // 确保最终回调100
             onProgress(100)
         } finally {
             source.close()
+            inputStream.close()
         }
     }
 }
