@@ -449,8 +449,9 @@ const updateProjectSchema = Joi.object({
   remark: Joi.string().max(500).allow('').messages({
     'string.max': '工程备注不能超过500个文字'
   }),
-  status: Joi.string().valid('preparing', 'constructing', 'completed', 'settled', 'canceled').messages({
-    'any.only': '工程状态无效'
+  // settled 不在允许列表：工程结算状态由结算确认流程自动设置，禁止通过更新接口手动修改
+  status: Joi.string().valid('preparing', 'constructing', 'completed', 'canceled').messages({
+    'any.only': '工程状态无效（已结算状态由结算流程自动设置，无法手动修改）'
   }),
   salaryDistribution: Joi.string().valid('average', 'work_days').messages({
     'any.only': '工资分配方式无效'

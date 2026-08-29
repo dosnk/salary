@@ -1229,8 +1229,10 @@ const deleteSubprojectInTransaction = async (subprojectId, client) => {
  * @param {string} status - 目标状态
  * @returns {Promise<void>}
  */
-const updateSubprojectsStatus = async (projectId, status) => {
-  await pool.query(
+const updateSubprojectsStatus = async (projectId, status, client) => {
+  // 支持事务客户端：工程完工/恢复时与工程主表更新在同一事务内执行，保证状态一致性
+  const executor = client || pool;
+  await executor.query(
     'UPDATE subprojects SET status = $1 WHERE project_id = $2',
     [status, projectId]
   );
@@ -1254,11 +1256,12 @@ const updateProjectWorkers = async (projectId, constructors, client) => {
  * 批量更新施工人员工日
  * @param {number} projectId - 工程ID
  * @param {Array} workerWorkDays - 工日列表 [{userId, workdays}]
+ * @param {object} [client] - pg 事务客户端，不传则使用连接池
  * @returns {Promise<void>}
  */
-const updateWorkerWorkDays = async (projectId, workerWorkDays) => {
+const updateWorkerWorkDays = async (projectId, workerWorkDays, client) => {
   for (const item of workerWorkDays) {
-    await updateWorkerWorkdays(projectId, item.userId, item.workdays);
+    await updateWorkerWorkdays(projectId, item.userId, item.workdays, client);
   }
 };
 

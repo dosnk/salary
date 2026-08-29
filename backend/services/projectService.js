@@ -541,14 +541,17 @@ module.exports = {
    *
    * 业务规则：
    * - 检查用户是否参与该工程
-   * - 工程完工时同步子项目状态
+   * - settled 状态硬性防护：禁止手动设置 settled；已结算工程禁止修改状态
+   *   （settled 只能由结算确认流程 confirmSettlement 自动设置）
+   * - 工程完工时同步子项目状态（与主表更新在同一事务内，保证一致性）
+   * - 完工/恢复操作使用专用历史记录动作类型（COMPLETE_PROJECT / RESTORE_PROJECT）
    * - 清除缓存
    *
    * @param {number} projectId - 工程ID
    * @param {object} updates - 更新内容
    * @param {string} [updates.name] - 工程名称
    * @param {string} [updates.description] - 描述
-   * @param {string} [updates.status] - 状态
+   * @param {string} [updates.status] - 状态（不允许为 settled）
    * @param {string} [updates.salaryDistribution] - 工资分配方式
    * @param {number} [updates.totalWorkDays] - 总工作天数
    * @param {Array} [updates.constructors] - 施工人员列表
@@ -567,6 +570,18 @@ module.exports = {
     const isParticipant = await checkProjectParticipant(projectId, userId);
     if (!isParticipant) {
       throw new BusinessError(4002, '您未参与此工程，无法修改');
+    }
+
+    // ===== settled 状态硬性防护 =====
+    // 规则1：settled 状态只能由结算确认流程（confirmSettlement）自动设置，
+    //       禁止通过更新工程接口手动标记为已结算（防止绕过结算流程）
+    if (updates.status === 'settled') {
+      throw new BusinessError(4002, '工程结算状态由结算流程自动设置，无法手动修改');
+    }
+
+    // 规则2：已结算工程禁止修改状态（防止将已结算工程改回施工中，造成重复结算数据混乱）
+    if (project.status === 'settled' && updates.status !== undefined) {
+      throw new BusinessError(4002, '该工程已结算，状态无法修改');
     }
 
     // 构建更新字段
@@ -597,60 +612,83 @@ module.exports = {
       throw new BusinessError(1001, '参数错误');
     }
 
-    // 更新工程基本信息
-    if (hasFieldsToUpdate) {
-      await projectRepo.updateProject(projectId, updateFields);
-    }
+    // 预判状态变更（用于事务外决定是否刷新物化视图）
+    const isCompleting = updates.status === 'completed' && project.status !== 'completed';
+    const isRestoring = project.status === 'completed' && updates.status !== undefined && updates.status !== 'completed';
 
-    // 更新施工人员（合并工日数据，避免 replaceWorkers 替换后工日丢失）
-    // 关键修复：原实现先调用 updateProjectWorkers（删除并重新插入工人，丢失 workdays），
-    //          再调用 updateWorkerWorkDays 更新工日。但如果只传 constructors 不传 workerWorkDays，
-    //          工日数据会丢失。现在合并 constructors 和 workerWorkDays，一次性写入。
-    if (hasConstructorsToUpdate) {
-      // 构建工日映射（按工日分配模式下使用）
-      const workdaysMap = {};
-      if (hasWorkDaysToUpdate) {
-        for (const item of updates.workerWorkDays) {
-          workdaysMap[item.userId] = item.workdays;
-        }
+    // ===== 事务化：工程主表 + 施工人员 + 子项目状态同步 + 历史记录 纳入单事务 =====
+    // 修复：原实现主表更新与子项目状态同步是两个独立SQL，中间失败会导致
+    //       "工程已完工但子项目仍是施工中"的不一致状态（统计查询查不到该工程且无法自动恢复）
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 更新工程基本信息
+      if (hasFieldsToUpdate) {
+        await projectRepo.updateProject(projectId, updateFields, client);
       }
-      // 合并 constructors 和 workdays，确保替换时保留工日数据
-      // 未在 workdaysMap 中的施工人员，workdays 为 null（使用数据库默认值）
-      const constructorsWithWorkdays = updates.constructors.map(c => {
-        const userId = c.userId || c;
-        const workdays = workdaysMap[userId];
-        return workdays !== undefined ? { userId, workdays } : { userId };
-      });
-      await projectRepo.updateProjectWorkers(projectId, constructorsWithWorkdays);
-    } else if (hasWorkDaysToUpdate) {
-      // 只更新工日（未更新施工人员列表），单独更新工日
-      await projectRepo.updateWorkerWorkDays(projectId, updates.workerWorkDays);
+
+      // 更新施工人员（合并工日数据，避免 replaceWorkers 替换后工日丢失）
+      // 关键修复：原实现先调用 updateProjectWorkers（删除并重新插入工人，丢失 workdays），
+      //          再调用 updateWorkerWorkDays 更新工日。但如果只传 constructors 不传 workerWorkDays，
+      //          工日数据会丢失。现在合并 constructors 和 workerWorkDays，一次性写入。
+      if (hasConstructorsToUpdate) {
+        // 构建工日映射（按工日分配模式下使用）
+        const workdaysMap = {};
+        if (hasWorkDaysToUpdate) {
+          for (const item of updates.workerWorkDays) {
+            workdaysMap[item.userId] = item.workdays;
+          }
+        }
+        // 合并 constructors 和 workdays，确保替换时保留工日数据
+        // 未在 workdaysMap 中的施工人员，workdays 为 null（使用数据库默认值）
+        const constructorsWithWorkdays = updates.constructors.map(c => {
+          const userId = c.userId || c;
+          const workdays = workdaysMap[userId];
+          return workdays !== undefined ? { userId, workdays } : { userId };
+        });
+        await projectRepo.updateProjectWorkers(projectId, constructorsWithWorkdays, client);
+      } else if (hasWorkDaysToUpdate) {
+        // 只更新工日（未更新施工人员列表），单独更新工日
+        await projectRepo.updateWorkerWorkDays(projectId, updates.workerWorkDays, client);
+      }
+
+      // 工程完工时同步子项目状态
+      if (isCompleting) {
+        await projectRepo.updateSubprojectsStatus(projectId, 'completed', client);
+      }
+
+      // 工程从已完成恢复为其他状态时，子项目恢复为施工中
+      if (isRestoring) {
+        await projectRepo.updateSubprojectsStatus(projectId, 'constructing', client);
+      }
+
+      // 添加历史记录（完工/恢复使用专用动作类型，便于审计区分）
+      let historyAction = 'UPDATE_PROJECT';
+      let historyDescription = '更新工程信息';
+      if (isCompleting) {
+        historyAction = 'COMPLETE_PROJECT';
+        historyDescription = '工程确认完工';
+      } else if (isRestoring) {
+        historyAction = 'RESTORE_PROJECT';
+        historyDescription = '工程恢复为施工中';
+      }
+      await projectRepo.addProjectHistory(projectId, historyAction, historyDescription, userId, client);
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    // 工程状态是否变更（用于判断是否需要刷新物化视图）
-    let statusChanged = false;
-
-    // 工程完工时同步子项目状态
-    if (updates.status === 'completed' && project.status !== 'completed') {
-      await projectRepo.updateSubprojectsStatus(projectId, 'completed');
-      statusChanged = true;
-    }
-
-    // 工程从已完成恢复为其他状态时，子项目恢复为施工中
-    if (project.status === 'completed' && updates.status && updates.status !== 'completed') {
-      await projectRepo.updateSubprojectsStatus(projectId, 'constructing');
-      statusChanged = true;
-    }
-
-    // 添加历史记录
-    await projectRepo.addProjectHistory(projectId, 'UPDATE_PROJECT', '更新工程信息', userId);
 
     // 清除缓存
     await invalidateCache(userId);
 
     // 工程状态变更后异步刷新物化视图（不阻塞响应，失败仅记日志）
     // settlement_status 依赖工程 status 计算（completed → settling），需立即刷新避免数据陈旧
-    if (statusChanged) {
+    if (isCompleting || isRestoring) {
       refreshMvAsync();
     }
 
