@@ -4,6 +4,7 @@ import com.salary.core.data.local.ServerConfig
 import com.salary.core.data.local.TokenStorage
 import com.salary.core.network.api.AiApi
 import com.salary.core.network.api.AuthApi
+import com.salary.core.network.api.BackupApi
 import com.salary.core.network.api.DictionaryApi
 import com.salary.core.network.api.MessageApi
 import com.salary.core.network.api.ProjectApi
@@ -126,6 +127,10 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideAiApi(retrofit: Retrofit): AiApi = retrofit.create(AiApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideBackupApi(retrofit: Retrofit): BackupApi = retrofit.create(BackupApi::class.java)
 
     @Provides
     @Singleton

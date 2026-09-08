@@ -91,6 +91,9 @@ fun AppNavHost() {
     // 登录成功欢迎提示：登录成功后设为true，传给MainScaffold触发Snackbar
     var showWelcomeMessage by remember { mutableStateOf(false) }
 
+    // 启动自动备份去重标志：同一会话（App进程存活期间）只触发一次数据库备份
+    var backupTriggered by rememberSaveable { mutableStateOf(false) }
+
     // 监听后端离线状态
     val isOnline by latencyTracker.isOnline.collectAsState()
 
@@ -111,6 +114,15 @@ fun AppNavHost() {
         // 启动后端健康监控（定时主动探测，不依赖业务请求）
         // 登录页等无业务请求场景也能实时显示后端在线状态
         healthMonitor.start()
+    }
+
+    // 启动自动数据库备份：登录态就绪后触发一次（含登录成功场景），同会话防重复
+    // 静默执行（AppViewModel内失败仅记日志），不影响启动与业务
+    LaunchedEffect(isAuthenticated) {
+        if (isAuthenticated && !backupTriggered) {
+            backupTriggered = true
+            appViewModel.launchAutoBackup()
+        }
     }
 
     // 注意：后端离线状态(isOnline=false)仅作为UI提示，不再自动清除会话
