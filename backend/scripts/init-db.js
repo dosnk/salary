@@ -1405,6 +1405,25 @@ const MIGRATIONS = [
       DROP TABLE IF EXISTS ai_knowledge_docs CASCADE;
     `,
     tables: ['ai_knowledge_docs']
+  },
+  {
+    version: 'V2.10',
+    description: '补齐工程完工/恢复操作的专用历史动作类型（COMPLETE_PROJECT / RESTORE_PROJECT）',
+    up: `
+      -- 背景：projectService 确认完工/恢复施工操作使用 COMPLETE_PROJECT / RESTORE_PROJECT
+      --       动作类型写 project_history，但 V1.5 预置的 action_types 缺少这两条，
+      --       导致外键约束 fk_project_history_action 校验失败（Key=(COMPLETE_PROJECT) 不存在）。
+      INSERT INTO action_types (code, name) VALUES
+      ('COMPLETE_PROJECT', '工程确认完工'),
+      ('RESTORE_PROJECT', '工程恢复为施工中')
+      ON CONFLICT (code) DO NOTHING;
+    `,
+    down: `
+      DELETE FROM action_types
+       WHERE code IN ('COMPLETE_PROJECT', 'RESTORE_PROJECT')
+         AND NOT EXISTS (SELECT 1 FROM project_history WHERE action = action_types.code);
+    `,
+    tables: []
   }
 ];
 
