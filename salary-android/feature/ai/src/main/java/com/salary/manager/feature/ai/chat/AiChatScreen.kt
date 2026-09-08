@@ -60,6 +60,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -271,6 +272,33 @@ private fun MessageBubble(
                             strokeWidth = 2.dp,
                             color = if (isUser) Color.White else AppColors.Green400
                         )
+                    }
+                }
+            }
+
+            // 引用溯源：AI回答引用的知识文档（浅色小字区域）
+            if (!isUser && !message.isStreaming && message.citations.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = AppColors.Green50.copy(alpha = 0.7f)
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                        Text(
+                            text = "参考来源",
+                            fontSize = 11.sp,
+                            color = AppColors.Green600,
+                            fontWeight = FontWeight.Medium
+                        )
+                        message.citations.forEach { citation ->
+                            Text(
+                                text = "· ${citation.title.ifEmpty { "知识文档#${citation.docId}" }}",
+                                fontSize = 11.sp,
+                                color = AppColors.TextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }

@@ -59,6 +59,18 @@ const providerEnvKeys = {
   doubao: { apiKey: 'DOUBAO_API_KEY', model: 'DOUBAO_MODEL', baseUrl: 'DOUBAO_BASE_URL', defaultModel: 'doubao-pro-4k' },
 };
 
+// 各提供商向量模型（embedding）与视觉模型（vision）默认映射
+// null 表示该提供商无对应能力：
+// - embedding: 文心（非OpenAI兼容接口）、DeepSeek（无embedding接口）
+// - vision: 文心（非OpenAI兼容格式）、DeepSeek（无视觉模型）
+const providerModelDefaults = {
+  tongyi: { embeddingModel: 'text-embedding-v3', visionModel: 'qwen-vl-max' },
+  wenxin: { embeddingModel: null, visionModel: null },
+  deepseek: { embeddingModel: null, visionModel: null },
+  glm: { embeddingModel: 'embedding-3', visionModel: 'glm-4v-flash' },
+  doubao: { embeddingModel: 'doubao-embedding', visionModel: 'doubao-vision-pro-32k' },
+};
+
 /**
  * aiConfig - 使用 getter 动态读取 process.env
  * 每次访问属性都会读取最新的 process.env 值，
@@ -112,10 +124,35 @@ const aiConfig = {
 
   // 知识库配置（静态）
   knowledge: {
-    chunkSize: 500,           // 文档分块大小（字符）
-    chunkOverlap: 50,         // 分块重叠大小
+    chunkSize: 800,           // 文档分块大小（字符）
+    chunkOverlap: 100,        // 分块重叠大小
     topK: 5,                  // 检索返回的top-K结果
-    similarityThreshold: 0.7, // 相似度阈值
+    similarityThreshold: 0.5, // 相似度阈值（向量余弦相似度，低于此值过滤）
+  },
+
+  // 向量模型配置（动态读取，供知识库embedding使用）
+  // 优先级：AI_EMBEDDING_MODEL 环境变量 > 当前提供商默认映射 > null（不支持，降级关键词检索）
+  get embeddingModel() {
+    if (process.env.AI_EMBEDDING_MODEL) return process.env.AI_EMBEDDING_MODEL;
+    const provider = this.defaultProvider;
+    return (providerModelDefaults[provider] && providerModelDefaults[provider].embeddingModel) || null;
+  },
+
+  // 视觉模型配置（动态读取，供知识库图片识别使用）
+  // 优先级：AI_VISION_MODEL 环境变量 > 当前提供商默认映射 > null（不支持，图片降级为标题+手动描述检索）
+  get visionModel() {
+    if (process.env.AI_VISION_MODEL) return process.env.AI_VISION_MODEL;
+    const provider = this.defaultProvider;
+    return (providerModelDefaults[provider] && providerModelDefaults[provider].visionModel) || null;
+  },
+
+  // 各提供商向量/视觉模型默认值（前端配置页展示占位提示用）
+  get modelDefaults() {
+    const result = {};
+    for (const [key, defaults] of Object.entries(providerModelDefaults)) {
+      result[key] = { ...defaults };
+    }
+    return result;
   },
 };
 

@@ -1,5 +1,10 @@
 package com.salary.manager.feature.ai.knowledge
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +31,11 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.OndemandVideo
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -41,6 +51,7 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -61,20 +72,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import coil3.request.crossfade
 import com.salary.core.common.constants.AppConstants
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.salary.core.design.theme.AppColors
 import com.salary.core.network.api.KnowledgeItemDto
 import com.salary.core.network.api.MaterialCategoryDto
 import com.salary.core.network.api.MaterialDto
-import java.text.SimpleDateFormat
-import java.util.Locale
 
 /**
  * 知识库浏览页面
@@ -124,13 +136,71 @@ fun KnowledgeScreen(
     val isSubmitting by viewModel.isSubmitting.collectAsStateWithLifecycle()
 
     // 知识文档状态
-    val filteredKnowledgeList by viewModel.filteredKnowledgeList.collectAsStateWithLifecycle()
+    val knowledgeList by viewModel.knowledgeList.collectAsStateWithLifecycle()
     val knowledgeSearchQuery by viewModel.knowledgeSearchQuery.collectAsStateWithLifecycle()
+    val knowledgeCategories by viewModel.knowledgeCategories.collectAsStateWithLifecycle()
+    val selectedKnowledgeCategory by viewModel.selectedKnowledgeCategory.collectAsStateWithLifecycle()
     val selectedKnowledge by viewModel.selectedKnowledge.collectAsStateWithLifecycle()
-    val showCreateDialog by viewModel.showCreateDialog.collectAsStateWithLifecycle()
+    val detailMediaUrl by viewModel.detailMediaUrl.collectAsStateWithLifecycle()
+    val showImportMenu by viewModel.showImportMenu.collectAsStateWithLifecycle()
+    val showKnowledgeFormDialog by viewModel.showKnowledgeFormDialog.collectAsStateWithLifecycle()
+    val editingKnowledgeId by viewModel.editingKnowledgeId.collectAsStateWithLifecycle()
     val inputTitle by viewModel.inputTitle.collectAsStateWithLifecycle()
     val inputContent by viewModel.inputContent.collectAsStateWithLifecycle()
-    val pendingDeleteTitle by viewModel.pendingDeleteTitle.collectAsStateWithLifecycle()
+    val inputCategory by viewModel.inputCategory.collectAsStateWithLifecycle()
+    val showImportDialog by viewModel.showImportDialog.collectAsStateWithLifecycle()
+    val importKind by viewModel.importKind.collectAsStateWithLifecycle()
+    val importFileName by viewModel.importFileName.collectAsStateWithLifecycle()
+    val importTitle by viewModel.importTitle.collectAsStateWithLifecycle()
+    val importCategory by viewModel.importCategory.collectAsStateWithLifecycle()
+    val importDescription by viewModel.importDescription.collectAsStateWithLifecycle()
+    val uploadProgress by viewModel.uploadProgress.collectAsStateWithLifecycle()
+    val isImporting by viewModel.isImporting.collectAsStateWithLifecycle()
+    val pendingDeleteKnowledge by viewModel.pendingDeleteKnowledge.collectAsStateWithLifecycle()
+    val redescribingId by viewModel.redescribingId.collectAsStateWithLifecycle()
+
+    // 文件选择器上下文
+    val context = LocalContext.current
+
+    // 查询Uri对应的文件显示名
+    fun queryFileName(uri: Uri): String {
+        return try {
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIndex >= 0 && cursor.moveToFirst()) cursor.getString(nameIndex) else ""
+            } ?: ""
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    // 文档导入选择器（txt/md/pdf/docx）
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { viewModel.onFileSelected(it, "file", queryFileName(it)) }
+    }
+
+    // 媒体导入选择器（图片/视频/音频）
+    val mediaPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { viewModel.onFileSelected(it, "media", queryFileName(it)) }
+    }
+
+    /** 用系统应用打开媒体文件（视频/音频播放） */
+    fun openMediaExternally(url: String?) {
+        if (url.isNullOrEmpty()) return
+        try {
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(Uri.parse(url), "*/*")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "选择播放应用"))
+        } catch (_: Exception) {
+            // 无可用应用时忽略
+        }
+    }
 
     // 收集错误消息（一次性事件，使用 SharedFlow collect 避免配置变化后重复消费）
     LaunchedEffect(Unit) {
@@ -206,10 +276,13 @@ fun KnowledgeScreen(
                             isLoading = isLoading,
                             searchQuery = knowledgeSearchQuery,
                             onSearchQueryChange = { viewModel.updateKnowledgeSearchQuery(it) },
-                            filteredKnowledgeList = filteredKnowledgeList,
-                            onCreateClick = { viewModel.openCreateDialog() },
-                            onItemClick = { viewModel.viewKnowledgeDetail(it.title) },
-                            onDeleteClick = { viewModel.requestDelete(it.title) }
+                            categories = knowledgeCategories,
+                            selectedCategory = selectedKnowledgeCategory,
+                            onSelectCategory = { viewModel.selectKnowledgeCategory(it) },
+                            knowledgeList = knowledgeList,
+                            onImportClick = { viewModel.openImportMenu() },
+                            onItemClick = { viewModel.viewKnowledgeDetail(it.id) },
+                            onDeleteClick = { viewModel.requestDelete(it) }
                         )
                     } else {
                         // 非admin无权限提示
@@ -297,29 +370,76 @@ fun KnowledgeScreen(
     if (selectedKnowledge != null) {
         KnowledgeDetailDialog(
             detail = selectedKnowledge!!,
+            mediaUrl = detailMediaUrl,
+            isRedescribing = redescribingId == selectedKnowledge!!.id,
             onDismiss = { viewModel.clearSelectedKnowledge() },
-            onDelete = { viewModel.requestDelete(selectedKnowledge!!.title) }
+            onEdit = { viewModel.openEditDialog() },
+            onDelete = { viewModel.requestDelete(pendingDeleteKnowledge ?: KnowledgeItemDto(id = selectedKnowledge!!.id, title = selectedKnowledge!!.title)) },
+            onRedescribe = { viewModel.redescribeImage() },
+            onOpenMedia = { openMediaExternally(it) }
         )
     }
 
-    // 录入知识文档弹窗
-    if (showCreateDialog) {
-        CreateKnowledgeDialog(
+    // 录入方式菜单（手动录入/导入文档/导入媒体）
+    if (showImportMenu) {
+        ImportMenuDialog(
+            onDismiss = { viewModel.closeImportMenu() },
+            onManualCreate = { viewModel.openCreateDialog() },
+            onImportFile = {
+                viewModel.closeImportMenu()
+                filePickerLauncher.launch(arrayOf(
+                    "text/plain", "text/markdown", "application/pdf",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                ))
+            },
+            onImportMedia = {
+                viewModel.closeImportMenu()
+                mediaPickerLauncher.launch(arrayOf("image/*", "video/*", "audio/*"))
+            }
+        )
+    }
+
+    // 录入/编辑知识文档弹窗
+    if (showKnowledgeFormDialog) {
+        KnowledgeFormDialog(
+            isEditMode = editingKnowledgeId != null,
             title = inputTitle,
             content = inputContent,
+            category = inputCategory,
+            categories = knowledgeCategories.map { it.name },
             isSubmitting = isSubmitting,
             onTitleChange = { viewModel.updateInputTitle(it) },
             onContentChange = { viewModel.updateInputContent(it) },
-            onCancel = { viewModel.closeCreateDialog() },
-            onSubmit = { viewModel.submitCreate() }
+            onCategoryChange = { viewModel.updateInputCategory(it) },
+            onCancel = { viewModel.closeKnowledgeFormDialog() },
+            onSubmit = { viewModel.submitKnowledgeForm() }
+        )
+    }
+
+    // 导入确认弹窗（文档/媒体）
+    if (showImportDialog) {
+        ImportConfirmDialog(
+            isMedia = importKind == "media",
+            fileName = importFileName,
+            title = importTitle,
+            category = importCategory,
+            description = importDescription,
+            isImporting = isImporting,
+            progress = uploadProgress,
+            categories = knowledgeCategories.map { it.name },
+            onTitleChange = { viewModel.updateImportTitle(it) },
+            onCategoryChange = { viewModel.updateImportCategory(it) },
+            onDescriptionChange = { viewModel.updateImportDescription(it) },
+            onCancel = { viewModel.closeImportDialog() },
+            onConfirm = { viewModel.confirmImport() }
         )
     }
 
     // 知识文档删除确认弹窗
-    pendingDeleteTitle?.let { title ->
+    pendingDeleteKnowledge?.let { item ->
         DeleteConfirmDialog(
             title = "确认删除",
-            message = "确定要删除知识文档「$title」吗？\n删除后将无法恢复，AI将无法再检索到该文档的内容。",
+            message = "确定要删除知识文档「${item.title}」吗？\n删除后将无法恢复，AI将无法再检索到该文档的内容。",
             confirmText = "删除",
             isSubmitting = isSubmitting,
             onConfirm = { viewModel.confirmDelete() },
@@ -993,20 +1113,23 @@ private fun FormTextField(
 // ========== 知识文档Tab内容 ==========
 
 /**
- * 知识文档Tab内容（含搜索功能）
+ * 知识文档Tab内容（搜索+分类筛选+列表）
  */
 @Composable
 private fun KnowledgeTabContent(
     isLoading: Boolean,
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
-    filteredKnowledgeList: List<KnowledgeItemDto>,
-    onCreateClick: () -> Unit,
+    categories: List<com.salary.core.network.api.KnowledgeCategoryDto>,
+    selectedCategory: String?,
+    onSelectCategory: (String?) -> Unit,
+    knowledgeList: List<KnowledgeItemDto>,
+    onImportClick: () -> Unit,
     onItemClick: (KnowledgeItemDto) -> Unit,
     onDeleteClick: (KnowledgeItemDto) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        // 搜索框 + 录入按钮
+        // 搜索框 + 导入按钮
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1017,7 +1140,7 @@ private fun KnowledgeTabContent(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = onSearchQueryChange,
-                placeholder = { Text("搜索文档标题...", fontSize = 14.sp, color = AppColors.TextPlaceholder) },
+                placeholder = { Text("搜索标题、内容...", fontSize = 14.sp, color = AppColors.TextPlaceholder) },
                 leadingIcon = { Icon(Icons.Default.Search, null, tint = AppColors.TextTertiary) },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(24.dp),
@@ -1031,7 +1154,7 @@ private fun KnowledgeTabContent(
                 singleLine = true
             )
             OutlinedButton(
-                onClick = onCreateClick,
+                onClick = onImportClick,
                 shape = RoundedCornerShape(24.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = AppColors.Green400),
                 border = androidx.compose.foundation.BorderStroke(1.dp, AppColors.Green400)
@@ -1042,6 +1165,31 @@ private fun KnowledgeTabContent(
             }
         }
 
+        // 分类筛选标签（横向滚动）
+        if (categories.isNotEmpty()) {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            ) {
+                item {
+                    CategoryChip(
+                        name = "全部",
+                        isSelected = selectedCategory == null,
+                        onClick = { onSelectCategory(null) }
+                    )
+                }
+                items(categories, key = { it.name }) { category ->
+                    CategoryChip(
+                        name = "${category.name}(${category.count})",
+                        isSelected = selectedCategory == category.name,
+                        onClick = { onSelectCategory(category.name) }
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
         // 文档列表
         if (isLoading) {
             Box(
@@ -1050,7 +1198,7 @@ private fun KnowledgeTabContent(
             ) {
                 CircularProgressIndicator(color = AppColors.Green400)
             }
-        } else if (filteredKnowledgeList.isEmpty()) {
+        } else if (knowledgeList.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -1086,7 +1234,7 @@ private fun KnowledgeTabContent(
                     start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp
                 )
             ) {
-                items(filteredKnowledgeList, key = { it.title + it.createdAt }) { item ->
+                items(knowledgeList, key = { it.id }) { item ->
                     KnowledgeCard(
                         item = item,
                         onClick = { onItemClick(item) },
@@ -1099,7 +1247,42 @@ private fun KnowledgeTabContent(
 }
 
 /**
- * 知识文档卡片
+ * 文档类型对应的图标
+ */
+private fun docTypeIcon(docType: String): ImageVector = when (docType) {
+    "image" -> Icons.Default.Image
+    "video" -> Icons.Default.OndemandVideo
+    "audio" -> Icons.Default.LibraryMusic
+    "pdf" -> Icons.Default.PictureAsPdf
+    "docx", "markdown", "text" -> Icons.Default.Description
+    else -> Icons.Default.InsertDriveFile
+}
+
+/**
+ * 文档类型中文名
+ */
+private fun docTypeText(docType: String): String = when (docType) {
+    "text" -> "文本"
+    "markdown" -> "Markdown"
+    "pdf" -> "PDF"
+    "docx" -> "Word"
+    "image" -> "图片"
+    "video" -> "视频"
+    "audio" -> "音频"
+    else -> docType
+}
+
+/**
+ * 文件大小格式化
+ */
+private fun formatFileSize(size: Long): String = when {
+    size >= 1024 * 1024 -> String.format("%.1fMB", size / 1024.0 / 1024.0)
+    size >= 1024 -> String.format("%.0fKB", size / 1024.0)
+    else -> "${size}B"
+}
+
+/**
+ * 知识文档卡片（类型图标+标题+分类徽章+元信息）
  */
 @Composable
 private fun KnowledgeCard(
@@ -1107,16 +1290,6 @@ private fun KnowledgeCard(
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val inputFormat = remember { SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()) }
-    val outputFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
-    val createdDate = remember(item.createdAt) {
-        try {
-            item.createdAt?.let { inputFormat.parse(it)?.let { d -> outputFormat.format(d) } }
-        } catch (_: Exception) {
-            item.createdAt?.substring(0, 10)
-        }
-    }
-
     Card(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
@@ -1131,7 +1304,7 @@ private fun KnowledgeCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                Icons.Default.Description,
+                docTypeIcon(item.docType),
                 contentDescription = null,
                 tint = AppColors.Green400,
                 modifier = Modifier.size(32.dp)
@@ -1147,12 +1320,16 @@ private fun KnowledgeCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    KnowledgeMetaTag("分块 ${item.chunkCount}")
-                    KnowledgeMetaTag("${item.totalChars}字")
-                    if (createdDate != null) {
-                        KnowledgeMetaTag(createdDate)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    KnowledgeMetaTag(item.category)
+                    KnowledgeMetaTag(docTypeText(item.docType))
+                    // 媒体类显示文件大小，文本类显示字数
+                    if (item.sourceType == "media") {
+                        KnowledgeMetaTag(formatFileSize(item.fileSize))
+                    } else {
+                        KnowledgeMetaTag("${item.charCount}字")
                     }
+                    item.createdAt?.let { KnowledgeMetaTag(it.substring(0, 10)) }
                 }
             }
             // 删除按钮
@@ -1187,13 +1364,18 @@ private fun KnowledgeMetaTag(text: String) {
 }
 
 /**
- * 知识文档详情弹窗
+ * 知识文档详情弹窗（元信息+全文/媒体预览+编辑删除+图片重新识别）
  */
 @Composable
 private fun KnowledgeDetailDialog(
     detail: com.salary.core.network.api.KnowledgeDetailResponse,
+    mediaUrl: String?,
+    isRedescribing: Boolean,
     onDismiss: () -> Unit,
-    onDelete: () -> Unit
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onRedescribe: () -> Unit,
+    onOpenMedia: (String?) -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1204,6 +1386,13 @@ private fun KnowledgeDetailDialog(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Icon(
+                    docTypeIcon(detail.docType),
+                    contentDescription = null,
+                    tint = AppColors.Green400,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.size(8.dp))
                 Text(
                     detail.title.ifEmpty { "无标题" },
                     fontSize = 18.sp,
@@ -1227,56 +1416,279 @@ private fun KnowledgeDetailDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 400.dp)
+                    .heightIn(max = 420.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // 元信息
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    KnowledgeMetaTag("共${detail.chunkCount}个分块")
-                    KnowledgeMetaTag("来源：${sourceTypeText(detail.sourceType)}")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    KnowledgeMetaTag("分类：${detail.category}")
+                    KnowledgeMetaTag(sourceTypeText(detail.sourceType))
+                    if (detail.sourceType != "media") {
+                        KnowledgeMetaTag("${detail.charCount}字")
+                    } else if (detail.fileSize > 0) {
+                        KnowledgeMetaTag(formatFileSize(detail.fileSize))
+                    }
                 }
-                HorizontalDivider()
-                // 分块内容
-                detail.chunks.forEachIndexed { index, chunk ->
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(
-                            "片段 ${chunk.chunkIndex + 1}",
-                            fontSize = 13.sp,
-                            color = AppColors.Green600,
-                            fontWeight = FontWeight.Medium
+
+                // 媒体预览：图片直接显示，视频/音频显示文件卡片（点击外部播放）
+                if (detail.docType == "image" && mediaUrl != null) {
+                    CoilAsyncImage(url = mediaUrl)
+                    // 图片识别状态
+                    when (detail.visionStatus) {
+                        "ok" -> Text(
+                            "已自动识别图片内容参与AI检索",
+                            fontSize = 12.sp, color = AppColors.Green600
                         )
-                        Text(
-                            chunk.content,
-                            fontSize = 14.sp,
-                            color = AppColors.TextPrimary,
-                            lineHeight = 22.sp
+                        "unsupported" -> Text(
+                            "当前AI提供商不支持图片识别，图片以标题和描述参与检索",
+                            fontSize = 12.sp, color = AppColors.TextTertiary
                         )
-                        if (index < detail.chunks.size - 1) {
-                            HorizontalDivider()
+                        "failed" -> Text(
+                            "图片自动识别失败，可点击「重新识别」重试（需配置视觉模型）",
+                            fontSize = 12.sp, color = Color(0xFFED6C02)
+                        )
+                    }
+                } else if ((detail.docType == "video" || detail.docType == "audio") && mediaUrl != null) {
+                    Surface(
+                        onClick = { onOpenMedia(mediaUrl) },
+                        shape = RoundedCornerShape(12.dp),
+                        color = AppColors.SurfaceVariant
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                docTypeIcon(detail.docType),
+                                contentDescription = null,
+                                tint = AppColors.Green400,
+                                modifier = Modifier.size(32.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    detail.fileName ?: detail.title,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = AppColors.TextPrimary,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                                )
+                                Text("点击播放", fontSize = 12.sp, color = AppColors.TextTertiary)
+                            }
                         }
                     }
                 }
+
+                HorizontalDivider()
+
+                // 手动描述（媒体类型）
+                if (!detail.description.isNullOrBlank()) {
+                    Text("补充描述", fontSize = 13.sp, color = AppColors.Green600, fontWeight = FontWeight.Medium)
+                    Text(detail.description!!, fontSize = 14.sp, color = AppColors.TextPrimary, lineHeight = 22.sp)
+                    HorizontalDivider()
+                }
+
+                // 检索文本全文
+                Text("检索文本（${detail.chunkCount}个分块）", fontSize = 13.sp, color = AppColors.Green600, fontWeight = FontWeight.Medium)
+                Text(
+                    detail.content,
+                    fontSize = 14.sp,
+                    color = AppColors.TextPrimary,
+                    lineHeight = 22.sp
+                )
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("关闭", color = AppColors.Green400, fontWeight = FontWeight.Medium)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                // 图片识别失败/不支持时显示重新识别按钮
+                if (detail.docType == "image" && detail.visionStatus != "ok") {
+                    TextButton(onClick = onRedescribe, enabled = !isRedescribing) {
+                        if (isRedescribing) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = AppColors.Green400)
+                        } else {
+                            Text("重新识别", color = Color(0xFFED6C02), fontSize = 13.sp)
+                        }
+                    }
+                }
+                TextButton(onClick = onEdit) {
+                    Text("编辑", color = AppColors.Green400, fontWeight = FontWeight.Medium)
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("关闭", color = AppColors.TextTertiary, fontWeight = FontWeight.Medium)
+                }
             }
         }
     )
 }
 
 /**
- * 录入知识文档弹窗
+ * Coil异步图片加载（知识库媒体预览）
+ * 复用 App 全局注册的 ImageLoader（SingletonImageLoader 已携带 Authorization 头），
+ * 与工程附件预览（AttachmentItem）行为一致
  */
 @Composable
-private fun CreateKnowledgeDialog(
+private fun CoilAsyncImage(url: String) {
+    val context = LocalContext.current
+    coil3.compose.AsyncImage(
+        model = coil3.request.ImageRequest.Builder(context)
+            .data(url)
+            .crossfade(true)
+            .build(),
+        contentDescription = "知识库媒体图片",
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 300.dp),
+        contentScale = androidx.compose.ui.layout.ContentScale.Fit
+    )
+}
+
+/**
+ * 录入方式菜单弹窗（手动录入/导入文档/导入媒体）
+ */
+@Composable
+private fun ImportMenuDialog(
+    onDismiss: () -> Unit,
+    onManualCreate: () -> Unit,
+    onImportFile: () -> Unit,
+    onImportMedia: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(16.dp),
+        containerColor = Color.White,
+        title = {
+            Text("录入知识文档", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ImportMenuItem(
+                    icon = Icons.Default.Edit,
+                    title = "手动录入",
+                    subtitle = "直接输入标题和内容"
+                ) { onManualCreate() }
+                ImportMenuItem(
+                    icon = Icons.Default.Description,
+                    title = "导入文档",
+                    subtitle = "支持 txt / md / pdf / docx，自动提取文本"
+                ) { onImportFile() }
+                ImportMenuItem(
+                    icon = Icons.Default.Image,
+                    title = "导入媒体",
+                    subtitle = "支持图片 / 视频 / 音频，图片自动识别内容"
+                ) { onImportMedia() }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消", color = AppColors.TextTertiary)
+            }
+        }
+    )
+}
+
+/**
+ * 录入菜单项
+ */
+@Composable
+private fun ImportMenuItem(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = AppColors.SurfaceVariant
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(icon, contentDescription = null, tint = AppColors.Green400, modifier = Modifier.size(28.dp))
+            Column {
+                Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = AppColors.TextPrimary)
+                Text(subtitle, fontSize = 12.sp, color = AppColors.TextTertiary)
+            }
+        }
+    }
+}
+
+/**
+ * 可编辑分类输入框（支持从已有分类下拉选择或输入新分类）
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CategoryDropdownField(
+    value: String,
+    onChange: (String) -> Unit,
+    categories: List<String>,
+    enabled: Boolean = true
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(
+        expanded = expanded && categories.isNotEmpty(),
+        onExpandedChange = { if (categories.isNotEmpty()) expanded = it }
+    ) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onChange,
+            label = { Text("知识分类（可选）", fontSize = 13.sp) },
+            placeholder = { Text("如：施工规范", fontSize = 13.sp) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor(),
+            shape = RoundedCornerShape(8.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = AppColors.Green400,
+                unfocusedBorderColor = AppColors.Green100,
+                cursorColor = AppColors.Green400
+            ),
+            singleLine = true,
+            enabled = enabled,
+            trailingIcon = {
+                if (categories.isNotEmpty()) {
+                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+                }
+            }
+        )
+        ExposedDropdownMenu(
+            expanded = expanded && categories.isNotEmpty(),
+            onDismissRequest = { expanded = false }
+        ) {
+            categories.forEach { category ->
+                DropdownMenuItem(
+                    text = { Text(category) },
+                    onClick = {
+                        onChange(category)
+                        expanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 录入/编辑知识文档弹窗（标题+分类+内容，内容变更自动重新分块）
+ */
+@Composable
+private fun KnowledgeFormDialog(
+    isEditMode: Boolean,
     title: String,
     content: String,
+    category: String,
+    categories: List<String>,
     isSubmitting: Boolean,
     onTitleChange: (String) -> Unit,
     onContentChange: (String) -> Unit,
+    onCategoryChange: (String) -> Unit,
     onCancel: () -> Unit,
     onSubmit: () -> Unit
 ) {
@@ -1286,7 +1698,7 @@ private fun CreateKnowledgeDialog(
         containerColor = Color.White,
         title = {
             Text(
-                "录入知识文档",
+                if (isEditMode) "编辑知识文档" else "录入知识文档",
                 fontSize = 18.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = AppColors.TextPrimary
@@ -1294,7 +1706,10 @@ private fun CreateKnowledgeDialog(
         },
         text = {
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 450.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // 标题输入框
@@ -1314,12 +1729,20 @@ private fun CreateKnowledgeDialog(
                     enabled = !isSubmitting
                 )
 
+                // 分类（可编辑下拉）
+                CategoryDropdownField(
+                    value = category,
+                    onChange = onCategoryChange,
+                    categories = categories,
+                    enabled = !isSubmitting
+                )
+
                 // 内容输入框
                 OutlinedTextField(
                     value = content,
                     onValueChange = onContentChange,
                     label = { Text("文档内容", fontSize = 13.sp) },
-                    placeholder = { Text("请输入文档内容（10-50000字符）\n内容将自动分块并生成向量嵌入，用于AI对话时的知识检索", fontSize = 13.sp) },
+                    placeholder = { Text("请输入文档内容（10-50000字符）\n保存后将自动分块用于AI知识检索", fontSize = 13.sp) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 160.dp, max = 280.dp),
@@ -1354,7 +1777,7 @@ private fun CreateKnowledgeDialog(
                         strokeWidth = 2.dp
                     )
                 } else {
-                    Text("提交", color = AppColors.Green400, fontWeight = FontWeight.Medium)
+                    Text(if (isEditMode) "保存" else "提交", color = AppColors.Green400, fontWeight = FontWeight.Medium)
                 }
             }
         },
@@ -1362,6 +1785,160 @@ private fun CreateKnowledgeDialog(
             TextButton(
                 onClick = onCancel,
                 enabled = !isSubmitting
+            ) {
+                Text("取消", color = AppColors.TextTertiary)
+            }
+        }
+    )
+}
+
+/**
+ * 导入确认弹窗（文档/媒体导入，带上传进度）
+ */
+@Composable
+private fun ImportConfirmDialog(
+    isMedia: Boolean,
+    fileName: String,
+    title: String,
+    category: String,
+    description: String,
+    isImporting: Boolean,
+    progress: Int,
+    categories: List<String>,
+    onTitleChange: (String) -> Unit,
+    onCategoryChange: (String) -> Unit,
+    onDescriptionChange: (String) -> Unit,
+    onCancel: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = { if (!isImporting) onCancel() },
+        shape = RoundedCornerShape(16.dp),
+        containerColor = Color.White,
+        title = {
+            Text(
+                if (isMedia) "导入媒体文件" else "导入文档",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = AppColors.TextPrimary
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // 文件名（只读展示）
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = AppColors.SurfaceVariant
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.InsertDriveFile,
+                            contentDescription = null,
+                            tint = AppColors.Green400,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            fileName,
+                            fontSize = 13.sp,
+                            color = AppColors.TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                // 标题（媒体必填，文档可选默认用文件名）
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = onTitleChange,
+                    label = { Text(if (isMedia) "标题 *" else "标题（可选）", fontSize = 13.sp) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = AppColors.Green400,
+                        unfocusedBorderColor = AppColors.Green100,
+                        cursorColor = AppColors.Green400
+                    ),
+                    singleLine = true,
+                    enabled = !isImporting
+                )
+
+                // 分类（可编辑下拉）
+                CategoryDropdownField(
+                    value = category,
+                    onChange = onCategoryChange,
+                    categories = categories,
+                    enabled = !isImporting
+                )
+
+                // 描述（媒体导入用）
+                if (isMedia) {
+                    OutlinedTextField(
+                        value = description,
+                        onValueChange = onDescriptionChange,
+                        label = { Text("补充描述（推荐）", fontSize = 13.sp) },
+                        placeholder = { Text("描述媒体内容，提升检索准确度", fontSize = 13.sp) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AppColors.Green400,
+                            unfocusedBorderColor = AppColors.Green100,
+                            cursorColor = AppColors.Green400
+                        ),
+                        enabled = !isImporting
+                    )
+                }
+
+                // 上传进度
+                if (isImporting) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        LinearProgressIndicator(
+                            progress = { progress / 100f },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = AppColors.Green400,
+                            trackColor = AppColors.Green50
+                        )
+                        Text(
+                            "正在上传... $progress%",
+                            fontSize = 12.sp,
+                            color = AppColors.Green600,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = !isImporting && (!isMedia || title.isNotBlank()),
+                colors = ButtonDefaults.buttonColors(containerColor = AppColors.Green400)
+            ) {
+                if (isImporting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = Color.White,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text("导入", color = Color.White, fontWeight = FontWeight.Medium)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onCancel,
+                enabled = !isImporting
             ) {
                 Text("取消", color = AppColors.TextTertiary)
             }

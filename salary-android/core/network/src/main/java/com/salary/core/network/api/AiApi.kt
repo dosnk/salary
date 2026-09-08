@@ -3,11 +3,15 @@ package com.salary.core.network.api
 import com.salary.core.network.dto.ApiResponse
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Multipart
 import retrofit2.http.PUT
 import retrofit2.http.POST
+import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
 
@@ -66,24 +70,60 @@ interface AiApi {
     @POST("v1/ai/test")
     suspend fun testConnection(@Body body: AiTestRequest): ApiResponse<AiTestResponse>
 
-    /** 获取知识库文档列表（仅admin） */
+    /** 获取知识分类列表（仅admin，注意在 /knowledge/{id} 之前注册） */
+    @GET("v1/ai/knowledge/categories")
+    suspend fun getKnowledgeCategories(): ApiResponse<KnowledgeCategoriesResponse>
+
+    /** 获取知识库文档列表（仅admin，分页+分类筛选+关键词搜索） */
     @GET("v1/ai/knowledge")
     suspend fun listKnowledge(
         @Query("page") page: Int = 1,
-        @Query("pageSize") pageSize: Int = 20
+        @Query("pageSize") pageSize: Int = 20,
+        @Query("category") category: String? = null,
+        @Query("keyword") keyword: String? = null
     ): ApiResponse<KnowledgeListResponse>
 
-    /** 添加知识文档（仅admin） */
+    /** 手动录入知识文档（仅admin） */
     @POST("v1/ai/knowledge")
     suspend fun createKnowledge(@Body body: CreateKnowledgeRequest): ApiResponse<CreateKnowledgeResponse>
 
-    /** 获取知识文档详情（仅admin） */
-    @GET("v1/ai/knowledge/{title}")
-    suspend fun getKnowledgeDetail(@Path("title") title: String): ApiResponse<KnowledgeDetailResponse>
+    /** 文件导入知识文档（仅admin，txt/md/pdf/docx） */
+    @Multipart
+    @POST("v1/ai/knowledge/import-file")
+    suspend fun importKnowledgeFile(
+        @Part file: MultipartBody.Part,
+        @Part("title") title: RequestBody?,
+        @Part("category") category: RequestBody?
+    ): ApiResponse<CreateKnowledgeResponse>
 
-    /** 删除知识文档（仅admin） */
-    @DELETE("v1/ai/knowledge/{title}")
-    suspend fun deleteKnowledge(@Path("title") title: String): ApiResponse<DeleteKnowledgeResponse>
+    /** 媒体导入知识文档（仅admin，图片/视频/音频） */
+    @Multipart
+    @POST("v1/ai/knowledge/import-media")
+    suspend fun importKnowledgeMedia(
+        @Part file: MultipartBody.Part,
+        @Part("title") title: RequestBody,
+        @Part("category") category: RequestBody?,
+        @Part("description") description: RequestBody?
+    ): ApiResponse<ImportMediaResponse>
+
+    /** 获取知识文档详情（仅admin） */
+    @GET("v1/ai/knowledge/{id}")
+    suspend fun getKnowledgeDetail(@Path("id") id: Int): ApiResponse<KnowledgeDetailResponse>
+
+    /** 编辑知识文档（仅admin，内容变更自动重新分块） */
+    @PUT("v1/ai/knowledge/{id}")
+    suspend fun updateKnowledge(
+        @Path("id") id: Int,
+        @Body body: UpdateKnowledgeRequest
+    ): ApiResponse<UpdateKnowledgeResponse>
+
+    /** 删除知识文档（仅admin，级联删分块+删媒体文件） */
+    @DELETE("v1/ai/knowledge/{id}")
+    suspend fun deleteKnowledge(@Path("id") id: Int): ApiResponse<DeleteKnowledgeResponse>
+
+    /** 图片重新识别（仅admin，视觉模型配置好后补识别） */
+    @POST("v1/ai/knowledge/{id}/redescribe")
+    suspend fun redescribeKnowledge(@Path("id") id: Int): ApiResponse<RedescribeResponse>
 }
 
 // ========== 请求体 ==========
@@ -114,7 +154,16 @@ data class MaterialOptionsDto(
 @Serializable
 data class AiChatResponse(
     val content: String,
-    val intent: String
+    val intent: String,
+    /** 引用溯源：本次回答引用的知识文档列表 */
+    val citations: List<KnowledgeCitationDto> = emptyList()
+)
+
+/** 知识引用溯源项 */
+@Serializable
+data class KnowledgeCitationDto(
+    val docId: Int = 0,
+    val title: String = ""
 )
 
 @Serializable
@@ -295,7 +344,20 @@ data class ChatHistoryItem(
 @Serializable
 data class AiConfigResponse(
     @SerialName("defaultProvider") val defaultProvider: String = "",
-    @SerialName("providers") val providers: Map<String, AiProviderConfigDto> = emptyMap()
+    @SerialName("providers") val providers: Map<String, AiProviderConfigDto> = emptyMap(),
+    /** 向量模型（知识库embedding用，空表示按提供商默认映射） */
+    @SerialName("embeddingModel") val embeddingModel: String = "",
+    /** 视觉模型（知识库图片识别用，空表示按提供商默认映射） */
+    @SerialName("visionModel") val visionModel: String = "",
+    /** 各提供商默认向量/视觉模型（配置页展示占位提示用） */
+    @SerialName("modelDefaults") val modelDefaults: Map<String, AiModelDefaultsDto> = emptyMap()
+)
+
+/** 提供商默认向量/视觉模型映射 */
+@Serializable
+data class AiModelDefaultsDto(
+    @SerialName("embeddingModel") val embeddingModel: String? = null,
+    @SerialName("visionModel") val visionModel: String? = null
 )
 
 /** 单个提供商配置 */
@@ -313,11 +375,15 @@ data class AiProviderConfigDto(
     @SerialName("hasSecretKey") val hasSecretKey: Boolean = false
 )
 
-/** AI配置更新请求 */
+/** AI配置更新请求（embeddingModel/visionModel 仅在用户修改时传入，null不序列化） */
 @Serializable
 data class AiConfigUpdateRequest(
     @SerialName("defaultProvider") val defaultProvider: String? = null,
-    @SerialName("providerConfigs") val providerConfigs: Map<String, AiProviderConfigUpdate>? = null
+    @SerialName("providerConfigs") val providerConfigs: Map<String, AiProviderConfigUpdate>? = null,
+    /** 向量模型（空字符串表示清除自定义、回退提供商默认映射） */
+    @SerialName("embeddingModel") val embeddingModel: String? = null,
+    /** 视觉模型（空字符串表示清除自定义、回退提供商默认映射） */
+    @SerialName("visionModel") val visionModel: String? = null
 )
 
 /** 单个提供商配置更新 */
@@ -353,81 +419,150 @@ data class AiTestResponse(
 
 // ========== 知识库相关 ==========
 
-/** 知识库文档列表项 */
+/** 知识库文档列表项（后端返回camelCase） */
 @Serializable
 data class KnowledgeItemDto(
-    /** 文档标题（作为唯一标识） */
-    @SerialName("title") val title: String = "",
-    /** 来源类型: manual/upload/api */
-    @SerialName("source_type") val sourceType: String = "manual",
-    /** 来源ID */
-    @SerialName("source_id") val sourceId: Int? = null,
+    /** 文档ID */
+    val id: Int = 0,
+    /** 标题 */
+    val title: String = "",
+    /** 知识分类 */
+    val category: String = "未分类",
+    /** 录入方式: manual/file/media */
+    val sourceType: String = "manual",
+    /** 文档类型: text/markdown/pdf/docx/image/video/audio */
+    val docType: String = "text",
+    /** 原始文件名 */
+    val fileName: String? = null,
+    /** 文件大小（字节） */
+    val fileSize: Long = 0,
+    /** 媒体文件URL（相对路径，文本类为null） */
+    val mediaUrl: String? = null,
+    /** 检索文本字符数 */
+    val charCount: Int = 0,
     /** 分块数量 */
-    @SerialName("chunk_count") val chunkCount: String = "0",
-    /** 总字符数 */
-    @SerialName("total_chars") val totalChars: String = "0",
-    /** 创建时间 */
-    @SerialName("created_at") val createdAt: String? = null,
-    /** 更新时间 */
-    @SerialName("updated_at") val updatedAt: String? = null
+    val chunkCount: Int = 0,
+    /** 向量化状态: none/partial/full */
+    val embeddingStatus: String = "none",
+    /** 图片识别状态: ok/failed/unsupported（仅图片类型） */
+    val visionStatus: String? = null,
+    /** 创建时间（yyyy-MM-dd HH:mm） */
+    val createdAt: String? = null,
+    /** 更新时间（yyyy-MM-dd HH:mm） */
+    val updatedAt: String? = null
 )
 
 /** 知识库列表响应 */
 @Serializable
 data class KnowledgeListResponse(
-    @SerialName("total") val total: Int = 0,
-    @SerialName("page") val page: Int = 1,
-    @SerialName("pageSize") val pageSize: Int = 20,
-    @SerialName("items") val items: List<KnowledgeItemDto> = emptyList()
+    val total: Int = 0,
+    val page: Int = 1,
+    val pageSize: Int = 20,
+    val items: List<KnowledgeItemDto> = emptyList()
 )
 
-/** 创建知识文档请求 */
+/** 知识分类列表响应 */
+@Serializable
+data class KnowledgeCategoriesResponse(
+    val categories: List<KnowledgeCategoryDto> = emptyList()
+)
+
+/** 知识分类项（含文档数） */
+@Serializable
+data class KnowledgeCategoryDto(
+    val name: String = "",
+    val count: Int = 0
+)
+
+/** 创建/导入知识文档请求（手动录入） */
 @Serializable
 data class CreateKnowledgeRequest(
-    @SerialName("title") val title: String,
-    @SerialName("content") val content: String,
-    @SerialName("sourceType") val sourceType: String = "manual"
+    val title: String,
+    val content: String,
+    val category: String? = null
 )
 
-/** 创建知识文档响应 */
+/** 创建/导入知识文档响应 */
 @Serializable
 data class CreateKnowledgeResponse(
-    @SerialName("message") val message: String = "",
-    @SerialName("chunks") val chunks: Int = 0,
-    @SerialName("items") val items: List<KnowledgeChunkResultDto> = emptyList()
+    val message: String = "",
+    val id: Int = 0,
+    val title: String? = null,
+    val chunkCount: Int = 0,
+    val charCount: Int = 0,
+    val truncated: Boolean = false,
+    val embeddingStatus: String = "none"
 )
 
-/** 知识分块结果 */
+/** 媒体导入响应 */
 @Serializable
-data class KnowledgeChunkResultDto(
-    @SerialName("id") val id: Int = 0,
-    @SerialName("title") val title: String = "",
-    @SerialName("chunkIndex") val chunkIndex: Int = 0,
-    @SerialName("charCount") val charCount: Int = 0
+data class ImportMediaResponse(
+    val message: String = "",
+    val id: Int = 0,
+    /** 图片识别状态: ok/failed/unsupported */
+    val visionStatus: String? = null,
+    val chunkCount: Int = 0,
+    val embeddingStatus: String = "none"
 )
 
 /** 知识文档详情响应 */
 @Serializable
 data class KnowledgeDetailResponse(
-    @SerialName("title") val title: String = "",
-    @SerialName("sourceType") val sourceType: String = "manual",
-    @SerialName("sourceId") val sourceId: Int? = null,
-    @SerialName("chunkCount") val chunkCount: Int = 0,
-    @SerialName("chunks") val chunks: List<KnowledgeChunkDto> = emptyList()
+    val id: Int = 0,
+    val title: String = "",
+    val category: String = "未分类",
+    val sourceType: String = "manual",
+    val docType: String = "text",
+    /** 媒体文件URL（相对路径） */
+    val mediaUrl: String? = null,
+    val fileName: String? = null,
+    val fileSize: Long = 0,
+    val mimeType: String? = null,
+    /** 检索文本全文 */
+    val content: String = "",
+    /** 媒体文件手动描述 */
+    val description: String? = null,
+    val charCount: Int = 0,
+    val chunkCount: Int = 0,
+    val embeddingStatus: String = "none",
+    val visionStatus: String? = null,
+    val createdAt: String? = null,
+    val updatedAt: String? = null
 )
 
-/** 知识分块详情 */
+/** 编辑知识文档请求（所有字段可选，仅传需要更新的字段；null不序列化） */
 @Serializable
-data class KnowledgeChunkDto(
-    @SerialName("id") val id: Int = 0,
-    @SerialName("chunkIndex") val chunkIndex: Int = 0,
-    @SerialName("content") val content: String = "",
-    @SerialName("charCount") val charCount: Int = 0
+data class UpdateKnowledgeRequest(
+    val title: String? = null,
+    val content: String? = null,
+    val category: String? = null,
+    val description: String? = null
+)
+
+/** 编辑知识文档响应 */
+@Serializable
+data class UpdateKnowledgeResponse(
+    val message: String = "",
+    val id: Int = 0,
+    val chunkCount: Int = 0,
+    val embeddingStatus: String = "none"
 )
 
 /** 删除知识文档响应 */
 @Serializable
 data class DeleteKnowledgeResponse(
-    @SerialName("message") val message: String = "",
-    @SerialName("deletedChunks") val deletedChunks: Int = 0
+    val message: String = "",
+    val id: Int = 0
+)
+
+/** 图片重新识别响应 */
+@Serializable
+data class RedescribeResponse(
+    val message: String = "",
+    val id: Int = 0,
+    /** 识别状态: ok/failed/unsupported */
+    val visionStatus: String? = null,
+    /** 识别成功时的图片描述 */
+    val description: String? = null,
+    val chunkCount: Int = 0
 )

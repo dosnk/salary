@@ -2,6 +2,7 @@ package com.salary.manager.feature.ai.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.salary.core.network.api.KnowledgeCitationDto
 import com.salary.manager.feature.ai.data.AiRepository
 import com.salary.manager.feature.ai.data.SseEvent
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -145,11 +146,11 @@ class AiChatViewModel @Inject constructor(
                             }
                         }
                         is SseEvent.Done -> {
-                            // 流式结束
+                            // 流式结束（携带引用溯源：本次回答引用的知识文档）
                             _messages.update { msgs ->
                                 msgs.map { msg ->
                                     if (msg.id == aiMsgId) {
-                                        msg.copy(isStreaming = false)
+                                        msg.copy(isStreaming = false, citations = event.citations)
                                     } else msg
                                 }
                             }
@@ -290,7 +291,9 @@ data class ChatMessage(
     val role: MessageRole,
     val content: String,
     val isStreaming: Boolean = false,
-    val isError: Boolean = false
+    val isError: Boolean = false,
+    /** 引用溯源：AI回答引用的知识文档列表（流式结束时由后端返回） */
+    val citations: List<KnowledgeCitationDto> = emptyList()
 )
 
 /**

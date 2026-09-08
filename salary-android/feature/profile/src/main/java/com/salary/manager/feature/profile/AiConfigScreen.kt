@@ -49,6 +49,8 @@ fun AiConfigScreen(
     var saveSuccess by remember { mutableStateOf(false) }
     val editedProviders by viewModel.editedProviders.collectAsStateWithLifecycle()
     val selectedProvider by viewModel.selectedProvider.collectAsStateWithLifecycle()
+    val embeddingModel by viewModel.embeddingModel.collectAsStateWithLifecycle()
+    val visionModel by viewModel.visionModel.collectAsStateWithLifecycle()
 
     // 加载配置
     LaunchedEffect(Unit) {
@@ -226,6 +228,25 @@ fun AiConfigScreen(
                         onBaseUrlChange = { viewModel.updateBaseUrl(selectedProvider, it) },
                     )
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // 知识库向量/视觉模型配置（全局生效，placeholder显示当前提供商默认值）
+                Text(
+                    text = "知识库模型配置",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AppColors.TextPrimary
+                )
+                val modelDefaults = config?.modelDefaults?.get(selectedProvider)
+                KnowledgeModelCard(
+                    embeddingModel = embeddingModel,
+                    visionModel = visionModel,
+                    embeddingPlaceholder = modelDefaults?.embeddingModel ?: "（当前提供商不支持向量检索）",
+                    visionPlaceholder = modelDefaults?.visionModel ?: "（当前提供商不支持图片识别）",
+                    onEmbeddingChange = { viewModel.updateEmbeddingModel(it) },
+                    onVisionChange = { viewModel.updateVisionModel(it) }
+                )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -467,6 +488,79 @@ private fun ProviderConfigCard(
                 )
             }
         }
+        }
+    }
+}
+
+/**
+ * 知识库模型配置卡片（向量模型 + 视觉模型）
+ *
+ * 用于知识库RAG检索与图片识别：
+ * - 向量模型：生成文档嵌入向量，留空用当前提供商默认值
+ * - 视觉模型：识别图片生成描述，留空用当前提供商默认值
+ * 留空时按当前默认提供商的内置映射生效（通义/智谱/豆包支持，文心/DeepSeek不支持自动降级）
+ */
+@Composable
+private fun KnowledgeModelCard(
+    embeddingModel: String,
+    visionModel: String,
+    embeddingPlaceholder: String,
+    visionPlaceholder: String,
+    onEmbeddingChange: (String) -> Unit,
+    onVisionChange: (String) -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // 向量模型
+            OutlinedTextField(
+                value = embeddingModel,
+                onValueChange = onEmbeddingChange,
+                label = { Text("向量模型（知识库语义检索）") },
+                placeholder = {
+                    Text(embeddingPlaceholder, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(8.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = AppColors.Green400,
+                    unfocusedBorderColor = AppColors.SurfaceVariant
+                )
+            )
+            Text(
+                text = "留空使用当前提供商默认向量模型；当前提供商不支持时自动降级为关键词检索",
+                fontSize = 11.sp,
+                color = AppColors.TextTertiary
+            )
+
+            // 视觉模型
+            OutlinedTextField(
+                value = visionModel,
+                onValueChange = onVisionChange,
+                label = { Text("视觉模型（知识库图片识别）") },
+                placeholder = {
+                    Text(visionPlaceholder, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(8.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = AppColors.Green400,
+                    unfocusedBorderColor = AppColors.SurfaceVariant
+                )
+            )
+            Text(
+                text = "留空使用当前提供商默认视觉模型；当前提供商不支持时图片以标题和描述参与检索",
+                fontSize = 11.sp,
+                color = AppColors.TextTertiary
+            )
         }
     }
 }

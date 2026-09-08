@@ -1,5 +1,8 @@
 package com.salary.manager.feature.ai.data
 
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import com.salary.core.common.util.AppLog
 import com.salary.core.common.util.NetworkErrorHandler
 import com.salary.core.data.local.ServerConfig
@@ -9,15 +12,20 @@ import com.salary.core.network.api.AiChatRequest
 import com.salary.core.network.api.CreateKnowledgeRequest
 import com.salary.core.network.api.CreateMaterialRequest
 import com.salary.core.network.api.DeleteKnowledgeResponse
+import com.salary.core.network.api.ImportMediaResponse
+import com.salary.core.network.api.KnowledgeCategoriesResponse
+import com.salary.core.network.api.KnowledgeCitationDto
 import com.salary.core.network.api.KnowledgeDetailResponse
-import com.salary.core.network.api.KnowledgeItemDto
 import com.salary.core.network.api.KnowledgeListResponse
 import com.salary.core.network.api.LayoutRequest
 import com.salary.core.network.api.LayoutResponse
 import com.salary.core.network.api.MaterialCategoryDto
 import com.salary.core.network.api.MaterialDto
 import com.salary.core.network.api.MaterialOptionsDto
+import com.salary.core.network.api.StreamProgressRequestBody
+import com.salary.core.network.api.UpdateKnowledgeRequest
 import com.salary.core.network.api.UpdateMaterialRequest
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -26,6 +34,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -41,9 +51,11 @@ import javax.inject.Singleton
  * 2. 普通对话 - 通过Retrofit
  * 3. 排料计算 - 通过Retrofit
  * 4. 材料查询 - 通过Retrofit
+ * 5. 知识库管理 - 通过Retrofit（含文件/媒体multipart导入）
  */
 @Singleton
 class AiRepository @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val aiApi: AiApi,
     private val tokenStorage: TokenStorage,
     private val serverConfig: ServerConfig,
@@ -152,7 +164,16 @@ class AiRepository @Inject constructor(
                                 }
                                 "done" -> {
                                     val intent = element["intent"]?.jsonPrimitive?.content ?: ""
-                                    emit(SseEvent.Done(intent))
+                                    // 解析引用溯源（后端携带citations数组）
+                                    val citations = element["citations"]?.let { citElement ->
+                                        runCatching {
+                                            json.decodeFromJsonElement(
+                                                kotlinx.serialization.serializer<List<KnowledgeCitationDto>>(),
+                                                citElement
+                                            )
+                                        }.getOrDefault(emptyList())
+                                    } ?: emptyList()
+                                    emit(SseEvent.Done(intent, citations))
                                 }
                                 "error" -> {
                                     val errorMsg = element["message"]?.jsonPrimitive?.content ?: "未知错误"
@@ -294,10 +315,17 @@ class AiRepository @Inject constructor(
      * 获取知识库文档列表
      * @param page 页码（从1开始）
      * @param pageSize 每页数量
+     * @param category 分类筛选（null=全部）
+     * @param keyword 标题/内容关键词（null=不筛选）
      */
-    suspend fun listKnowledge(page: Int = 1, pageSize: Int = 20): Result<KnowledgeListResponse> {
+    suspend fun listKnowledge(
+        page: Int = 1,
+        pageSize: Int = 20,
+        category: String? = null,
+        keyword: String? = null
+    ): Result<KnowledgeListResponse> {
         return try {
-            val response = aiApi.listKnowledge(page, pageSize)
+            val response = aiApi.listKnowledge(page, pageSize, category?.takeIf { it.isNotBlank() }, keyword?.takeIf { it.isNotBlank() })
             if (response.code == 200) {
                 val data = response.data ?: return Result.failure(Exception("响应数据为空"))
                 Result.success(data)
@@ -310,13 +338,31 @@ class AiRepository @Inject constructor(
     }
 
     /**
-     * 添加知识文档
+     * 获取知识分类列表（含各分类文档数）
+     */
+    suspend fun getKnowledgeCategories(): Result<KnowledgeCategoriesResponse> {
+        return try {
+            val response = aiApi.getKnowledgeCategories()
+            if (response.code == 200) {
+                val data = response.data ?: return Result.failure(Exception("响应数据为空"))
+                Result.success(data)
+            } else {
+                Result.failure(Exception(response.msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(NetworkErrorHandler.translate(e, "加载知识分类失败")))
+        }
+    }
+
+    /**
+     * 手动录入知识文档（纯文本）
      * @param title 文档标题
      * @param content 文档内容（10-50000字符）
+     * @param category 知识分类
      */
-    suspend fun createKnowledge(title: String, content: String): Result<Unit> {
+    suspend fun createKnowledge(title: String, content: String, category: String?): Result<Unit> {
         return try {
-            val request = CreateKnowledgeRequest(title = title, content = content, sourceType = "manual")
+            val request = CreateKnowledgeRequest(title = title, content = content, category = category?.takeIf { it.isNotBlank() })
             val response = aiApi.createKnowledge(request)
             if (response.code == 200) {
                 Result.success(Unit)
@@ -329,12 +375,80 @@ class AiRepository @Inject constructor(
     }
 
     /**
-     * 获取知识文档详情
-     * @param title 文档标题
+     * 文件导入知识文档（txt/md/pdf/docx）
+     * 流式上传（ContentResolver边读边写），避免大文件OOM
+     *
+     * @param uri 文件Uri（来自系统文件选择器）
+     * @param title 标题（空则后端用文件名）
+     * @param category 知识分类
+     * @param onProgress 上传进度回调（0-100，IO线程）
      */
-    suspend fun getKnowledgeDetail(title: String): Result<KnowledgeDetailResponse> {
+    suspend fun importKnowledgeFile(
+        uri: Uri,
+        title: String,
+        category: String?,
+        onProgress: ((Int) -> Unit)? = null
+    ): Result<Unit> {
         return try {
-            val response = aiApi.getKnowledgeDetail(java.net.URLEncoder.encode(title, "UTF-8"))
+            val parts = buildMultipartParts(uri, onProgress) ?: return Result.failure(Exception("无法读取所选文件"))
+            val titleBody = title.takeIf { it.isNotBlank() }?.toFormBody()
+            val categoryBody = category?.takeIf { it.isNotBlank() }?.toFormBody()
+
+            val response = aiApi.importKnowledgeFile(parts.filePart, titleBody, categoryBody)
+            if (response.code == 200) {
+                onProgress?.invoke(100)
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception(response.msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(NetworkErrorHandler.translate(e, "文件导入失败")))
+        }
+    }
+
+    /**
+     * 媒体导入知识文档（图片/视频/音频）
+     * 图片由后端调用视觉模型自动识别；视频/音频靠标题+描述检索
+     *
+     * @param uri 文件Uri
+     * @param title 标题（必填）
+     * @param category 知识分类
+     * @param description 手动描述（补充检索关键词）
+     * @param onProgress 上传进度回调（0-100，IO线程）
+     */
+    suspend fun importKnowledgeMedia(
+        uri: Uri,
+        title: String,
+        category: String?,
+        description: String,
+        onProgress: ((Int) -> Unit)? = null
+    ): Result<ImportMediaResponse> {
+        return try {
+            val parts = buildMultipartParts(uri, onProgress) ?: return Result.failure(Exception("无法读取所选文件"))
+            val titleBody = title.toFormBody()
+            val categoryBody = category?.takeIf { it.isNotBlank() }?.toFormBody()
+            val descBody = description.takeIf { it.isNotBlank() }?.toFormBody()
+
+            val response = aiApi.importKnowledgeMedia(parts.filePart, titleBody, categoryBody, descBody)
+            if (response.code == 200) {
+                onProgress?.invoke(100)
+                val data = response.data ?: return Result.failure(Exception("响应数据为空"))
+                Result.success(data)
+            } else {
+                Result.failure(Exception(response.msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(NetworkErrorHandler.translate(e, "媒体导入失败")))
+        }
+    }
+
+    /**
+     * 获取知识文档详情（元信息+全文+媒体URL）
+     * @param id 文档ID
+     */
+    suspend fun getKnowledgeDetail(id: Int): Result<KnowledgeDetailResponse> {
+        return try {
+            val response = aiApi.getKnowledgeDetail(id)
             if (response.code == 200) {
                 val data = response.data ?: return Result.failure(Exception("响应数据为空"))
                 Result.success(data)
@@ -347,12 +461,45 @@ class AiRepository @Inject constructor(
     }
 
     /**
-     * 删除知识文档
-     * @param title 文档标题
+     * 编辑知识文档（内容变更时后端自动重新分块）
+     * @param id 文档ID
+     * @param title 新标题（null=不修改）
+     * @param content 新内容（null=不修改）
+     * @param category 新分类（null=不修改）
+     * @param description 新描述（null=不修改，媒体类型用）
      */
-    suspend fun deleteKnowledge(title: String): Result<DeleteKnowledgeResponse> {
+    suspend fun updateKnowledge(
+        id: Int,
+        title: String? = null,
+        content: String? = null,
+        category: String? = null,
+        description: String? = null
+    ): Result<Unit> {
         return try {
-            val response = aiApi.deleteKnowledge(java.net.URLEncoder.encode(title, "UTF-8"))
+            val request = UpdateKnowledgeRequest(
+                title = title?.takeIf { it.isNotBlank() },
+                content = content?.takeIf { it.isNotBlank() },
+                category = category?.takeIf { it.isNotBlank() },
+                description = description
+            )
+            val response = aiApi.updateKnowledge(id, request)
+            if (response.code == 200) {
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception(response.msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(NetworkErrorHandler.translate(e, "更新知识文档失败")))
+        }
+    }
+
+    /**
+     * 删除知识文档（级联删分块+删媒体文件）
+     * @param id 文档ID
+     */
+    suspend fun deleteKnowledge(id: Int): Result<DeleteKnowledgeResponse> {
+        return try {
+            val response = aiApi.deleteKnowledge(id)
             if (response.code == 200) {
                 val data = response.data ?: return Result.failure(Exception("响应数据为空"))
                 Result.success(data)
@@ -361,6 +508,83 @@ class AiRepository @Inject constructor(
             }
         } catch (e: Exception) {
             Result.failure(Exception(NetworkErrorHandler.translate(e, "删除知识文档失败")))
+        }
+    }
+
+    /**
+     * 图片重新识别（视觉模型配置好后补识别）
+     * @param id 文档ID
+     */
+    suspend fun redescribeKnowledge(id: Int): Result<Unit> {
+        return try {
+            val response = aiApi.redescribeKnowledge(id)
+            if (response.code == 200) {
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception(response.msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(NetworkErrorHandler.translate(e, "图片重新识别失败")))
+        }
+    }
+
+    /**
+     * 构造multipart文件part（流式，带进度回调）
+     * @return 文件part与原始文件名；无法读取时返回null
+     */
+    private fun buildMultipartParts(
+        uri: Uri,
+        onProgress: ((Int) -> Unit)?
+    ): MultipartParts? {
+        val fileName = queryFileName(uri) ?: return null
+        val fileSize = queryFileSize(uri)
+        val fileType = context.contentResolver.getType(uri) ?: "application/octet-stream"
+
+        val progressBody = StreamProgressRequestBody(
+            contentResolver = context.contentResolver,
+            uri = uri,
+            mediaType = fileType.toMediaTypeOrNull(),
+            totalSize = fileSize,
+            onProgress = { percent -> onProgress?.invoke(percent) }
+        )
+        val filePart = MultipartBody.Part.createFormData("file", fileName, progressBody)
+        return MultipartParts(filePart, fileName)
+    }
+
+    /**
+     * 构造multipart文本表单字段
+     * 注意: contentType必须传null（不设置"text/plain"），否则formidable会将其识别为文件
+     */
+    private fun String.toFormBody(): okhttp3.RequestBody = toRequestBody(null)
+
+    /** multipart构造结果 */
+    private data class MultipartParts(val filePart: MultipartBody.Part, val fileName: String)
+
+    /**
+     * 查询 Uri 对应的文件显示名
+     */
+    private fun queryFileName(uri: Uri): String? {
+        return try {
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIndex >= 0 && cursor.moveToFirst()) cursor.getString(nameIndex) else null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 查询文件大小（字节）
+     */
+    private fun queryFileSize(uri: Uri): Long {
+        return try {
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (sizeIndex >= 0 && cursor.moveToFirst()) cursor.getLong(sizeIndex) else 0L
+            } ?: 0L
+        } catch (_: Exception) {
+            0L
         }
     }
 }
@@ -372,8 +596,8 @@ sealed class SseEvent {
     /** 流式文本片段 */
     data class Content(val text: String) : SseEvent()
 
-    /** 结束标记 */
-    data class Done(val intent: String) : SseEvent()
+    /** 结束标记（含引用溯源：本次回答引用的知识文档列表） */
+    data class Done(val intent: String, val citations: List<KnowledgeCitationDto> = emptyList()) : SseEvent()
 
     /** 错误 */
     data class Error(val message: String) : SseEvent()

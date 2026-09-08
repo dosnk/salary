@@ -61,6 +61,14 @@ class AiConfigViewModel @Inject constructor(
     private val _selectedProvider = MutableStateFlow("")
     val selectedProvider: StateFlow<String> = _selectedProvider.asStateFlow()
 
+    // 向量模型（知识库embedding用，空表示按提供商默认映射）
+    private val _embeddingModel = MutableStateFlow("")
+    val embeddingModel: StateFlow<String> = _embeddingModel.asStateFlow()
+
+    // 视觉模型（知识库图片识别用，空表示按提供商默认映射）
+    private val _visionModel = MutableStateFlow("")
+    val visionModel: StateFlow<String> = _visionModel.asStateFlow()
+
     /** 加载AI配置 */
     fun loadConfig() {
         viewModelScope.launch {
@@ -70,6 +78,8 @@ class AiConfigViewModel @Inject constructor(
                 if (response.code == 200) {
                     _config.value = response.data
                     _selectedProvider.value = response.data?.defaultProvider ?: ""
+                    _embeddingModel.value = response.data?.embeddingModel ?: ""
+                    _visionModel.value = response.data?.visionModel ?: ""
                     // 初始化编辑状态
                     val edited = mutableMapOf<String, EditedProvider>()
                     response.data?.providers?.forEach { (key, dto) ->
@@ -125,6 +135,16 @@ class AiConfigViewModel @Inject constructor(
         _selectedProvider.value = provider
     }
 
+    /** 更新向量模型（知识库embedding用） */
+    fun updateEmbeddingModel(model: String) {
+        _embeddingModel.value = model
+    }
+
+    /** 更新视觉模型（知识库图片识别用） */
+    fun updateVisionModel(model: String) {
+        _visionModel.value = model
+    }
+
     /** 保存配置 */
     fun saveConfig() {
         viewModelScope.launch {
@@ -143,7 +163,10 @@ class AiConfigViewModel @Inject constructor(
 
                 val request = AiConfigUpdateRequest(
                     defaultProvider = _selectedProvider.value,
-                    providerConfigs = providerConfigs
+                    providerConfigs = providerConfigs,
+                    // 向量/视觉模型：有变更才传入（空字符串表示清除自定义、回退提供商默认映射）
+                    embeddingModel = if (_embeddingModel.value != (_config.value?.embeddingModel ?: "")) _embeddingModel.value else null,
+                    visionModel = if (_visionModel.value != (_config.value?.visionModel ?: "")) _visionModel.value else null,
                 )
 
                 val response = aiApi.updateAiConfig(request)

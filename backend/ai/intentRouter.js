@@ -85,8 +85,8 @@ const getToolsForIntent = (intent) => {
     query_statistics: ['query_statistics'],
     query_settlement: ['query_settlements'],
     query_advance: ['query_advances'],
-    knowledge: [],
-    chat: [],
+    knowledge: ['search_knowledge'],
+    chat: ['search_knowledge'],
   };
 
   // 排料意图同时提供查询工具
@@ -99,6 +99,16 @@ const getToolsForIntent = (intent) => {
     const tools = [...(allTools[intent] || [])];
     if (!tools.includes('query_projects')) {
       tools.push('query_projects');
+    }
+    return tools;
+  }
+
+  // 知识问答/通用对话意图提供知识库检索工具，AI可自主决定是否深挖
+  // （意图触发时已自动注入topK=3知识，工具用于AI需要更多资料时主动检索）
+  if (intent === 'knowledge' || intent === 'chat') {
+    const tools = [...(allTools[intent] || [])];
+    if (!tools.includes('search_knowledge')) {
+      tools.push('search_knowledge');
     }
     return tools;
   }

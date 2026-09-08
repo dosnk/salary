@@ -1303,6 +1303,108 @@ const MIGRATIONS = [
       })}
     `,
     tables: ['mv_project_user_settlement_status']
+  },
+  {
+    version: 'V2.9',
+    description: '知识库重构：新增文档主表 ai_knowledge_docs（分类/文件/媒体/编辑支持），分块表增加 doc_id 外键，embedding 列无维度化兼容各提供商向量模型',
+    up: `
+      -- 背景：原设计文档仅靠 title 在 ai_knowledge_chunks 中逻辑分组，不支持更新/分类/文件导入。
+      -- V2.9 引入文档主表，分块表通过 doc_id 关联，embedding 列去掉固定 1536 维度
+      -- （通义 text-embedding-v3=1024维、智谱 embedding-3=2048维，无维度列可兼容任意模型）。
+
+      -- 1. 文档主表
+      CREATE TABLE IF NOT EXISTS ai_knowledge_docs (
+        id SERIAL PRIMARY KEY,
+        title VARCHAR(200) NOT NULL,
+        category VARCHAR(50) NOT NULL DEFAULT '未分类',     -- 分类（施工规范/材料知识/常见问题等）
+        source_type VARCHAR(20) NOT NULL DEFAULT 'manual',  -- 录入方式: manual/file/media
+        doc_type VARCHAR(20) NOT NULL DEFAULT 'text',       -- 类型: text/md/pdf/docx/image/video/audio/other
+        file_path VARCHAR(500),        -- 媒体文件相对路径（upload/knowledge/YYYYMM/uuid.ext）
+        file_name VARCHAR(255),        -- 原始文件名
+        file_size BIGINT NOT NULL DEFAULT 0,
+        mime_type VARCHAR(100),
+        content TEXT NOT NULL DEFAULT '',   -- 参与检索的文本（全文/提取文本/图片描述/标题+手动描述）
+        description TEXT,              -- 媒体文件手动描述
+        char_count INTEGER NOT NULL DEFAULT 0,
+        chunk_count INTEGER NOT NULL DEFAULT 0,
+        embedding_status VARCHAR(20) NOT NULL DEFAULT 'none',  -- none/partial/full
+        vision_status VARCHAR(20),     -- 图片识别状态: ok/failed/unsupported（仅图片类型使用）
+        metadata JSONB,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- 2. 分块表增加 doc_id 外键（级联删除）
+      ALTER TABLE ai_knowledge_chunks
+        ADD COLUMN IF NOT EXISTS doc_id INTEGER REFERENCES ai_knowledge_docs(id) ON DELETE CASCADE;
+
+      -- 3. embedding 列无维度化：vector(1536) → vector
+      --    仅当列存在且为固定维度 vector 类型时转换（TEXT 降级环境保持不变）
+      DO $$
+      DECLARE
+        v_typmod INTEGER;
+      BEGIN
+        SELECT a.atttypmod INTO v_typmod
+        FROM pg_attribute a
+        JOIN pg_class c ON a.attrelid = c.oid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relname = 'ai_knowledge_chunks'
+          AND a.attname = 'embedding'
+          AND n.nspname = current_schema()
+          AND a.attisdropped = false;
+        IF v_typmod IS NOT NULL AND v_typmod > 0 THEN
+          EXECUTE 'ALTER TABLE ai_knowledge_chunks ALTER COLUMN embedding TYPE vector USING embedding::text::vector';
+        END IF;
+      END $$;
+
+      -- 4. 旧数据迁移：按 title 分组生成文档记录（NOT EXISTS 防止重跑重复插入）
+      --    content 用分块按序拼接还原（分块间有 overlap，存在少量重复，可接受）
+      INSERT INTO ai_knowledge_docs (title, category, source_type, doc_type, content, char_count, chunk_count, created_by, created_at)
+      SELECT COALESCE(title, '未命名文档'), '未分类', COALESCE(MIN(source_type), 'manual'), 'text',
+             string_agg(content, E'\\n' ORDER BY chunk_index),
+             COALESCE(SUM(char_count), 0), COUNT(*),
+             MIN(source_id), MIN(created_at)
+      FROM ai_knowledge_chunks c
+      WHERE NOT EXISTS (
+        SELECT 1 FROM ai_knowledge_docs d WHERE d.title = COALESCE(c.title, '未命名文档')
+      )
+      GROUP BY title;
+
+      -- 5. 回填分块表的 doc_id
+      UPDATE ai_knowledge_chunks c SET doc_id = d.id
+      FROM ai_knowledge_docs d
+      WHERE c.doc_id IS NULL
+        AND d.title = COALESCE(c.title, '未命名文档');
+
+      -- 6. 回填文档表的 embedding_status（按分块中向量非空比例）
+      UPDATE ai_knowledge_docs d SET
+        embedding_status = CASE
+          WHEN sub.total > 0 AND sub.with_emb = sub.total THEN 'full'
+          WHEN sub.with_emb > 0 THEN 'partial'
+          ELSE 'none'
+        END
+      FROM (
+        SELECT doc_id, COUNT(*) AS total, COUNT(embedding) AS with_emb
+        FROM ai_knowledge_chunks
+        WHERE doc_id IS NOT NULL
+        GROUP BY doc_id
+      ) sub
+      WHERE d.id = sub.doc_id AND d.embedding_status = 'none';
+
+      -- 7. 索引
+      CREATE INDEX IF NOT EXISTS idx_ai_knowledge_chunks_doc_id ON ai_knowledge_chunks(doc_id);
+      CREATE INDEX IF NOT EXISTS idx_ai_knowledge_docs_category ON ai_knowledge_docs(category);
+      CREATE INDEX IF NOT EXISTS idx_ai_knowledge_docs_created_by ON ai_knowledge_docs(created_by);
+    `,
+    down: `
+      -- 回滚：删除 doc_id 列与文档主表（旧数据已无法从分块完全还原，回滚仅供开发环境）
+      ALTER TABLE ai_knowledge_chunks DROP COLUMN IF EXISTS doc_id;
+      DROP INDEX IF EXISTS idx_ai_knowledge_docs_category;
+      DROP INDEX IF EXISTS idx_ai_knowledge_docs_created_by;
+      DROP TABLE IF EXISTS ai_knowledge_docs CASCADE;
+    `,
+    tables: ['ai_knowledge_docs']
   }
 ];
 

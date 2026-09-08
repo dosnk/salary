@@ -93,8 +93,12 @@ async function chatStream(ctx) {
       }
     );
 
-    // 发送结束标记
-    ctx.res.write(`data: ${JSON.stringify({ type: 'done', intent: result.intent })}\n\n`);
+    // 发送结束标记（携带引用溯源：本次回答引用的知识文档列表）
+    ctx.res.write(`data: ${JSON.stringify({
+      type: 'done',
+      intent: result.intent,
+      citations: result.citations || [],
+    })}\n\n`);
   } catch (error) {
     logger.error('AI流式对话失败:', error);
     ctx.res.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
@@ -180,6 +184,11 @@ async function getConfig(ctx) {
   ctx.success({
     defaultProvider: aiConfig.defaultProvider,
     providers,
+    // 向量/视觉模型配置（知识库使用，留空时按提供商默认映射）
+    embeddingModel: process.env.AI_EMBEDDING_MODEL || '',
+    visionModel: process.env.AI_VISION_MODEL || '',
+    // 各提供商默认向量/视觉模型（前端展示占位提示用）
+    modelDefaults: aiConfig.modelDefaults,
   });
 }
 
@@ -193,7 +202,7 @@ async function getConfig(ctx) {
  * - 返回信息中会标注是否持久化成功，便于用户知晓
  */
 async function updateConfig(ctx) {
-  const { defaultProvider, providerConfigs } = ctx.request.body;
+  const { defaultProvider, providerConfigs, embeddingModel, visionModel } = ctx.request.body;
 
   // 记录请求参数（脱敏后），便于排查配置失败问题
   logger.info('更新AI配置请求: defaultProvider=%s, providerConfigs=%j',
@@ -248,6 +257,18 @@ async function updateConfig(ctx) {
     if (defaultProvider) {
       envContent = updateEnvVar(envContent, 'AI_PROVIDER', defaultProvider);
       process.env.AI_PROVIDER = defaultProvider;
+    }
+
+    // 更新向量模型（知识库embedding用，空字符串表示清除自定义、回退提供商默认映射）
+    if (embeddingModel !== undefined && embeddingModel !== null) {
+      envContent = updateEnvVar(envContent, 'AI_EMBEDDING_MODEL', embeddingModel);
+      process.env.AI_EMBEDDING_MODEL = embeddingModel;
+    }
+
+    // 更新视觉模型（知识库图片识别用，空字符串表示清除自定义、回退提供商默认映射）
+    if (visionModel !== undefined && visionModel !== null) {
+      envContent = updateEnvVar(envContent, 'AI_VISION_MODEL', visionModel);
+      process.env.AI_VISION_MODEL = visionModel;
     }
 
     // 更新各提供商配置

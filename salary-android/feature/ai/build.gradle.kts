@@ -32,6 +32,9 @@ dependencies {
     implementation(libs.compose.tooling.preview)
     debugImplementation(libs.compose.tooling)
 
+    // 知识库媒体图片预览（复用App全局注册的ImageLoader，自动携带Authorization头）
+    implementation(libs.coil.compose)
+
     implementation(libs.lifecycle.viewmodel)
     implementation(libs.lifecycle.runtime)
     implementation(libs.hilt.android)

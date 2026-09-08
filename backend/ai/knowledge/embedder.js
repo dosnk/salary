@@ -2,26 +2,49 @@
  * 向量嵌入器
  *
  * 将文本转换为向量表示，用于语义搜索
- * 支持多种嵌入模型
+ * 模型名从 ai/config.js 动态读取（AI_EMBEDDING_MODEL 环境变量 > 提供商默认映射）
+ *
+ * 提供商支持情况：
+ * - 通义千问: text-embedding-v3（1024维）
+ * - 智谱: embedding-3（2048维）
+ * - 豆包: doubao-embedding
+ * - 文心（非OpenAI兼容接口）/ DeepSeek（无embedding接口）: 不支持，返回null降级关键词检索
  */
 
 const { aiConfig, getProviderConfig } = require('../config');
 const logger = require('../../config/logger');
 
+/** 嵌入接口请求超时（毫秒） */
+const EMBEDDING_TIMEOUT_MS = 15000;
+
+/**
+ * 获取当前生效的向量模型名
+ * @returns {string|null} 模型名，null表示当前提供商不支持向量能力
+ */
+const getEmbeddingModel = () => aiConfig.embeddingModel;
+
 /**
  * 生成文本嵌入向量
- * 使用当前配置的提供商的嵌入接口
+ * 使用当前配置的提供商的 OpenAI 兼容嵌入接口
  *
  * @param {string} text - 输入文本
- * @returns {Promise<Array<number>>} 嵌入向量
+ * @returns {Promise<Array<number>|null>} 嵌入向量；模型不支持或调用失败时返回 null（降级关键词检索）
  */
 const generateEmbedding = async (text) => {
+  const model = getEmbeddingModel();
+
+  // 当前提供商无向量模型（文心/DeepSeek），直接降级
+  if (!model) {
+    return null;
+  }
+
   const config = getProviderConfig();
 
   try {
-    // 使用Node.js 18+内置的全局fetch
+    // 使用Node.js 18+内置的全局fetch，带超时控制
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), EMBEDDING_TIMEOUT_MS);
 
-    // 大多数提供商兼容OpenAI的嵌入接口
     const response = await fetch(`${config.baseUrl}/embeddings`, {
       method: 'POST',
       headers: {
@@ -29,21 +52,30 @@ const generateEmbedding = async (text) => {
         'Authorization': `Bearer ${config.apiKey}`,
       },
       body: JSON.stringify({
-        model: 'text-embedding-v1', // 通用嵌入模型名
+        model,
         input: text,
       }),
+      signal: controller.signal,
     });
+
+    clearTimeout(timeout);
 
     if (!response.ok) {
       // 嵌入接口不可用时，返回空向量（降级处理）
-      logger.warn('嵌入接口不可用，使用关键词搜索降级');
+      const errBody = await response.text().catch(() => '');
+      logger.warn(`嵌入接口不可用(HTTP ${response.status}): ${errBody.substring(0, 200)}，降级为关键词搜索`);
       return null;
     }
 
     const data = await response.json();
-    return data.data?.[0]?.embedding || null;
+    const embedding = data.data?.[0]?.embedding;
+    if (!Array.isArray(embedding) || embedding.length === 0) {
+      logger.warn('嵌入接口返回格式异常，降级为关键词搜索');
+      return null;
+    }
+    return embedding;
   } catch (error) {
-    logger.warn('生成嵌入向量失败:', error.message);
+    logger.warn(`生成嵌入向量失败(模型:${model}): ${error.message}，降级为关键词搜索`);
     return null;
   }
 };
@@ -62,4 +94,4 @@ const generateEmbeddings = async (texts) => {
   return results;
 };
 
-module.exports = { generateEmbedding, generateEmbeddings };
+module.exports = { generateEmbedding, generateEmbeddings, getEmbeddingModel };

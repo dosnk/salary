@@ -40,6 +40,7 @@ const toolRoleWhitelist = {
   query_statistics: ['admin', 'constructor', 'documenter'],
   query_settlements: ['admin', 'constructor', 'documenter'],
   query_advances: ['admin', 'constructor', 'documenter'],
+  search_knowledge: ['admin', 'constructor', 'documenter'],
 };
 
 // 注册所有工具执行器
@@ -47,6 +48,7 @@ const queryProjectsTool = require('./tools/queryProjects');
 const queryStatisticsTool = require('./tools/queryStatistics');
 const querySettlementsTool = require('./tools/querySettlements');
 const queryAdvancesTool = require('./tools/queryAdvances');
+const searchKnowledgeTool = require('./tools/searchKnowledge');
 const { calculateLayout } = require('./engine');
 
 /**
@@ -71,6 +73,7 @@ toolExecutors['query_projects'] = wrapWithRoleCheck('query_projects', queryProje
 toolExecutors['query_statistics'] = wrapWithRoleCheck('query_statistics', queryStatisticsTool.execute);
 toolExecutors['query_settlements'] = wrapWithRoleCheck('query_settlements', querySettlementsTool.execute);
 toolExecutors['query_advances'] = wrapWithRoleCheck('query_advances', queryAdvancesTool.execute);
+toolExecutors['search_knowledge'] = wrapWithRoleCheck('search_knowledge', searchKnowledgeTool.execute);
 toolExecutors['calculate_layout'] = wrapWithRoleCheck('calculate_layout', async (args, user) => {
   return await calculateLayout({
     roomLength: args.length,
@@ -108,6 +111,17 @@ const sendMessage = async ({ userId, sessionId, message, user }) => {
   // 2. 加载对话历史
   const history = await loadChatHistory(userId, sessionId);
 
+  // 引用溯源：收集本次回答引用的知识文档（自动注入 + 工具检索）
+  const citations = new Map();
+  const collectCitations = (results) => {
+    const list = Array.isArray(results) ? results : (results && results.results) || [];
+    for (const r of list) {
+      if (r && r.docId && r.title && !citations.has(r.docId)) {
+        citations.set(r.docId, { docId: r.docId, title: r.title });
+      }
+    }
+  };
+
   // 3. 构建系统提示词（含RAG知识注入）
   let systemPrompt = aiConfig.chat.systemPrompt;
 
@@ -116,10 +130,11 @@ const sendMessage = async ({ userId, sessionId, message, user }) => {
     try {
       const knowledgeResults = await retrieve(message, { topK: 3 });
       if (knowledgeResults.length > 0) {
+        collectCitations(knowledgeResults);
         const knowledgeContext = knowledgeResults
-          .map((r, i) => `[${i + 1}] ${r.title ? r.title + ': ' : ''}${r.content}`)
+          .map((r, i) => `[${i + 1}] 来源文档《${r.title || '未命名文档'}》：${r.content}`)
           .join('\n\n');
-        systemPrompt += `\n\n以下是从知识库检索到的相关资料，请参考这些内容回答用户问题：\n${knowledgeContext}`;
+        systemPrompt += `\n\n以下是从知识库检索到的相关资料（回答时如引用了资料内容，请在句末标注来源编号，如[1][2]）：\n${knowledgeContext}`;
         logger.info(`RAG检索到${knowledgeResults.length}条相关知识`);
       }
     } catch (error) {
@@ -176,6 +191,10 @@ const sendMessage = async ({ userId, sessionId, message, user }) => {
       if (executor) {
         try {
           const toolResult = await executor(toolCall.arguments, user);
+          // 知识库检索工具的结果收集引用溯源
+          if (toolCall.name === 'search_knowledge') {
+            collectCitations(toolResult);
+          }
           messages.push({
             role: 'tool',
             tool_call_id: toolCallIdMap[toolCall.name] || toolCall.id,
@@ -209,7 +228,7 @@ const sendMessage = async ({ userId, sessionId, message, user }) => {
   await saveChatHistory(userId, sessionId, 'user', message, intent);
   await saveChatHistory(userId, sessionId, 'assistant', finalContent, intent);
 
-  return { content: finalContent, intent };
+  return { content: finalContent, intent, citations: [...citations.values()] };
 };
 
 /**
@@ -229,6 +248,17 @@ const sendMessageStream = async ({ userId, sessionId, message, user }, onChunk) 
   const { intent } = detectIntent(message);
   const history = await loadChatHistory(userId, sessionId);
 
+  // 引用溯源：收集本次回答引用的知识文档（自动注入 + 工具检索）
+  const citations = new Map();
+  const collectCitations = (results) => {
+    const list = Array.isArray(results) ? results : (results && results.results) || [];
+    for (const r of list) {
+      if (r && r.docId && r.title && !citations.has(r.docId)) {
+        citations.set(r.docId, { docId: r.docId, title: r.title });
+      }
+    }
+  };
+
   // 构建系统提示词（含RAG知识注入）
   let systemPrompt = aiConfig.chat.systemPrompt;
 
@@ -236,10 +266,11 @@ const sendMessageStream = async ({ userId, sessionId, message, user }, onChunk) 
     try {
       const knowledgeResults = await retrieve(message, { topK: 3 });
       if (knowledgeResults.length > 0) {
+        collectCitations(knowledgeResults);
         const knowledgeContext = knowledgeResults
-          .map((r, i) => `[${i + 1}] ${r.title ? r.title + ': ' : ''}${r.content}`)
+          .map((r, i) => `[${i + 1}] 来源文档《${r.title || '未命名文档'}》：${r.content}`)
           .join('\n\n');
-        systemPrompt += `\n\n以下是从知识库检索到的相关资料，请参考这些内容回答用户问题：\n${knowledgeContext}`;
+        systemPrompt += `\n\n以下是从知识库检索到的相关资料（回答时如引用了资料内容，请在句末标注来源编号，如[1][2]）：\n${knowledgeContext}`;
       }
     } catch (error) {
       logger.warn('RAG知识检索失败，跳过知识注入:', error.message);
@@ -299,6 +330,10 @@ const sendMessageStream = async ({ userId, sessionId, message, user }, onChunk) 
         try {
           onChunk(`\n\n[正在查询：${toolCall.name}...]\n`);
           const toolResult = await executor(toolCall.arguments, user);
+          // 知识库检索工具的结果收集引用溯源
+          if (toolCall.name === 'search_knowledge') {
+            collectCitations(toolResult);
+          }
           messages.push({
             role: 'tool',
             tool_call_id: toolCallId,
@@ -328,7 +363,7 @@ const sendMessageStream = async ({ userId, sessionId, message, user }, onChunk) 
   await saveChatHistory(userId, sessionId, 'user', message, intent);
   await saveChatHistory(userId, sessionId, 'assistant', finalContent, intent);
 
-  return { content: finalContent, intent };
+  return { content: finalContent, intent, citations: [...citations.values()] };
 };
 
 /**
@@ -422,6 +457,18 @@ const toolDefinitions = {
       properties: {
         month: { type: 'string', description: '月份筛选，格式YYYY-MM（如2026-07）。用户问"这个月预支"时传入当前月份，不传则查全部。' },
       },
+    },
+  },
+  search_knowledge: {
+    name: 'search_knowledge',
+    description: '检索知识库文档，获取吊顶施工规范、材料知识、常见问题等专业资料。当用户询问专业知识、施工做法、行业规范，或需要参考资料辅助回答时使用此工具。',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '搜索关键词或问题' },
+        category: { type: 'string', description: '知识分类筛选（可选），如：施工规范、材料知识、常见问题' },
+      },
+      required: ['query'],
     },
   },
 };
