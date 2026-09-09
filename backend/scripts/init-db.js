@@ -107,7 +107,8 @@ const DEFAULT_PASSWORD = process.env.DEFAULT_PASSWORD || '990066';
 //     - V2.5: true（V2.5 引入 settled 状态后必须识别）
 //   useStableId: 是否使用 COALESCE(pus.id, ROW_NUMBER()) 稳定 ID
 //     - V1.9: false（直接 ROW_NUMBER）
-//     - V2.5: true（稳定 ID 避免刷新后 ID 漂移）
+//     - V2.5: false（曾用 true 但真实数据下 pus.id 与第二分支 ROW_NUMBER()+100000 撞值导致唯一索引创建失败，2026-09-09 统一为 false）
+//     - V2.8: false（同上撞值原因，见 V2.8 迁移注释）
 //   filterConstructorRole: 第一部分是否显式过滤 u.role = 'constructor'
 //     - V1.9: false（依赖 project_workers 隐式过滤）
 //     - V2.5: true（更显式，避免未来角色扩展引入污染）
@@ -1193,10 +1194,14 @@ const MIGRATIONS = [
       DROP MATERIALIZED VIEW IF EXISTS mv_project_user_settlement_status;
 
       -- 物化视图 DDL 由 buildMvProjectUserSettlementStatusDDL 工厂函数生成
-      -- V2.5 参数：识别 settled 状态、使用 COALESCE(pus.id, ROW_NUMBER()) 稳定 ID、显式过滤 constructor 角色
+      -- V2.5 参数：识别 settled 状态、使用纯 ROW_NUMBER() 生成 ID（禁稳定 ID）、显式过滤 constructor 角色
+      -- 注意（2026-09-09 修复）：原 useStableId=true 使用 COALESCE(pus.id, ROW_NUMBER()) 时，
+      -- 真实数据下 project_user_status.id 可能与 UNION 第二分支的 ROW_NUMBER()+100000 撞值，
+      -- 造成 UNION 后 id 重复、idx_mv_puss_id 唯一索引创建失败（容器生产库触发，本地测试库未触发）。
+      -- 与 V2.8 修复口径统一：业务代码从不使用 mv.id 作为外键，稳定性可牺牲以确保迁移可顺利完成。
       ${buildMvProjectUserSettlementStatusDDL({
         includeSettledStatus: true,
-        useStableId: true,
+        useStableId: false,
         filterConstructorRole: true
       })}
     `,
@@ -1292,12 +1297,12 @@ const MIGRATIONS = [
       })}
     `,
     down: `
-      -- 回滚到 V2.5 的口径（wsPriorityOverPus=false, useStableId=true）
+      -- 回滚到 V2.5 的口径（wsPriorityOverPus=false, useStableId=false，保持与 V2.5 up 一致避免回滚后撞值）
       DROP VIEW IF EXISTS v_project_user_settlement_status;
       DROP MATERIALIZED VIEW IF EXISTS mv_project_user_settlement_status;
       ${buildMvProjectUserSettlementStatusDDL({
         includeSettledStatus: true,
-        useStableId: true,
+        useStableId: false,
         filterConstructorRole: true,
         wsPriorityOverPus: false
       })}
