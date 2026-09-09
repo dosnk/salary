@@ -10,6 +10,20 @@ const { getRedisClient, isRedisAvailable } = require('../config/redis');
 const ACCESS_TOKEN_EXPIRY = '2h';       // 短期Token 2小时
 const REFRESH_TOKEN_EXPIRY = '30d';     // 长期Token 30天
 
+// 登录失败锁定配置（与 Redis 方案保持一致：5次/30分钟）
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCK_MS = 30 * 60 * 1000;
+
+/**
+ * Redis 不可用时的登录失败锁定兜底（进程内 Map）
+ *
+ * 背景：登录锁定依赖 Redis 存储失败次数，若 Redis 故障期间完全跳过锁定，
+ * 暴力破解防护会退化为 0。此兜底在 Redis 不可用时启用，单实例内有效；
+ * Redis 恢复后自动回归 Redis 方案（多实例共享）。
+ * key: username, value: { attempts, lockUntil }
+ */
+const loginLockMemory = new Map();
+
 /**
  * 生成Token对
  * @param {object} user 用户对象
@@ -81,6 +95,18 @@ const login = async (ctx) => {
         // Redis异常时跳过锁定检查，继续登录流程
         logger.warn('登录锁定检查失败', { username, error: error.message });
       }
+    } else {
+      // Redis 不可用：使用进程内内存兜底检查锁定状态，避免防护完全失效
+      const mem = loginLockMemory.get(username);
+      if (mem && mem.lockUntil > Date.now()) {
+        const remainMinutes = Math.ceil((mem.lockUntil - Date.now()) / 60000);
+        ctx.fail(2002, `登录失败次数过多，请${remainMinutes}分钟后重试`);
+        return;
+      }
+      // 惰性清理已过期的锁定记录，防止 Map 无限增长
+      if (mem && mem.lockUntil <= Date.now()) {
+        loginLockMemory.delete(username);
+      }
     }
 
     // 查询用户
@@ -100,19 +126,29 @@ const login = async (ctx) => {
         try {
           const attempts = await redis.incr(attemptKey);
           await redis.expire(attemptKey, 1800); // 30分钟
-          if (attempts >= 5) {
+          if (attempts >= LOGIN_MAX_ATTEMPTS) {
             await redis.set(lockKey, '1', 'EX', 1800); // 锁定30分钟
             logger.warn(`用户 ${username} 登录失败${attempts}次，已锁定30分钟`);
           }
         } catch (error) {
           logger.warn('记录登录失败次数失败', { username, error: error.message });
         }
+      } else {
+        // Redis 不可用：内存兜底记录失败次数，达到阈值后锁定
+        const mem = loginLockMemory.get(username) || { attempts: 0, lockUntil: 0 };
+        mem.attempts += 1;
+        if (mem.attempts >= LOGIN_MAX_ATTEMPTS) {
+          mem.attempts = 0;
+          mem.lockUntil = Date.now() + LOGIN_LOCK_MS;
+          logger.warn(`用户 ${username} 登录失败达到${LOGIN_MAX_ATTEMPTS}次，已内存锁定30分钟（Redis不可用兜底）`);
+        }
+        loginLockMemory.set(username, mem);
       }
       ctx.fail(2002);
       return;
     }
 
-    // 登录成功，清除失败记录
+    // 登录成功，清除失败记录（Redis 与内存兜底记录一并清除）
     if (isRedisAvailable()) {
       try {
         await redis.del(attemptKey);
@@ -121,6 +157,7 @@ const login = async (ctx) => {
         logger.warn('清除登录失败记录失败', { username, error: error.message });
       }
     }
+    loginLockMemory.delete(username);
 
     // 生成Token对
     const tokens = generateTokens(user);

@@ -1633,6 +1633,27 @@ const runMigrations = async () => {
 // 命令行参数说明见文件顶部"命令行参数解析（集中管理）"区块
 // RESET_PASSWORDS / FORCE_RESET_ALL 在文件顶部统一解析，此处直接使用
 
+/**
+ * 检查手机号是否已被其他用户占用
+ *
+ * 背景：users 表 phone 有唯一约束（users_phone_key），预置用户的手机号
+ * 可能已被管理员在系统内手动创建的用户占用，此时 INSERT 会违反 phone 唯一约束
+ * （而非 username 冲突，ON CONFLICT (username) 无法拦截），导致每次迁移 WARN 日志
+ * （2026-09-10 修复）。
+ *
+ * @param {object} client - pg Client
+ * @param {string} phone - 待检查手机号
+ * @param {string} excludeUsername - 排除的用户名（预置用户自身）
+ * @returns {Promise<boolean>} true=已被占用
+ */
+const isPhoneTaken = async (client, phone, excludeUsername) => {
+  const result = await client.query(
+    'SELECT 1 FROM users WHERE phone = $1 AND username <> $2 LIMIT 1',
+    [phone, excludeUsername]
+  );
+  return result.rows.length > 0;
+};
+
 const insertDefaultUsers = async (client) => {
   if (DEFAULT_USERS.length === 0) {
     return;
@@ -1662,6 +1683,12 @@ const insertDefaultUsers = async (client) => {
         );
 
         if (existResult.rows.length === 0) {
+          // 手机号唯一约束检查：预置用户手机号可能已被系统内手动创建的用户占用
+          if (await isPhoneTaken(client, user.phone, user.username)) {
+            skippedCount++;
+            log.warn(`  - 跳过: ${user.username}（手机号 ${user.phone} 已被其他用户占用）`);
+            continue;
+          }
           // 用户不存在，直接插入（password_changed_at 默认 NULL，表示使用默认密码）
           await client.query(
             `INSERT INTO users (username, password, nickname, phone, role)
@@ -1719,6 +1746,12 @@ const insertDefaultUsers = async (client) => {
       );
 
       if (result.rows.length === 0) {
+        // 手机号唯一约束检查：预置用户手机号可能已被系统内手动创建的用户占用
+        if (await isPhoneTaken(client, user.phone, user.username)) {
+          skippedCount++;
+          log.warn(`  - 跳过: ${user.username}（手机号 ${user.phone} 已被其他用户占用）`);
+          continue;
+        }
         // 用户不存在，插入（password_changed_at 默认 NULL，表示使用默认密码）
         await client.query(
           `INSERT INTO users (username, password, nickname, phone, role)

@@ -70,9 +70,10 @@ app.use(async (ctx, next) => {
 
 // CORS中间件 - 严格限制允许的域名（白名单从环境变量读取，避免硬编码）
 // 解析CORS_ORIGINS环境变量，未配置时回退到开发环境默认值
+// 防御性清理：去掉每个条目首尾的引号/反引号/空白（.env 手工编辑易带入脏字符，如 `http://x,`，2026-09-10 加固）
 const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173')
   .split(',')
-  .map(origin => origin.trim())
+  .map(origin => origin.trim().replace(/^['"`\s]+|['"`\s]+$/g, ''))
   .filter(Boolean);
 logger.info(`CORS白名单: ${corsOrigins.join(', ')}`);
 app.use(cors({
@@ -246,6 +247,12 @@ app.use(async (ctx, next) => {
       const jwt = require('jsonwebtoken');
       const token = authHeader.split(' ')[1];
       ctx.state.user = jwt.verify(token, process.env.JWT_SECRET);
+      // 仅接受 access token，拒绝 refresh token 访问附件（与 middleware/auth.js 口径一致，2026-09-10 加固）
+      if (ctx.state.user.type !== 'access') {
+        ctx.status = 401;
+        ctx.body = { code: 4001, message: 'Token无效或已过期' };
+        return;
+      }
     } catch (err) {
       ctx.status = 401;
       ctx.body = { code: 4001, message: 'Token无效或已过期' };
