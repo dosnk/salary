@@ -1365,10 +1365,11 @@ const MIGRATIONS = [
 
       -- 4. 旧数据迁移：按 title 分组生成文档记录（NOT EXISTS 防止重跑重复插入）
       --    content 用分块按序拼接还原（分块间有 overlap，存在少量重复，可接受）
+      --    char_count 取分块 content 字符数之和（ai_knowledge_chunks 表无 char_count 列，用 LENGTH(content) 计算，2026-09-09 修复）
       INSERT INTO ai_knowledge_docs (title, category, source_type, doc_type, content, char_count, chunk_count, created_by, created_at)
       SELECT COALESCE(title, '未命名文档'), '未分类', COALESCE(MIN(source_type), 'manual'), 'text',
-             string_agg(content, E'\\n' ORDER BY chunk_index),
-             COALESCE(SUM(char_count), 0), COUNT(*),
+             string_agg(content, E'\n' ORDER BY chunk_index),
+             COALESCE(SUM(LENGTH(content)), 0), COUNT(*),
              MIN(source_id), MIN(created_at)
       FROM ai_knowledge_chunks c
       WHERE NOT EXISTS (
