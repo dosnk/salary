@@ -1,22 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
     网络安全配置
-    - 默认禁止明文 HTTP 流量，强制使用 HTTPS
-    - 仅调试域名（模拟器 10.0.2.2 和本机 localhost）允许明文流量，用于本地开发调试
-    - 生产环境必须使用 HTTPS，防止中间人攻击窃听 API 流量
+
+    背景（2026-09-12 修复）：本系统为内网部署，后端通过 docker-compose 以明文 HTTP 提供服务
+    （如 http://192.168.1.68:9393），且服务器地址允许用户自定义（任意局域网 IP 或域名），
+    无法用 domain 白名单穷举。此前 base-config 禁止明文导致新包登录报
+    "CLEARTEXT communication ... not permitted by network security policy"。
+
+    决策：全局允许明文 HTTP 流量，匹配内网业务系统部署形态。
+    若未来启用 HTTPS，可改回 cleartextTrafficPermitted="false" 并配置 domain-config 白名单。
 -->
 <network-security-config>
-    <!-- 全局默认配置：禁止明文流量 -->
-    <base-config cleartextTrafficPermitted="false">
+    <!-- 全局默认配置：允许明文 HTTP（内网部署，服务器地址可配置） -->
+    <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </base-config>
-    <!-- 调试专用配置：仅允许本地开发服务器的明文流量 -->
-    <domain-config cleartextTrafficPermitted="true">
-        <!-- Android 模拟器访问宿主机本地服务 -->
-        <domain includeSubdomains="true">10.0.2.2</domain>
-        <!-- 物理设备通过 USB/WiFi 调试本机服务 -->
-        <domain includeSubdomains="true">localhost</domain>
-    </domain-config>
 </network-security-config>
