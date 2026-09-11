@@ -39,20 +39,20 @@ class ServerConfig @Inject constructor(
     @Volatile
     private var cacheInitialized = false
 
-    /** 获取服务器地址（Flow形式） */
+    /** 获取服务器地址（Flow形式，返回规范化地址：确保以/结尾） */
     val serverUrl: Flow<String> = context.dataStore.data.map { prefs ->
         val url = prefs[SERVER_URL_KEY] ?: ""
         cachedServerUrl = url
         cacheInitialized = true
-        url
+        normalizeUrl(url)
     }
 
-    /** 获取服务器地址（挂起函数，一次性读取） */
+    /** 获取服务器地址（挂起函数，一次性读取，返回规范化地址） */
     suspend fun getServerUrl(): String {
-        if (cacheInitialized) return cachedServerUrl
+        if (cacheInitialized) return normalizeUrl(cachedServerUrl)
         return context.dataStore.data.map { prefs ->
             prefs[SERVER_URL_KEY] ?: ""
-        }.first()
+        }.first().let(::normalizeUrl)
     }
 
     /**
@@ -74,9 +74,10 @@ class ServerConfig @Inject constructor(
 
     /**
      * 同步获取服务器地址（供Retrofit构建使用，零阻塞）
+     * 返回规范化地址：确保以/结尾，满足 Retrofit baseUrl 要求
      * 注意：必须在[initConfig]后调用，否则返回空字符串
      */
-    fun getServerUrlSync(): String = cachedServerUrl
+    fun getServerUrlSync(): String = normalizeUrl(cachedServerUrl)
 
     /** 初始化配置缓存（App启动时调用一次） */
     suspend fun initConfig() {
@@ -93,17 +94,31 @@ class ServerConfig @Inject constructor(
         return getServerUrl().isNotEmpty()
     }
 
-    /** 保存服务器地址 */
+    /**
+     * 保存服务器地址
+     *
+     * 存储用户输入原样，不做末尾斜杠修正；
+     * 读取时（getServerUrl/getServerUrlSync）统一规范化保证以/结尾，
+     * 满足 Retrofit baseUrl 必须以/结尾的要求，同时不修改用户输入。
+     */
     suspend fun saveServerUrl(url: String) {
-        // 确保URL以/结尾
-        val normalizedUrl = if (url.isNotEmpty() && !url.endsWith("/")) "$url/" else url
         context.dataStore.edit { prefs ->
-            prefs[SERVER_URL_KEY] = normalizedUrl
+            prefs[SERVER_URL_KEY] = url
         }
-        // 同步更新内存缓存
-        cachedServerUrl = normalizedUrl
+        // 同步更新内存缓存（保持用户输入原样）
+        cachedServerUrl = url
         cacheInitialized = true
     }
+
+    /**
+     * 规范化服务器地址：确保以/结尾
+     *
+     * Retrofit 的 baseUrl 要求以/结尾，否则抛 IllegalArgumentException；
+     * AiRepository/AuthInterceptor 拼接接口路径时也依赖末尾斜杠。
+     * 存储时保留用户输入原样，读取时统一在此规范化，兼容带/与不带/两种输入。
+     */
+    private fun normalizeUrl(url: String): String =
+        if (url.isEmpty() || url.endsWith("/")) url else "$url/"
 
     /** 清除配置（用于调试） */
     suspend fun clearConfig() {

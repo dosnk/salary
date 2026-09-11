@@ -144,8 +144,6 @@ class LoginViewModel @Inject constructor(
                     )
                 }
             } catch (e: Exception) {
-                // 临时排障日志（2026-09-10）：打印真实异常与响应，便于定位"登录失败，请稍后重试"根因
-                com.salary.core.common.util.AppLog.e("LoginViewModel", "登录请求异常: ${e::class.java.name}: ${e.message}", e)
                 _state.value = LoginState.Error(NetworkErrorHandler.translate(e, "登录失败，请稍后重试"))
             }
         }

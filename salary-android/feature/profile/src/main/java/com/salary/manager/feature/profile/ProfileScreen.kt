@@ -13,7 +13,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -21,7 +20,6 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.salary.core.common.constants.AppConstants
-import com.salary.core.common.util.AppLog
 import com.salary.core.design.component.GreenTopNavBar
 import com.salary.core.design.theme.AppColors
 
@@ -48,9 +46,6 @@ fun ProfileScreen(
     val nickname by viewModel.nickname.collectAsStateWithLifecycle()
     val roleDisplay by viewModel.roleDisplay.collectAsStateWithLifecycle()
     val role by viewModel.role.collectAsStateWithLifecycle()
-
-    // 用于"分享日志"文件导出（FileProvider 生成 content:// Uri）
-    val context = LocalContext.current
 
     // 退出登录确认弹窗状态
     var showLogoutDialog by remember { mutableStateOf(false) }
@@ -122,7 +117,6 @@ fun ProfileScreen(
                 add(MenuItemData(Icons.Default.SmartToy, "AI大模型配置", onAiConfig))
                 add(MenuItemData(Icons.Default.Verified, "数据一致性校验", onDataVerify))
             }
-            add(MenuItemData(Icons.Default.Description, "分享日志", { AppLog.shareLogFile(context) }, showArrow = false))
             add(MenuItemData(Icons.Default.Info, "关于", onAbout))
         }
 

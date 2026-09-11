@@ -35,7 +35,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -44,7 +43,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.salary.core.common.util.AppLog
 import com.salary.core.design.theme.AppColors
 import com.salary.core.network.interceptor.LatencyTracker
 
@@ -98,9 +96,6 @@ fun LoginScreen(
     // 监听后端在线状态
     val isOnline by latencyTracker?.isOnline?.collectAsState() ?: remember { mutableStateOf(true) }
     val lastError by latencyTracker?.lastError?.collectAsState() ?: remember { mutableStateOf(null) }
-
-    // 用于"导出日志"（未登录用户也可分享日志文件，便于排查登录问题）
-    val context = LocalContext.current
 
     LaunchedEffect(state) {
         if (state is LoginState.Success) {
@@ -256,11 +251,6 @@ fun LoginScreen(
             // 注册入口
             TextButton(onClick = onNavigateToRegister) {
                 Text("没有账号？立即注册", color = AppColors.Green400)
-            }
-
-            // 导出日志入口（登录失败时用户可分享日志文件给管理员排查问题，无需登录）
-            TextButton(onClick = { AppLog.shareLogFile(context) }) {
-                Text("导出日志排查问题", color = AppColors.TextTertiary, fontSize = 12.sp)
             }
         }
 

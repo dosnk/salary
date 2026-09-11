@@ -15,6 +15,4 @@
     <cache-path name="attachments_cache" path="attachments/" />
     <files-path name="attachments_files" path="attachments/" />
     <external-files-path name="attachments_ext" path="attachments/" />
-    <!-- 日志文件（filesDir/logs/app.log），供"我的-分享日志"导出 -->
-    <files-path name="app_logs" path="logs/" />
 </paths>

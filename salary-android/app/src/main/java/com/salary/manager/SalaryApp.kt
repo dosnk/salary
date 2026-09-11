@@ -47,8 +47,6 @@ class SalaryApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        // 初始化文件日志（写入 filesDir/logs/app.log，供"我的-分享日志"导出排查问题）
-        com.salary.core.common.util.AppLog.init(this)
         // 注册全局 ImageLoader，让 Coil 加载图片时自动带 Authorization 头
         SingletonImageLoader.setSafe { context ->
             // 从 Hilt 手动获取 AuthInterceptor，避免 @Inject 字段引入 Coil 类到扫描表
