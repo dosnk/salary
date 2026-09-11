@@ -1,6 +1,9 @@
 package com.salary.core.common.util
 
 import android.content.Context
+import android.content.Intent
+import android.widget.Toast
+import androidx.core.content.FileProvider
 import com.salary.core.common.BuildConfig
 import java.io.File
 import java.io.FileOutputStream
@@ -67,6 +70,41 @@ object AppLog {
             } catch (_: Exception) {
                 // 删除失败忽略
             }
+        }
+    }
+
+    /**
+     * 分享日志文件
+     *
+     * 将日志文件（filesDir/logs/app.log）通过系统分享面板导出，
+     * 便于用户把问题日志发给管理员/开发者排查（如"登录失败"等无法在开发环境复现的问题）。
+     * 登录页与"我的"页共用此入口，未登录用户也能导出日志。
+     *
+     * @param context 上下文（用于 FileProvider 生成 content:// Uri）
+     */
+    fun shareLogFile(context: Context) {
+        val file = getLogFile()
+        if (file == null || !file.exists()) {
+            Toast.makeText(context, "暂无日志文件", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            // FileProvider 将内部私有文件暴露为 content:// Uri，authorities 与 Manifest 中一致（兼容 debug/release 包）
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_SUBJECT, "Salary App 日志")
+                putExtra(Intent.EXTRA_TEXT, "以下为 App 运行日志，请查看定位问题：")
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(shareIntent, "分享日志"))
+        } catch (e: Exception) {
+            Toast.makeText(context, "分享日志失败: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
