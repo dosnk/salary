@@ -1,5 +1,7 @@
 package com.salary.manager.feature.profile
 
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -13,13 +15,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.salary.core.common.constants.AppConstants
+import com.salary.core.common.util.AppLog
 import com.salary.core.design.component.GreenTopNavBar
 import com.salary.core.design.theme.AppColors
 
@@ -46,6 +51,9 @@ fun ProfileScreen(
     val nickname by viewModel.nickname.collectAsStateWithLifecycle()
     val roleDisplay by viewModel.roleDisplay.collectAsStateWithLifecycle()
     val role by viewModel.role.collectAsStateWithLifecycle()
+
+    // 用于"分享日志"文件导出（FileProvider 生成 content:// Uri）
+    val context = LocalContext.current
 
     // 退出登录确认弹窗状态
     var showLogoutDialog by remember { mutableStateOf(false) }
@@ -117,6 +125,7 @@ fun ProfileScreen(
                 add(MenuItemData(Icons.Default.SmartToy, "AI大模型配置", onAiConfig))
                 add(MenuItemData(Icons.Default.Verified, "数据一致性校验", onDataVerify))
             }
+            add(MenuItemData(Icons.Default.Description, "分享日志", { shareLogFile(context) }, showArrow = false))
             add(MenuItemData(Icons.Default.Info, "关于", onAbout))
         }
 
@@ -191,3 +200,37 @@ data class MenuItemData(
     val onClick: () -> Unit,
     val showArrow: Boolean = true
 )
+
+/**
+ * 分享日志文件
+ *
+ * 将 AppLog 写入的手机端日志文件（filesDir/logs/app.log）通过系统分享面板导出，
+ * 便于用户把问题日志发给管理员/开发者排查（如"登录失败"等无法在开发环境复现的问题）。
+ *
+ * @param context 上下文（用于 FileProvider 生成 content:// Uri）
+ */
+private fun shareLogFile(context: android.content.Context) {
+    val logFile = AppLog.getLogFile()
+    if (logFile == null || !logFile.exists()) {
+        Toast.makeText(context, "暂无日志文件", Toast.LENGTH_SHORT).show()
+        return
+    }
+    try {
+        // FileProvider 将内部私有文件暴露为 content:// Uri，authorities 与 Manifest 中一致（兼容 debug/release 包）
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            logFile
+        )
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "Salary App 日志")
+            putExtra(Intent.EXTRA_TEXT, "以下为 App 运行日志，请查看定位问题：")
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(shareIntent, "分享日志"))
+    } catch (e: Exception) {
+        Toast.makeText(context, "分享日志失败: ${e.message}", Toast.LENGTH_SHORT).show()
+    }
+}

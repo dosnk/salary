@@ -25,6 +25,7 @@ object DateFormatter {
     private val backendParserThreadLocal = ThreadLocal<SimpleDateFormat>()
     private val dateOnlyParserThreadLocal = ThreadLocal<SimpleDateFormat>()
     private val monthDisplayParserThreadLocal = ThreadLocal<SimpleDateFormat>()
+    private val logTimestampThreadLocal = ThreadLocal<SimpleDateFormat>()
 
     private fun getIsoParser(): SimpleDateFormat {
         var fmt = isoParserThreadLocal.get()
@@ -58,6 +59,16 @@ object DateFormatter {
         if (fmt == null) {
             fmt = SimpleDateFormat("yyyy年M月", Locale.CHINA)
             monthDisplayParserThreadLocal.set(fmt)
+        }
+        return fmt
+    }
+
+    private fun getLogTimestampFormat(): SimpleDateFormat {
+        var fmt = logTimestampThreadLocal.get()
+        if (fmt == null) {
+            // 毫秒级时间戳，用于 AppLog 文件日志，ThreadLocal 保证多线程安全
+            fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.CHINA)
+            logTimestampThreadLocal.set(fmt)
         }
         return fmt
     }
@@ -128,4 +139,7 @@ object DateFormatter {
 
     /** 获取当前年月（格式：yyyy-MM） */
     fun currentYearMonth(): String = yearMonthFormat.format(Date())
+
+    /** 格式化日志时间戳（yyyy-MM-dd HH:mm:ss.SSS，多线程安全） */
+    fun formatLogTimestamp(date: Date): String = getLogTimestampFormat().format(date)
 }
