@@ -40,7 +40,8 @@ WORKDIR /app
 # 安装运行时依赖
 # - libstdc++: 原生模块运行时依赖
 # - su-exec: 轻量级权限切换工具（类似gosu），用于从root降权到node用户
-RUN apk add --no-cache libstdc++ su-exec
+# - postgresql16-client: 提供 pg_dump/pg_restore，供数据库备份服务使用
+RUN apk add --no-cache libstdc++ su-exec postgresql16-client
 
 # 从deps阶段复制node_modules到两个位置：
 # 1. /app/node_modules: 运行时使用（会被docker-compose卷挂载处理）

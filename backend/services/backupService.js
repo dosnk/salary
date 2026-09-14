@@ -1,35 +1,49 @@
 /**
- * 数据库全量备份服务
+ * 数据库全量备份服务（pg_dump 实现）
  *
- * 将公共 schema 下所有业务表（含 AI 相关表）动态枚举并导出为 JSON 文件，
- * 保存到 upload/backdata 目录（容器 /app/upload/backdata，宿主机 ./upload/backdata）。
+ * 使用 PostgreSQL 官方客户端工具 pg_dump 将整个 salary 数据库导出为
+ * custom 格式（-Fc）备份文件，保存到 upload/backdata 目录
+ * （容器 /app/upload/backdata，宿主机 ./upload/backdata）。
+ *
+ * 相比早期 JSON 逐表导出方案的改进：
+ * - 原生 pg_dump：类型保真（NUMERIC/JSONB/时间戳等），包含表结构、索引、
+ *   约束、序列（含 setval 当前值）、物化视图等全部元数据
+ * - custom 格式（-Fc）：内部压缩，文件体积小；恢复用 pg_restore，
+ *   支持只恢复单表、并行恢复等灵活操作
+ * - 无内存风险：pg_dump 由 PostgreSQL 服务端流式导出，Node 进程不驻留数据
  *
  * 备份策略：
- * - 文件名带本地时间戳（秒+毫秒）：backup-full-YYYYMMDD-HHmmss-SSS.json，
- *   不覆盖历史文件；毫秒级粒度避免同一秒内连续触发互相覆盖（2026-09-10 加固）
+ * - 文件名带本地时间戳（秒+毫秒）：backup-full-YYYYMMDD-HHmmss-SSS.dump，
+ *   不覆盖历史文件；毫秒级粒度避免同一秒内连续触发互相覆盖
  * - 轮转保留：最多保留 BACKUP_KEEP_COUNT（默认5）份，超出时从最旧开始删除
- * - 流式写入：逐表分页查询（ORDER BY ctid + LIMIT/OFFSET）边查边写临时文件，
- *   内存只驻留一页数据，避免大表全量载入内存导致 OOM 或阻塞事件循环（2026-09-10 加固）
+ * - 原子写入：pg_dump 写入临时文件，成功后 rename 到最终文件名
  * - 并发防护：备份进行中重复触发直接返回 inProgress=true，避免并发写文件
  *
- * 恢复方式：由 init-db.js 重建表结构后，用本服务导出的 JSON 逐表导回数据。
+ * 恢复方式：
+ *   pg_restore -h <host> -p <port> -U <user> -d <db> \
+ *     --clean --if-exists --no-owner --no-privileges <备份文件>
+ *   （也可使用 scripts/restore-projects.js 一键恢复）
  */
 
 const fs = require('fs');
 const path = require('path');
 const moment = require('moment');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 const pool = require('../config/database');
 const logger = require('../config/logger');
+
+const execFileAsync = promisify(execFile);
 
 /** 备份文件保留份数（可用环境变量 BACKUP_KEEP_COUNT 覆盖） */
 const KEEP_COUNT = parseInt(process.env.BACKUP_KEEP_COUNT || '5', 10);
 
-/** 备份文件命名前缀与匹配正则（兼容旧 6 位秒格式与新 9 位 秒+毫秒格式） */
+/** 备份文件命名前缀与匹配正则（pg_dump custom 格式，扩展名 .dump） */
 const BACKUP_PREFIX = 'backup-full-';
-const BACKUP_PATTERN = new RegExp(`^${BACKUP_PREFIX}\\d{8}-\\d{6}(-\\d{3})?\\.json$`);
+const BACKUP_PATTERN = /^backup-full-\d{8}-\d{6}(-\d{3})?\.dump$/;
 
-/** 分页导出每页行数（控制内存峰值，避免大表整表驻留内存） */
-const PAGE_SIZE = 2000;
+/** pg_dump 执行超时（10分钟，超大库可通过环境变量 DUMP_TIMEOUT_MS 覆盖） */
+const DUMP_TIMEOUT_MS = parseInt(process.env.DUMP_TIMEOUT_MS || String(10 * 60 * 1000), 10);
 
 /** 备份进行中标志（防止并发触发重复备份） */
 let isBackingUp = false;
@@ -44,19 +58,28 @@ const getBackupDir = () => {
 };
 
 /**
- * 动态枚举公共 schema 下的所有业务表
- * 仅查普通表（pg_tables 不含视图/物化视图），排除迁移版本表 db_versions
- * @returns {Promise<string[]>} 表名数组
+ * 统计当前表数与总行数（仅用于接口返回与日志，不参与备份本身）
+ * 行数取 pg_stat_user_tables.n_live_tup 近似值，避免大表 COUNT(*) 全表扫描
+ * @returns {Promise<{tableCount: number, totalRows: number}>}
  */
-const listBusinessTables = async () => {
-  const result = await pool.query(
-    `SELECT tablename
-     FROM pg_tables
-     WHERE schemaname = 'public'
-       AND tablename <> 'db_versions'
-     ORDER BY tablename`
-  );
-  return result.rows.map(r => r.tablename);
+const collectDbStats = async () => {
+  try {
+    const tableResult = await pool.query(
+      `SELECT COUNT(*)::int AS count
+       FROM pg_tables
+       WHERE schemaname = 'public' AND tablename <> 'db_versions'`
+    );
+    const rowResult = await pool.query(
+      `SELECT COALESCE(SUM(n_live_tup), 0)::bigint AS rows FROM pg_stat_user_tables`
+    );
+    return {
+      tableCount: tableResult.rows[0]?.count || 0,
+      totalRows: Number(rowResult.rows[0]?.rows || 0),
+    };
+  } catch (error) {
+    logger.warn('统计数据库规模失败（不影响备份）:', error.message);
+    return { tableCount: 0, totalRows: 0 };
+  }
 };
 
 /**
@@ -89,37 +112,34 @@ const rotateBackups = (backupDir) => {
 };
 
 /**
- * 分页导出单表所有行，逐批写入流（不整表驻留内存）
- *
- * 使用 ORDER BY ctid 保证分页顺序稳定：ctid 是 PostgreSQL 物理行标识，
- * 不存在业务列重复值导致 OFFSET 分页跳行/重复的问题。
- *
- * @param {import('stream').Writable} ws - 输出流
- * @param {string} table - 表名（来自 pg_tables 白名单，双引号转义防注入）
- * @param {boolean} firstRow - 是否为当前表第一行（控制 JSON 逗号）
- * @returns {Promise<number>} 该表导出行数
+ * 执行 pg_dump 导出数据库为 custom 格式
+ * 密码通过 PGPASSWORD 环境变量传入，避免出现在进程命令行（防泄露）
+ * @param {string} outputPath - 输出文件路径（临时文件）
+ * @returns {Promise<void>}
  */
-const exportTableToStream = async (ws, table, firstRow) => {
-  let offset = 0;
-  let rowsWritten = 0;
-  while (true) {
-    // 表名来自 pg_tables 白名单；ORDER BY ctid 稳定分页，LIMIT/OFFSET 控制每页内存
-    const result = await pool.query(
-      `SELECT * FROM "${table}" ORDER BY ctid LIMIT $1 OFFSET $2`,
-      [PAGE_SIZE, offset]
-    );
-    if (result.rows.length === 0) break;
+const runPgDump = async (outputPath) => {
+  const host = process.env.DB_HOST || 'localhost';
+  const port = process.env.DB_PORT || '5432';
+  const user = process.env.DB_USER || 'postgres';
+  const database = process.env.DB_NAME || 'salary';
+  const password = process.env.DB_PASSWORD;
 
-    for (const row of result.rows) {
-      if (!firstRow) ws.write(',');
-      ws.write('\n      ' + JSON.stringify(row));
-      firstRow = false;
-    }
-    rowsWritten += result.rows.length;
-    if (result.rows.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
-  }
-  return rowsWritten;
+  // 使用 execFile 数组参数，避免 shell 拼接注入
+  await execFileAsync('pg_dump', [
+    '-h', host,
+    '-p', String(port),
+    '-U', user,
+    '-d', database,
+    '-Fc',                 // custom 格式：内部压缩 + pg_restore 可选/并行恢复
+    '--no-owner',          // 不导出对象属主，避免恢复时权限不匹配
+    '--no-privileges',     // 不导出对象 ACL 权限
+    '-f', outputPath,
+  ], {
+    env: { ...process.env, PGPASSWORD: password || '' },
+    timeout: DUMP_TIMEOUT_MS,
+    // pg_dump 的 stderr 会输出进度/警告信息，放宽上限避免大库截断
+    maxBuffer: 16 * 1024 * 1024,
+  });
 };
 
 /**
@@ -140,57 +160,26 @@ const createDatabaseBackup = async () => {
   // 临时文件路径（写入完成后 rename 到最终文件名，保证原子性）
   let tmpPath = null;
   try {
-    // 1. 动态枚举业务表（含 AI 相关表，未来新增表自动纳入）
-    const tables = await listBusinessTables();
-    logger.info(`开始数据库全量备份，共 ${tables.length} 张表`);
-
-    // 2. 确保备份目录存在
+    // 1. 确保备份目录存在
     if (!fs.existsSync(backupDir)) {
       fs.mkdirSync(backupDir, { recursive: true });
     }
 
-    // 3. 文件名：本地时间戳（秒+毫秒），不覆盖历史
+    // 2. 文件名：本地时间戳（秒+毫秒），不覆盖历史
     const timestamp = moment().format('YYYYMMDD-HHmmss-SSS');
-    const fileName = `${BACKUP_PREFIX}${timestamp}.json`;
+    const fileName = `${BACKUP_PREFIX}${timestamp}.dump`;
     const backupPath = path.join(backupDir, fileName);
-    tmpPath = path.join(backupDir, `.tmp-${process.pid}-${Date.now()}.json`);
+    tmpPath = path.join(backupDir, `.tmp-${process.pid}-${Date.now()}.dump`);
 
-    // 4. 流式写入：逐表分页查询边查边写，内存峰值仅为一页数据
-    const ws = fs.createWriteStream(tmpPath, { encoding: 'utf8' });
-    await new Promise((resolve, reject) => {
-      ws.once('error', reject);
-      ws.once('open', resolve);
-    });
+    // 3. pg_dump 导出到临时文件（服务端流式读取，Node 进程无内存压力）
+    await runPgDump(tmpPath);
 
-    let totalRows = 0;
-    try {
-      ws.write('{\n');
-      ws.write(`  "backupTime": ${JSON.stringify(new Date().toISOString())},\n`);
-      ws.write('  "version": "V2.10",\n');
-      ws.write('  "tables": {\n');
-
-      let firstTable = true;
-      for (const table of tables) {
-        if (!firstTable) ws.write(',\n');
-        ws.write(`    ${JSON.stringify(table)}: [`);
-        const tableRows = await exportTableToStream(ws, table, true);
-        totalRows += tableRows;
-        ws.write('\n    ]');
-        firstTable = false;
-      }
-
-      ws.write('\n  }\n}');
-    } finally {
-      // 确保流关闭并刷新到磁盘
-      await new Promise((resolve, reject) => {
-        ws.end((err) => (err ? reject(err) : resolve()));
-        ws.once('error', reject);
-      });
-    }
-
-    // 5. 原子写入：临时文件就绪后重命名到最终文件名
+    // 4. 原子写入：临时文件就绪后重命名到最终文件名
     fs.renameSync(tmpPath, backupPath);
     tmpPath = null; // 已成功改名，无需清理
+
+    // 5. 统计规模（表数/行数近似值，供接口返回与日志）
+    const stats = await collectDbStats();
 
     // 6. 轮转：仅保留最新 KEEP_COUNT 份
     const deletedOld = rotateBackups(backupDir);
@@ -198,15 +187,15 @@ const createDatabaseBackup = async () => {
     // 7. 统计保留的备份数
     const keptBackups = fs.readdirSync(backupDir).filter(name => BACKUP_PATTERN.test(name)).length;
 
-    logger.info(`数据库备份完成: ${fileName}，${tables.length}张表 ${totalRows}条记录，保留${keptBackups}份，轮转删除${deletedOld}份`);
+    logger.info(`数据库备份完成: ${fileName}，${stats.tableCount}张表约${stats.totalRows}条记录，保留${keptBackups}份，轮转删除${deletedOld}份`);
 
     return {
       inProgress: false,
       fileName,
-      tableCount: tables.length,
-      totalRows,
+      tableCount: stats.tableCount,
+      totalRows: stats.totalRows,
       keptBackups,
-      deletedOld
+      deletedOld,
     };
   } catch (error) {
     // 清理未完成的临时文件，避免残留脏数据
