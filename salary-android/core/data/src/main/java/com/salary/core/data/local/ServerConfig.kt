@@ -50,9 +50,15 @@ class ServerConfig @Inject constructor(
     /** 获取服务器地址（挂起函数，一次性读取，返回规范化地址） */
     suspend fun getServerUrl(): String {
         if (cacheInitialized) return normalizeUrl(cachedServerUrl)
-        return context.dataStore.data.map { prefs ->
+        // 缓存未初始化时直接读取DataStore，并同步填充缓存。
+        // 背景：AppViewModel注入BackupApi会早于AppNavHost的initConfig()触发Retrofit构建，
+        // 若此处不填充缓存，Retrofit会拿到空地址回退到默认值，导致登录请求发往错误服务器。
+        val url = context.dataStore.data.map { prefs ->
             prefs[SERVER_URL_KEY] ?: ""
-        }.first().let(::normalizeUrl)
+        }.first()
+        cachedServerUrl = url
+        cacheInitialized = true
+        return normalizeUrl(url)
     }
 
     /**

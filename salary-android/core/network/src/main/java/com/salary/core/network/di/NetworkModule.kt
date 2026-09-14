@@ -21,6 +21,7 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -106,9 +107,14 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideRetrofit(okHttpClient: OkHttpClient, json: Json, serverConfig: ServerConfig): Retrofit {
-        // 同步读取服务器地址缓存，避免runBlocking阻塞线程池
-        // 注意：App启动时需先调用serverConfig.initConfig()初始化缓存
-        val baseUrl = serverConfig.getServerUrlSync().ifEmpty { ServerConfig.DEFAULT_URL + "/" }
+        // 优先使用缓存；缓存未初始化时（如AppViewModel注入BackupApi会提前触发Retrofit构建，
+        // 早于AppNavHost中的initConfig()）阻塞读取一次DataStore兜底，
+        // 确保登录等请求发往用户配置的服务器地址，而非回退到默认地址
+        val baseUrl = serverConfig.getServerUrlSync().ifEmpty {
+            runBlocking {
+                serverConfig.getServerUrl()
+            }.ifEmpty { ServerConfig.DEFAULT_URL + "/" }
+        }
         return Retrofit.Builder()
             .baseUrl(baseUrl)
             .client(okHttpClient)
